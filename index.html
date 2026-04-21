@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Precip Weather Operations</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#" aria-label="Precip dashboard home">
+          <span class="brand-mark">P</span>
+          <span>
+            <strong>Precip</strong>
+            <small>Weather Monitor</small>
+          </span>
+        </a>
+
+        <nav class="nav-list" aria-label="Primary navigation">
+          <a class="nav-item active" href="#overview" aria-current="page">Current</a>
+          <a class="nav-item" href="#map">Map</a>
+          <a class="nav-item" href="#chart">Hourly</a>
+          <a class="nav-item" href="#daily">Today</a>
+          <a class="nav-item" href="#weekly">Week</a>
+          <a class="nav-item" href="#patterns">Trends</a>
+          <a class="nav-item" href="#devices">Equipment</a>
+          <a class="nav-item" href="#history">History</a>
+        </nav>
+
+        <section class="station-card" aria-labelledby="station-title">
+          <span class="section-kicker">Station</span>
+          <h2 id="station-title">Open-Meteo Feed</h2>
+          <p id="station-copy">Live public weather data. Hardware receiver feed is not connected yet.</p>
+          <div class="station-meta">
+            <span>Updated</span>
+            <strong id="updated-at">--:--</strong>
+          </div>
+        </section>
+      </aside>
+
+      <main class="main-panel">
+        <header class="topbar">
+          <div>
+            <span class="section-kicker">Chatham Weather</span>
+          </div>
+          <div class="topbar-actions">
+            <form class="location-form" id="location-form">
+              <label class="visually-hidden" for="location-input">Weather location</label>
+              <input id="location-input" type="search" value="Chatham, Ontario, Canada" autocomplete="off" />
+              <button class="primary-button" type="submit">Set Location</button>
+            </form>
+            <button class="icon-button" type="button" aria-label="Refresh telemetry" id="refresh-button">
+              <span aria-hidden="true">&#8635;</span>
+            </button>
+          </div>
+        </header>
+
+        <section class="weather-warning" id="weather-warning" aria-live="polite">
+          <div>
+            <span id="warning-label">Weather Status</span>
+            <strong id="warning-title">Checking forecast conditions</strong>
+            <p id="warning-copy">Live weather guidance will appear here after the feed loads.</p>
+          </div>
+        </section>
+
+        <section class="status-grid" id="overview" aria-label="Current conditions">
+          <article class="metric-card">
+            <span>Temperature</span>
+            <strong><span class="metric-value temp-value" id="temperature">--</span><span class="metric-unit">°C</span></strong>
+            <small id="temp-trend">Loading current conditions</small>
+          </article>
+          <article class="metric-card condition">
+            <span>Condition</span>
+            <strong id="current-condition">--</strong>
+            <small id="condition-copy">Today forecast pending</small>
+          </article>
+          <article class="metric-card">
+            <span>Pressure</span>
+            <strong><span class="metric-value pressure-value" id="pressure">--</span><span class="metric-unit"> hPa</span></strong>
+            <small id="pressure-trend">Waiting for live data</small>
+          </article>
+          <article class="metric-card wind-card">
+            <span>Wind</span>
+            <div class="wind-reading">
+              <strong><span class="metric-value wind-value" id="wind">--</span><span class="metric-unit"> km/h</span></strong>
+              <span class="wind-compass" id="wind-compass">--</span>
+            </div>
+            <small id="wind-direction">Direction pending</small>
+          </article>
+          <article class="metric-card alert">
+            <span>Precipitation</span>
+            <strong><span class="metric-value precip-value" id="watch-level">--</span><span class="metric-unit"> mm</span></strong>
+            <small id="watch-copy">Next-hour forecast pending</small>
+          </article>
+        </section>
+
+        <section class="dashboard-grid">
+          <article class="panel heatmap-panel" id="map">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Regional Heatmap</span>
+                <h2>Chatham Area Weather Pattern</h2>
+              </div>
+              <div class="heatmap-controls" aria-label="Heatmap layer">
+                <button class="heatmap-button active" type="button" data-layer="temperature">Temp</button>
+                <button class="heatmap-button" type="button" data-layer="precipitation">Rain</button>
+                <button class="heatmap-button" type="button" data-layer="wind">Wind</button>
+              </div>
+            </div>
+            <div class="heatmap-wrap">
+              <canvas id="heatmap-canvas" width="920" height="460" aria-label="Regional weather heatmap"></canvas>
+              <div class="heatmap-legend" id="heatmap-legend"></div>
+            </div>
+          </article>
+
+          <article class="panel radar-panel" id="chart">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Hourly Outlook</span>
+                <h2>Next 24 Hours</h2>
+              </div>
+              <span class="live-pill"><span></span> Live Weather Feed</span>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="weather-chart" width="920" height="560" aria-label="Hourly weather forecast chart"></canvas>
+              <div class="chart-tooltip" id="chart-tooltip" role="status" aria-live="polite"></div>
+            </div>
+            <div class="hourly-strip" id="hourly-strip" aria-label="Hourly forecast list"></div>
+          </article>
+
+          <article class="panel" id="patterns">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Trend Watch</span>
+                <h2>What Is Changing</h2>
+              </div>
+            </div>
+            <div class="pattern-list" id="pattern-list"></div>
+          </article>
+
+          <article class="panel daily-panel" id="daily">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Daily Forecast</span>
+                <h2>Today and Tomorrow</h2>
+              </div>
+            </div>
+            <div class="daily-grid" id="daily-grid"></div>
+          </article>
+
+          <article class="panel weekly-panel" id="weekly">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Weekly Forecast</span>
+                <h2>Seven-Day Outlook</h2>
+              </div>
+            </div>
+            <div class="weekly-list" id="weekly-list"></div>
+          </article>
+
+          <article class="panel devices-panel" id="devices">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Hardware Feed</span>
+                <h2>Weather Equipment and Receiver Sources</h2>
+              </div>
+              <span class="status-pill standby">Not Connected</span>
+            </div>
+            <div class="hardware-layout">
+              <div class="receiver-panel" id="radio">
+                <div class="signal-readout">
+                  <div>
+                    <span>Frequency</span>
+                    <strong id="frequency">--</strong>
+                  </div>
+                  <div>
+                    <span>Status</span>
+                    <strong id="receiver-status">No hardware feed</strong>
+                  </div>
+                </div>
+                <div class="empty-signal" role="status">Local receiver endpoint not connected.</div>
+                <div class="input-row">
+                  <label for="ingest-url">Receiver endpoint</label>
+                  <input id="ingest-url" type="url" value="http://rig-node.local:8080/telemetry" />
+                </div>
+              </div>
+              <div class="device-list">
+                <div class="device-row">
+                  <span class="device-icon">ANT</span>
+                  <div>
+                    <strong>VHF Antenna</strong>
+                    <small>Mounted source, awaiting serial bridge</small>
+                  </div>
+                  <span class="status-pill standby">Standby</span>
+                </div>
+                <div class="device-row">
+                  <span class="device-icon">RX</span>
+                  <div>
+                    <strong>Weather Radio</strong>
+                    <small>No local feed detected</small>
+                  </div>
+                  <span class="status-pill standby">Offline</span>
+                </div>
+                <div class="device-row">
+                  <span class="device-icon">API</span>
+                  <div>
+                    <strong>Telemetry API</strong>
+                    <small>JSON ingest route placeholder</small>
+                  </div>
+                  <span class="status-pill standby">Pending</span>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel history-panel" id="history">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Forecast History</span>
+                <h2>Saved Forecast Snapshots</h2>
+              </div>
+              <button class="ghost-button" type="button" id="clear-history-button">Clear</button>
+            </div>
+            <div class="history-list" id="history-list"></div>
+          </article>
+
+          <article class="panel log-panel" id="logs">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Operations Log</span>
+                <h2>Recent Events</h2>
+              </div>
+            </div>
+            <ol class="event-log" id="event-log"></ol>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
