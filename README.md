@@ -14,13 +14,16 @@ Use `nginx/precip.conf` as a starting server block. Replace:
 - `weather.example.com`
 - `/var/www/precip`
 
+The included Nginx config listens on internal port `7427`, intended for a reverse proxy to forward public HTTPS traffic to.
+
 Recommended deployment:
 
 1. Copy `index.html`, `styles.css`, and `app.js` to your Nginx web root.
 2. Install the Nginx server block from `nginx/precip.conf`.
-3. Put the site behind HTTPS before exposing it publicly.
-4. Enable the HSTS line in the config only after HTTPS is confirmed working.
-5. Do not expose any future hardware receiver endpoint directly to the open internet unless it is read-only and separately secured.
+3. Point your reverse proxy to `http://127.0.0.1:7427`.
+4. Put the public site behind HTTPS before exposing it.
+5. Enable the HSTS line in the config only after HTTPS is confirmed working.
+6. Do not expose any future hardware receiver endpoint directly to the open internet unless it is read-only and separately secured.
 
 ## Security Model
 
