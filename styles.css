@@ -71,7 +71,7 @@ input {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -79,6 +79,7 @@ input {
   position: sticky;
   top: 0;
   height: 100vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -108,6 +109,40 @@ input {
 .brand strong,
 .brand small {
   display: block;
+}
+
+.sidebar-nav {
+  display: grid;
+  gap: 14px;
+}
+
+.sidebar-nav section {
+  display: grid;
+  gap: 6px;
+}
+
+.sidebar-nav span {
+  color: var(--accent);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.sidebar-nav a {
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #d2d8e3;
+  font-size: 0.88rem;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.sidebar-nav a:hover {
+  border-color: var(--line);
+  background: rgba(125, 211, 252, 0.08);
+  color: var(--text);
 }
 
 .brand small,
@@ -187,7 +222,8 @@ input {
 
 .main-panel {
   width: 100%;
-  padding: 30px;
+  max-width: 1720px;
+  padding: 34px;
   min-width: 0;
 }
 
@@ -196,8 +232,8 @@ input {
   justify-content: space-between;
   gap: 24px;
   align-items: center;
-  margin-bottom: 18px;
-  padding: 20px;
+  margin-bottom: 22px;
+  padding: 24px;
   border: 1px solid rgba(56, 80, 93, 0.72);
   border-radius: 8px;
   background:
@@ -301,8 +337,8 @@ input {
   display: flex;
   align-items: center;
   min-height: 88px;
-  margin-bottom: 12px;
-  padding: 18px 20px;
+  margin-bottom: 18px;
+  padding: 20px 22px;
   border: 1px solid rgba(125, 211, 252, 0.35);
   border-radius: 8px;
   background: linear-gradient(90deg, rgba(125, 211, 252, 0.16), rgba(12, 16, 24, 0.96));
@@ -356,9 +392,9 @@ input {
 
 .status-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 18px;
 }
 
 .metric-card {
@@ -477,12 +513,12 @@ input {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 18px;
 }
 
 .panel {
-  padding: 17px;
+  padding: 20px;
   min-width: 0;
 }
 
@@ -497,6 +533,10 @@ input {
 .radar-panel,
 .heatmap-panel {
   grid-row: span 1;
+}
+
+.heatmap-panel {
+  grid-column: 1 / -1;
 }
 
 .radar-panel {
@@ -516,7 +556,7 @@ canvas {
 #weather-chart {
   aspect-ratio: 16 / 9;
   height: auto;
-  min-height: 340px;
+  min-height: 360px;
   border: 1px solid #334058;
   border-radius: 8px;
   background: linear-gradient(180deg, #0d121d, #080b12);
@@ -526,10 +566,16 @@ canvas {
 #heatmap-canvas {
   aspect-ratio: 16 / 9;
   height: auto;
-  min-height: 320px;
+  min-height: 520px;
   border: 1px solid #334058;
   border-radius: 8px;
   background: linear-gradient(180deg, #0d121d, #080b12);
+  cursor: grab;
+  touch-action: none;
+}
+
+#heatmap-canvas.dragging {
+  cursor: grabbing;
 }
 
 .heatmap-controls {
@@ -537,17 +583,19 @@ canvas {
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
+  max-width: 760px;
 }
 
 .heatmap-button {
   min-height: 32px;
-  padding: 0 12px;
+  padding: 0 11px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #111722;
   color: #d2d8e3;
   cursor: pointer;
   font-weight: 900;
+  font-size: 0.82rem;
 }
 
 .heatmap-button.active {
@@ -568,18 +616,156 @@ canvas {
   font-weight: 800;
 }
 
+.timeline-control {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.timeline-control label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.timeline-control strong {
+  color: var(--text);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.timeline-control input {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.map-toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid rgba(42, 51, 68, 0.88);
+  border-radius: 8px;
+  background: rgba(9, 11, 18, 0.8);
+  backdrop-filter: blur(14px);
+}
+
+.map-readout {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  display: grid;
+  gap: 4px;
+  min-width: 190px;
+  max-width: min(360px, calc(100% - 170px));
+  padding: 11px 13px;
+  border: 1px solid rgba(60, 73, 96, 0.88);
+  border-radius: 8px;
+  background: rgba(9, 11, 18, 0.76);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(14px);
+}
+
+.map-readout span,
+.map-readout small {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.map-readout strong {
+  color: var(--text);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 1.05rem;
+}
+
+.map-button {
+  min-width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #151b27;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.map-button:hover {
+  border-color: var(--line-strong);
+  color: var(--accent);
+}
+
+.map-tooltip {
+  position: absolute;
+  z-index: 3;
+  display: none;
+  min-width: 188px;
+  padding: 10px 12px;
+  border: 1px solid #3c4960;
+  border-radius: 8px;
+  background: rgba(9, 11, 18, 0.94);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
+  color: var(--text);
+  pointer-events: none;
+}
+
+.map-tooltip.visible {
+  display: block;
+}
+
+.map-tooltip strong,
+.map-tooltip span {
+  display: block;
+}
+
+.map-tooltip strong {
+  margin-bottom: 7px;
+}
+
+.map-tooltip span {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.map-attribution {
+  position: absolute;
+  right: 12px;
+  bottom: 52px;
+  z-index: 2;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: rgba(9, 11, 18, 0.72);
+  color: #d2d8e3;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.map-attribution:hover {
+  color: var(--accent);
+}
+
 .heatmap-gradient {
   height: 10px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgb(43, 72, 122), rgb(125, 211, 252), rgb(248, 195, 106));
+  background: linear-gradient(90deg, rgb(96, 165, 250), rgb(34, 211, 238), rgb(248, 195, 106), rgb(251, 113, 133));
 }
 
 .heatmap-gradient.precipitation {
-  background: linear-gradient(90deg, rgb(13, 16, 24), rgb(59, 130, 246), rgb(125, 211, 252));
+  background: linear-gradient(90deg, rgb(16, 185, 129), rgb(14, 165, 233), rgb(59, 130, 246), rgb(147, 51, 234));
 }
 
 .heatmap-gradient.wind {
-  background: linear-gradient(90deg, rgb(17, 24, 39), rgb(167, 139, 250), rgb(248, 195, 106));
+  background: linear-gradient(90deg, rgb(34, 211, 238), rgb(167, 139, 250), rgb(251, 191, 36), rgb(251, 113, 133));
 }
 
 .chart-tooltip {
@@ -619,17 +805,17 @@ canvas {
 .hourly-strip {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(104px, 1fr);
-  gap: 10px;
-  margin-top: 12px;
+  grid-auto-columns: minmax(122px, 1fr);
+  gap: 12px;
+  margin-top: 14px;
   padding-bottom: 4px;
   overflow-x: auto;
   scrollbar-color: #3c4960 transparent;
 }
 
 .hourly-card {
-  min-width: 104px;
-  padding: 12px;
+  min-width: 122px;
+  padding: 14px;
   border: 1px solid #263245;
   border-radius: 8px;
   background: linear-gradient(180deg, #111826, #0b1019);
@@ -744,9 +930,15 @@ canvas {
 .event-log,
 .daily-grid,
 .weekly-list,
-.history-list {
+.history-list,
+.storm-grid,
+.air-grid,
+.confidence-grid,
+.context-grid,
+.watchlist-grid,
+.storm-signals {
   display: grid;
-  gap: 12px;
+  gap: 16px;
 }
 
 .pattern-item,
@@ -754,10 +946,126 @@ canvas {
 .event-log li,
 .forecast-card,
 .weekly-row,
-.history-row {
+.history-row,
+.toolkit-card,
+.watchlist-row {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: linear-gradient(180deg, #111724, #0b1018);
+}
+
+.storm-panel,
+.air-panel,
+.confidence-panel,
+.context-panel,
+.watchlist-panel {
+  grid-column: 1 / -1;
+}
+
+#patterns {
+  grid-column: span 5;
+}
+
+.storm-panel {
+  grid-column: span 7;
+}
+
+.air-panel,
+.confidence-panel {
+  grid-column: span 6;
+}
+
+.context-panel,
+.watchlist-panel,
+.daily-panel,
+.weekly-panel,
+.history-panel,
+.devices-panel,
+.log-panel {
+  grid-column: 1 / -1;
+}
+
+.storm-grid,
+.air-grid,
+.confidence-grid,
+.context-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.toolkit-card {
+  display: grid;
+  gap: 7px;
+  min-height: 112px;
+  padding: 16px;
+}
+
+.toolkit-card span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.toolkit-card strong {
+  color: var(--text);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 1.45rem;
+}
+
+.toolkit-card small {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.risk-badge {
+  min-width: 92px;
+  padding: 7px 10px;
+  border: 1px solid rgba(248, 195, 106, 0.38);
+  border-radius: 8px;
+  color: var(--warn);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.risk-meter {
+  height: 10px;
+  margin: 14px 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #1a2230;
+}
+
+.risk-meter span {
+  display: block;
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--success), var(--warn), var(--danger));
+  transition: width 180ms ease;
+}
+
+.storm-signals {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.watchlist-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) repeat(4, minmax(120px, 0.7fr)) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+}
+
+.watchlist-row button {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #151b27;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 850;
 }
 
 .pattern-item {
@@ -833,48 +1141,44 @@ canvas {
   font-weight: 800;
 }
 
-.daily-panel,
-.weekly-panel,
-.history-panel,
-.devices-panel {
-  grid-column: 1 / -1;
-}
-
 @media (min-width: 1500px) {
   .status-grid {
-    grid-template-columns: repeat(5, minmax(180px, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .dashboard-grid {
-    grid-template-columns: minmax(0, 1.16fr) minmax(360px, 0.92fr) minmax(340px, 0.92fr);
+    grid-template-columns: repeat(12, minmax(0, 1fr));
   }
 
   .radar-panel {
-    grid-column: span 2;
+    grid-column: 1 / -1;
     grid-row: span 1;
   }
 
   .heatmap-panel {
-    grid-column: span 1;
+    grid-column: 1 / -1;
     grid-row: span 1;
   }
 
-  .daily-panel {
-    grid-column: span 2;
+  #patterns {
+    grid-column: span 5;
   }
 
-  .weekly-panel {
-    grid-column: span 2;
+  .storm-panel {
+    grid-column: span 7;
   }
 
-  .history-panel {
-    grid-column: span 2;
+  .air-panel,
+  .confidence-panel {
+    grid-column: span 6;
   }
 
-  .devices-panel {
-    grid-column: 1 / -1;
-  }
-
+  .daily-panel,
+  .weekly-panel,
+  .history-panel,
+  .devices-panel,
+  .context-panel,
+  .watchlist-panel,
   .log-panel {
     grid-column: 1 / -1;
   }
@@ -1107,12 +1411,40 @@ canvas {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .heatmap-panel,
+  .radar-panel,
+  #patterns,
+  .storm-panel,
+  .air-panel,
+  .confidence-panel,
+  .context-panel,
+  .watchlist-panel,
+  .daily-panel,
+  .weekly-panel,
+  .history-panel,
+  .devices-panel,
+  .log-panel {
+    grid-column: 1 / -1;
+  }
+
   .status-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .forecast-details {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .storm-grid,
+  .air-grid,
+  .confidence-grid,
+  .context-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .storm-signals,
+  .watchlist-row {
+    grid-template-columns: 1fr;
   }
 
   .hardware-layout {
@@ -1169,8 +1501,17 @@ canvas {
   .status-grid,
   .signal-readout,
   .daily-grid,
-  .forecast-details {
+  .forecast-details,
+  .storm-grid,
+  .air-grid,
+  .confidence-grid,
+  .context-grid,
+  .storm-signals {
     grid-template-columns: 1fr;
+  }
+
+  .heatmap-controls {
+    justify-content: flex-start;
   }
 
   .sidebar {

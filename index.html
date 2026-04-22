@@ -18,6 +18,33 @@
           </span>
         </a>
 
+        <nav class="sidebar-nav" aria-label="Weather toolkit sections">
+          <section>
+            <span>Operations</span>
+            <a href="#overview">Current Conditions</a>
+            <a href="#map">Interactive Map</a>
+            <a href="#chart">Hourly Timeline</a>
+          </section>
+          <section>
+            <span>Stormwatch</span>
+            <a href="#storm">Storm Ingredients</a>
+            <a href="#patterns">Trend Watch</a>
+            <a href="#confidence">Forecast Confidence</a>
+          </section>
+          <section>
+            <span>Environment</span>
+            <a href="#air">Air Quality</a>
+          </section>
+          <section>
+            <span>Tools</span>
+            <a href="#devices">Equipment</a>
+            <a href="#context">Recent Context</a>
+            <a href="#history">History</a>
+            <a href="#watchlist">Pinned Locations</a>
+            <a href="#logs">Operations Log</a>
+          </section>
+        </nav>
+
         <section class="station-card" aria-labelledby="station-title">
           <span class="section-kicker">Station</span>
           <h2 id="station-title">Open-Meteo Feed</h2>
@@ -100,13 +127,34 @@
               </div>
               <div class="heatmap-controls" aria-label="Heatmap layer">
                 <button class="heatmap-button active" type="button" data-layer="temperature">Temp</button>
+                <button class="heatmap-button" type="button" data-layer="feels">Feels</button>
+                <button class="heatmap-button" type="button" data-layer="dewpoint">Dew</button>
+                <button class="heatmap-button" type="button" data-layer="humidity">Humidity</button>
                 <button class="heatmap-button" type="button" data-layer="precipitation">Rain</button>
+                <button class="heatmap-button" type="button" data-layer="precipProbability">Chance</button>
                 <button class="heatmap-button" type="button" data-layer="wind">Wind</button>
+                <button class="heatmap-button" type="button" data-layer="gusts">Gusts</button>
+                <button class="heatmap-button" type="button" data-layer="pressure">Pressure</button>
+                <button class="heatmap-button" type="button" data-layer="cloud">Cloud</button>
+                <button class="heatmap-button" type="button" data-layer="visibility">Visibility</button>
+                <button class="heatmap-button" type="button" data-layer="cape">CAPE</button>
               </div>
             </div>
             <div class="heatmap-wrap">
               <canvas id="heatmap-canvas" width="920" height="460" aria-label="Regional weather heatmap"></canvas>
+              <div class="map-readout" id="map-readout" aria-live="polite"></div>
+              <div class="map-toolbar" aria-label="Map controls">
+                <button class="map-button" type="button" id="map-zoom-in" aria-label="Zoom map in">+</button>
+                <button class="map-button" type="button" id="map-zoom-out" aria-label="Zoom map out">-</button>
+                <button class="map-button" type="button" id="map-reset" aria-label="Reset map view">Reset</button>
+              </div>
+              <div class="map-tooltip" id="map-tooltip" role="status" aria-live="polite"></div>
+              <a class="map-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>
               <div class="heatmap-legend" id="heatmap-legend"></div>
+              <div class="timeline-control">
+                <label for="map-hour-slider">Map forecast hour <strong id="map-hour-label">Now</strong></label>
+                <input id="map-hour-slider" type="range" min="0" max="23" value="0" />
+              </div>
             </div>
           </article>
 
@@ -133,6 +181,41 @@
               </div>
             </div>
             <div class="pattern-list" id="pattern-list"></div>
+          </article>
+
+          <article class="panel storm-panel" id="storm">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Storm Ingredients</span>
+                <h2>Convective Setup and Severe Potential</h2>
+              </div>
+              <span class="risk-badge" id="storm-risk-badge">--</span>
+            </div>
+            <div class="storm-grid" id="storm-grid"></div>
+            <div class="risk-meter" aria-label="Storm risk score">
+              <span id="storm-risk-fill"></span>
+            </div>
+            <div class="storm-signals" id="storm-signals"></div>
+          </article>
+
+          <article class="panel air-panel" id="air">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Air and Exposure</span>
+                <h2>Air Quality, UV, Smoke Indicators</h2>
+              </div>
+            </div>
+            <div class="air-grid" id="air-grid"></div>
+          </article>
+
+          <article class="panel confidence-panel" id="confidence">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Forecast Confidence</span>
+                <h2>Model Signal Consistency</h2>
+              </div>
+            </div>
+            <div class="confidence-grid" id="confidence-grid"></div>
           </article>
 
           <article class="panel daily-panel" id="daily">
@@ -210,6 +293,16 @@
             </div>
           </article>
 
+          <article class="panel context-panel" id="context">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Recent Context</span>
+                <h2>Rainfall, Temperature, and Storm Windows</h2>
+              </div>
+            </div>
+            <div class="context-grid" id="context-grid"></div>
+          </article>
+
           <article class="panel history-panel" id="history">
             <div class="panel-header">
               <div>
@@ -219,6 +312,17 @@
               <button class="ghost-button" type="button" id="clear-history-button">Clear</button>
             </div>
             <div class="history-list" id="history-list"></div>
+          </article>
+
+          <article class="panel watchlist-panel" id="watchlist">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Pinned Locations</span>
+                <h2>Stormwatch Watchlist</h2>
+              </div>
+              <button class="ghost-button" type="button" id="pin-location-button">Pin Current</button>
+            </div>
+            <div class="watchlist-grid" id="watchlist-grid"></div>
           </article>
 
           <article class="panel log-panel" id="logs">

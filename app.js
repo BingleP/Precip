@@ -9,18 +9,15 @@ const DEFAULT_LOCATION = {
 const HOURS_TO_SHOW = 24;
 const HEATMAP_GRID_SIZE = 7;
 const HEATMAP_RADIUS = 0.42;
-const HEATMAP_PLACES = [
-  { name: "Chatham", latitude: 42.4048, longitude: -82.191 },
-  { name: "Wallaceburg", latitude: 42.593, longitude: -82.388 },
-  { name: "Dresden", latitude: 42.591, longitude: -82.179 },
-  { name: "Tilbury", latitude: 42.264, longitude: -82.432 },
-  { name: "Ridgetown", latitude: 42.439, longitude: -81.887 },
-  { name: "Blenheim", latitude: 42.333, longitude: -82.0 },
-  { name: "Leamington", latitude: 42.054, longitude: -82.599 },
-  { name: "Sarnia", latitude: 42.974, longitude: -82.406 },
-];
+const MAP_TILE_SIZE = 256;
+const MAP_MIN_ZOOM = 8;
+const MAP_MAX_ZOOM = 15;
+const MAP_DEFAULT_ZOOM = 10;
+const HEATMAP_SCALE = 0.22;
 const HISTORY_KEY = "precip.forecastHistory.v1";
+const WATCHLIST_KEY = "precip.watchlist.v1";
 const MAX_HISTORY_ITEMS = 12;
+const MAP_HOURS_TO_SHOW = 24;
 
 const elements = {
   stationTitle: document.querySelector("#station-title"),
@@ -51,8 +48,24 @@ const elements = {
   clearHistoryButton: document.querySelector("#clear-history-button"),
   chartTooltip: document.querySelector("#chart-tooltip"),
   heatmapLegend: document.querySelector("#heatmap-legend"),
+  mapHourSlider: document.querySelector("#map-hour-slider"),
+  mapHourLabel: document.querySelector("#map-hour-label"),
+  mapReadout: document.querySelector("#map-readout"),
+  mapTooltip: document.querySelector("#map-tooltip"),
+  mapZoomIn: document.querySelector("#map-zoom-in"),
+  mapZoomOut: document.querySelector("#map-zoom-out"),
+  mapReset: document.querySelector("#map-reset"),
   locationForm: document.querySelector("#location-form"),
   locationInput: document.querySelector("#location-input"),
+  stormGrid: document.querySelector("#storm-grid"),
+  stormSignals: document.querySelector("#storm-signals"),
+  stormRiskBadge: document.querySelector("#storm-risk-badge"),
+  stormRiskFill: document.querySelector("#storm-risk-fill"),
+  airGrid: document.querySelector("#air-grid"),
+  confidenceGrid: document.querySelector("#confidence-grid"),
+  contextGrid: document.querySelector("#context-grid"),
+  watchlistGrid: document.querySelector("#watchlist-grid"),
+  pinLocationButton: document.querySelector("#pin-location-button"),
 };
 
 const chartCanvas = document.querySelector("#weather-chart");
@@ -63,7 +76,18 @@ const heatmapCtx = heatmapCanvas.getContext("2d");
 let activeLocation = null;
 let latestForecast = null;
 let latestHeatmap = null;
+let latestAirQuality = null;
+let weatherLoadId = 0;
 let activeHeatmapLayer = "temperature";
+let activeMapHourOffset = 0;
+const mapState = {
+  center: { latitude: DEFAULT_LOCATION.latitude, longitude: DEFAULT_LOCATION.longitude },
+  zoom: MAP_DEFAULT_ZOOM,
+  drag: null,
+  selected: null,
+  renderQueued: false,
+};
+const tileCache = new Map();
 const chartState = {
   hoverIndex: null,
   points: [],
@@ -191,18 +215,65 @@ async function geocodeLocation(query) {
   };
 }
 
+async function reverseGeocodeLocation(latitude, longitude) {
+  const url = new URL("https://nominatim.openstreetmap.org/reverse");
+  url.searchParams.set("format", "jsonv2");
+  url.searchParams.set("lat", latitude.toFixed(6));
+  url.searchParams.set("lon", longitude.toFixed(6));
+  url.searchParams.set("zoom", "10");
+  url.searchParams.set("addressdetails", "1");
+  url.searchParams.set("accept-language", "en");
+
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Map location lookup failed");
+
+  const data = await response.json();
+  const address = data.address || {};
+  const name =
+    address.city ||
+    address.town ||
+    address.village ||
+    address.municipality ||
+    address.hamlet ||
+    address.county ||
+    data.name ||
+    "Selected location";
+
+  return {
+    name,
+    admin: address.state || address.region || address.province || address.county,
+    country: address.country_code ? address.country_code.toUpperCase() : address.country,
+    latitude,
+    longitude,
+    timezone: "auto",
+  };
+}
+
 async function fetchForecast(location) {
   const url = new URL("https://api.open-meteo.com/v1/forecast");
   url.searchParams.set("latitude", location.latitude);
   url.searchParams.set("longitude", location.longitude);
   url.searchParams.set("timezone", "auto");
-  url.searchParams.set("current", "temperature_2m,relative_humidity_2m,precipitation,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m");
-  url.searchParams.set("hourly", "temperature_2m,precipitation_probability,precipitation,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m");
-  url.searchParams.set("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,sunrise,sunset");
+  url.searchParams.set("current", "temperature_2m,relative_humidity_2m,apparent_temperature,dew_point_2m,precipitation,pressure_msl,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m,weather_code,cloud_cover");
+  url.searchParams.set("hourly", "temperature_2m,dew_point_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,rain,showers,snowfall,snow_depth,weather_code,pressure_msl,surface_pressure,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,visibility,wind_speed_10m,wind_speed_100m,wind_direction_10m,wind_direction_100m,wind_gusts_10m,cape,vapour_pressure_deficit,soil_temperature_0cm,soil_moisture_0_to_1cm");
+  url.searchParams.set("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,sunrise,sunset,uv_index_max");
   url.searchParams.set("forecast_days", "7");
 
   const response = await fetch(url);
   if (!response.ok) throw new Error("Weather data request failed");
+  return response.json();
+}
+
+async function fetchAirQuality(location) {
+  const url = new URL("https://air-quality-api.open-meteo.com/v1/air-quality");
+  url.searchParams.set("latitude", location.latitude);
+  url.searchParams.set("longitude", location.longitude);
+  url.searchParams.set("timezone", "auto");
+  url.searchParams.set("hourly", "pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,ozone,uv_index,us_aqi");
+  url.searchParams.set("forecast_days", "2");
+
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Air quality request failed");
   return response.json();
 }
 
@@ -212,7 +283,8 @@ async function fetchHeatmap(location) {
   url.searchParams.set("latitude", points.map((point) => point.latitude.toFixed(4)).join(","));
   url.searchParams.set("longitude", points.map((point) => point.longitude.toFixed(4)).join(","));
   url.searchParams.set("timezone", "auto");
-  url.searchParams.set("current", "temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m,pressure_msl");
+  url.searchParams.set("hourly", "temperature_2m,dew_point_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,wind_speed_10m,wind_gusts_10m,pressure_msl,cloud_cover,visibility,cape");
+  url.searchParams.set("forecast_hours", String(MAP_HOURS_TO_SHOW));
 
   const response = await fetch(url);
   if (!response.ok) throw new Error("Regional heatmap request failed");
@@ -221,7 +293,7 @@ async function fetchHeatmap(location) {
   const rows = Array.isArray(data) ? data : [data];
   return points.map((point, index) => ({
     ...point,
-    current: rows[index]?.current || {},
+    hourly: rows[index]?.hourly || {},
   }));
 }
 
@@ -377,6 +449,134 @@ function renderPatterns(forecast) {
     .join("");
 }
 
+function getCurrentHourlyIndex(forecast) {
+  return findCurrentIndex(forecast.hourly.time);
+}
+
+function hourlyValue(forecast, key, offset = 0) {
+  const hourly = forecast.hourly;
+  const index = Math.min(hourly.time.length - 1, getCurrentHourlyIndex(forecast) + offset);
+  return hourly[key]?.[index];
+}
+
+function maxNext(forecast, key, hours = 12) {
+  const hourly = forecast.hourly;
+  const start = getCurrentHourlyIndex(forecast);
+  const values = hourly.time.slice(start, start + hours).map((_, offset) => hourly[key]?.[start + offset]).filter(Number.isFinite);
+  return values.length ? Math.max(...values) : NaN;
+}
+
+function sumNext(forecast, key, hours = 12) {
+  const hourly = forecast.hourly;
+  const start = getCurrentHourlyIndex(forecast);
+  return hourly.time.slice(start, start + hours).reduce((total, _, offset) => total + (hourly[key]?.[start + offset] || 0), 0);
+}
+
+function calculateStormRisk(forecast) {
+  const cape = maxNext(forecast, "cape", 12);
+  const dewPoint = maxNext(forecast, "dew_point_2m", 12);
+  const gusts = maxNext(forecast, "wind_gusts_10m", 12);
+  const rainChance = maxNext(forecast, "precipitation_probability", 12);
+  const rainTotal = sumNext(forecast, "precipitation", 12);
+  const pressureDrop = hourlyValue(forecast, "pressure_msl", 0) - hourlyValue(forecast, "pressure_msl", 6);
+  const shear = Math.abs((hourlyValue(forecast, "wind_speed_100m", 0) || 0) - (hourlyValue(forecast, "wind_speed_10m", 0) || 0));
+  const stormCode = [95, 96, 99].includes(forecast.daily.weather_code?.[0]);
+  let score = 0;
+  score += Math.min(25, (cape || 0) / 60);
+  score += Math.max(0, Math.min(15, ((dewPoint || 0) - 12) * 2));
+  score += Math.min(18, (gusts || 0) / 4);
+  score += Math.min(14, (rainChance || 0) / 7);
+  score += Math.min(12, rainTotal * 1.4);
+  score += Math.max(0, Math.min(10, pressureDrop * 2));
+  score += Math.min(8, shear / 3);
+  if (stormCode) score += 18;
+  score = Math.max(0, Math.min(100, score));
+  const level = score >= 72 ? "High" : score >= 48 ? "Elevated" : score >= 25 ? "Monitor" : "Quiet";
+  return { score, level, cape, dewPoint, gusts, rainChance, rainTotal, pressureDrop, shear };
+}
+
+function renderStormToolkit(forecast) {
+  const risk = calculateStormRisk(forecast);
+  elements.stormRiskBadge.textContent = `${risk.level} ${Math.round(risk.score)}`;
+  elements.stormRiskFill.style.width = `${Math.round(risk.score)}%`;
+  elements.stormGrid.innerHTML = [
+    ["CAPE", formatHeatmapValue(risk.cape, "cape"), "Convective available potential energy"],
+    ["Dew point", formatHeatmapValue(risk.dewPoint, "dewpoint"), "Moisture available near the surface"],
+    ["Peak gust", formatHeatmapValue(risk.gusts, "gusts"), "Highest gust in the next 12 hours"],
+    ["Rain chance", formatHeatmapValue(risk.rainChance, "precipProbability"), "Peak probability in the next 12 hours"],
+    ["12h rain", formatHeatmapValue(risk.rainTotal, "precipitation"), "Total precipitation window"],
+    ["Pressure drop", `${formatNumber(risk.pressureDrop)} hPa`, "Six-hour pressure tendency"],
+    ["Wind shear proxy", `${formatNumber(risk.shear)} km/h`, "100 m minus 10 m wind speed"],
+    ["Visibility", formatHeatmapValue(hourlyValue(forecast, "visibility"), "visibility"), "Near-term surface visibility"],
+  ]
+    .map(([label, value, copy]) => `<article class="toolkit-card"><span>${label}</span><strong>${value}</strong><small>${copy}</small></article>`)
+    .join("");
+
+  const signals = [
+    risk.cape >= 800 ? "Instability is supportive of convection." : "Instability signal is limited.",
+    risk.pressureDrop >= 3 ? "Pressure is falling quickly enough to monitor." : "Pressure tendency is not strongly concerning.",
+    risk.gusts >= 55 ? "Wind gusts may become hazardous." : "Gust signal remains below severe thresholds.",
+  ];
+  elements.stormSignals.innerHTML = signals.map((copy) => `<div class="pattern-item low"><span></span><div><strong>Signal</strong><p>${copy}</p></div></div>`).join("");
+}
+
+function renderAirQuality(airQuality) {
+  if (!airQuality?.hourly?.time) {
+    elements.airGrid.innerHTML = `<div class="empty-signal">Air quality data unavailable.</div>`;
+    return;
+  }
+  const index = findCurrentIndex(airQuality.hourly.time);
+  const hourly = airQuality.hourly;
+  elements.airGrid.innerHTML = [
+    ["US AQI", hourly.us_aqi?.[index], "", "Overall air quality index"],
+    ["PM2.5", hourly.pm2_5?.[index], " ug/m3", "Fine particulate/smoke indicator"],
+    ["PM10", hourly.pm10?.[index], " ug/m3", "Coarse particulate load"],
+    ["Ozone", hourly.ozone?.[index], " ug/m3", "Surface ozone concentration"],
+    ["NO2", hourly.nitrogen_dioxide?.[index], " ug/m3", "Traffic/combustion signal"],
+    ["CO", hourly.carbon_monoxide?.[index], " ug/m3", "Carbon monoxide"],
+    ["UV", hourly.uv_index?.[index], "", "Sun exposure index"],
+    ["Next AQI peak", Math.max(...hourly.us_aqi.filter(Number.isFinite)), "", "Highest available forecast value"],
+  ]
+    .map(([label, value, unit, copy]) => `<article class="toolkit-card"><span>${label}</span><strong>${Number.isFinite(value) ? Math.round(value) + unit : "--"}</strong><small>${copy}</small></article>`)
+    .join("");
+}
+
+function renderConfidence(forecast) {
+  const pressureChange = Math.abs(hourlyValue(forecast, "pressure_msl", 0) - hourlyValue(forecast, "pressure_msl", 12));
+  const gustSpread = maxNext(forecast, "wind_gusts_10m", 24) - (hourlyValue(forecast, "wind_gusts_10m") || 0);
+  const rainWindow = maxNext(forecast, "precipitation_probability", 24);
+  const cloudRange = maxNext(forecast, "cloud_cover", 24) - Math.min(...forecast.hourly.cloud_cover.slice(getCurrentHourlyIndex(forecast), getCurrentHourlyIndex(forecast) + 24).filter(Number.isFinite));
+  const confidence = Math.max(0, Math.min(100, 100 - pressureChange * 5 - gustSpread * 0.5 - cloudRange * 0.15 - (rainWindow > 50 ? 8 : 0)));
+  elements.confidenceGrid.innerHTML = [
+    ["Confidence", `${Math.round(confidence)}%`, "Lower when pressure, cloud, rain, and gust signals vary sharply"],
+    ["Gust spread", `${formatNumber(gustSpread)} km/h`, "Change from now to the peak gust window"],
+    ["Cloud range", `${Math.round(cloudRange)}%`, "Cloud cover variability over 24 hours"],
+    ["Rain peak", `${Math.round(rainWindow)}%`, "Peak precipitation probability over 24 hours"],
+  ]
+    .map(([label, value, copy]) => `<article class="toolkit-card"><span>${label}</span><strong>${value}</strong><small>${copy}</small></article>`)
+    .join("");
+}
+
+function renderContext(forecast) {
+  const rain24 = sumNext(forecast, "precipitation", 24);
+  const snow24 = sumNext(forecast, "snowfall", 24);
+  const peakCape = maxNext(forecast, "cape", 24);
+  const peakGust = maxNext(forecast, "wind_gusts_10m", 24);
+  const uv = forecast.daily.uv_index_max?.[0];
+  elements.contextGrid.innerHTML = [
+    ["24h rain", formatHeatmapValue(rain24, "precipitation"), "Upcoming local accumulation"],
+    ["24h snow", `${formatNumber(snow24)} cm`, "Snowfall forecast where applicable"],
+    ["Peak CAPE", formatHeatmapValue(peakCape, "cape"), "Instability peak over 24 hours"],
+    ["Peak gust", formatHeatmapValue(peakGust, "gusts"), "Maximum gust forecast"],
+    ["UV max", Number.isFinite(uv) ? formatNumber(uv) : "--", "Daily maximum UV index"],
+    ["Cloud now", formatHeatmapValue(hourlyValue(forecast, "cloud_cover"), "cloud"), "Current cloud cover"],
+    ["VPD", `${formatNumber(hourlyValue(forecast, "vapour_pressure_deficit"))} kPa`, "Drying/evaporation stress"],
+    ["Soil temp", `${formatNumber(hourlyValue(forecast, "soil_temperature_0cm"))}°C`, "Surface soil temperature"],
+  ]
+    .map(([label, value, copy]) => `<article class="toolkit-card"><span>${label}</span><strong>${value}</strong><small>${copy}</small></article>`)
+    .join("");
+}
+
 function renderDailyForecast(forecast) {
   const daily = forecast.daily;
   const dayIndexes = [0, 1].filter((index) => daily.time[index]);
@@ -458,43 +658,229 @@ function renderHourlyForecast(forecast) {
 }
 
 function renderHeatmap(points = latestHeatmap, layer = activeHeatmapLayer) {
-  if (!points?.length) return;
-
   const { width, height } = prepareCanvas(heatmapCanvas, heatmapCtx);
-  const mapPadding = 34;
-  const legendHeight = 34;
-  const mapWidth = width - mapPadding * 2;
-  const mapHeight = height - mapPadding * 2 - legendHeight;
-  const cellWidth = mapWidth / HEATMAP_GRID_SIZE;
-  const cellHeight = mapHeight / HEATMAP_GRID_SIZE;
+  drawMapTiles(width, height);
+
+  if (!points?.length) {
+    drawMapOverlayText(width, "Regional weather layer unavailable");
+    return;
+  }
+
   const values = points.map((point) => getHeatmapValue(point, layer));
   const finiteValues = values.filter(Number.isFinite);
+  if (!finiteValues.length) {
+    drawMapOverlayText(width, "Weather samples unavailable");
+    return;
+  }
+
   const min = Math.min(...finiteValues);
   const max = Math.max(...finiteValues);
 
+  drawHeatmapOverlay(points, values, layer, min, max, width, height);
+  drawMapPlaces(width, height);
+  renderMapReadout(layer, min, max);
+  renderHeatmapLegend(layer, min, max);
+  updateMapHourLabel();
+}
+
+function renderHeatmapLoading(message = "Loading regional weather layer") {
+  const { width, height } = prepareCanvas(heatmapCanvas, heatmapCtx);
+  drawMapTiles(width, height);
+  drawMapOverlayText(width, message);
+}
+
+function updateMapHourLabel() {
+  if (!elements.mapHourLabel) return;
+  if (!activeMapHourOffset) {
+    elements.mapHourLabel.textContent = "Now";
+    return;
+  }
+  const time = latestHeatmap?.[0]?.hourly?.time?.[activeMapHourOffset];
+  elements.mapHourLabel.textContent = time ? new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : `+${activeMapHourOffset}h`;
+}
+
+function drawMapTiles(width, height) {
   heatmapCtx.clearRect(0, 0, width, height);
-  heatmapCtx.fillStyle = "#061013";
+  heatmapCtx.fillStyle = "#0b1018";
   heatmapCtx.fillRect(0, 0, width, height);
 
-  points.forEach((point, index) => {
-    const value = values[index];
-    const normalized = normalizeValue(value, min, max);
-    const x = mapPadding + point.column * cellWidth;
-    const y = mapPadding + point.row * cellHeight;
-    heatmapCtx.fillStyle = getHeatmapColor(normalized, layer);
-    heatmapCtx.fillRect(x, y, cellWidth + 1, cellHeight + 1);
+  const zoom = Math.round(mapState.zoom);
+  const centerWorld = latLonToWorld(mapState.center.latitude, mapState.center.longitude, zoom);
+  const topLeft = {
+    x: centerWorld.x - width / 2,
+    y: centerWorld.y - height / 2,
+  };
+  const firstTileX = Math.floor(topLeft.x / MAP_TILE_SIZE);
+  const firstTileY = Math.floor(topLeft.y / MAP_TILE_SIZE);
+  const lastTileX = Math.floor((topLeft.x + width) / MAP_TILE_SIZE);
+  const lastTileY = Math.floor((topLeft.y + height) / MAP_TILE_SIZE);
+  const tileCount = 2 ** zoom;
+
+  for (let tileX = firstTileX; tileX <= lastTileX; tileX += 1) {
+    for (let tileY = firstTileY; tileY <= lastTileY; tileY += 1) {
+      if (tileY < 0 || tileY >= tileCount) continue;
+
+      const wrappedTileX = ((tileX % tileCount) + tileCount) % tileCount;
+      const image = getMapTile(zoom, wrappedTileX, tileY);
+      const x = Math.round(tileX * MAP_TILE_SIZE - topLeft.x);
+      const y = Math.round(tileY * MAP_TILE_SIZE - topLeft.y);
+
+      if (image.complete && image.naturalWidth) {
+        heatmapCtx.save();
+        heatmapCtx.filter = "brightness(0.48) saturate(0.6) contrast(1.25)";
+        heatmapCtx.drawImage(image, x, y, MAP_TILE_SIZE, MAP_TILE_SIZE);
+        heatmapCtx.restore();
+      } else {
+        heatmapCtx.fillStyle = (tileX + tileY) % 2 ? "#0e1420" : "#101725";
+        heatmapCtx.fillRect(x, y, MAP_TILE_SIZE, MAP_TILE_SIZE);
+      }
+    }
+  }
+
+  heatmapCtx.fillStyle = "rgba(5, 7, 12, 0.24)";
+  heatmapCtx.fillRect(0, 0, width, height);
+}
+
+function getMapTile(zoom, x, y) {
+  const key = `${zoom}/${x}/${y}`;
+  if (tileCache.has(key)) return tileCache.get(key);
+
+  const image = new Image();
+  image.decoding = "async";
+  image.src = `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`;
+  image.addEventListener("load", () => renderHeatmap(latestHeatmap, activeHeatmapLayer), { once: true });
+  image.addEventListener("error", () => tileCache.delete(key), { once: true });
+  tileCache.set(key, image);
+  return image;
+}
+
+function drawHeatmapOverlay(points, values, layer, min, max, width, height) {
+  mapState.samples = [];
+  const samples = points
+    .map((point, index) => {
+      const value = values[index];
+      if (!Number.isFinite(value)) return null;
+      const position = projectToMapScreen(point.latitude, point.longitude, width, height);
+      const sample = {
+        ...point,
+        value,
+        normalized: normalizeValue(value, min, max),
+        x: position.x,
+        y: position.y,
+      };
+
+      if (position.x > -30 && position.x < width + 30 && position.y > -30 && position.y < height + 30) {
+        mapState.samples.push(sample);
+      }
+
+      return sample;
+    })
+    .filter(Boolean);
+
+  if (!samples.length) return;
+
+  const smoothing = Math.max(width, height) / 18;
+  const overlayWidth = Math.max(72, Math.round(width * HEATMAP_SCALE));
+  const overlayHeight = Math.max(44, Math.round(height * HEATMAP_SCALE));
+  const overlay = document.createElement("canvas");
+  overlay.width = overlayWidth;
+  overlay.height = overlayHeight;
+  const overlayCtx = overlay.getContext("2d");
+  const image = overlayCtx.createImageData(overlayWidth, overlayHeight);
+  const data = image.data;
+
+  for (let y = 0; y < overlayHeight; y += 1) {
+    for (let x = 0; x < overlayWidth; x += 1) {
+      const screenX = (x / overlayWidth) * width;
+      const screenY = (y / overlayHeight) * height;
+      const normalized = interpolateHeatmapAt(screenX, screenY, samples, smoothing);
+      const color = getHeatmapChannels(normalized, layer);
+      const offset = (y * overlayWidth + x) * 4;
+      data[offset] = color[0];
+      data[offset + 1] = color[1];
+      data[offset + 2] = color[2];
+      data[offset + 3] = 132;
+    }
+  }
+
+  overlayCtx.putImageData(image, 0, 0);
+
+  heatmapCtx.save();
+  heatmapCtx.imageSmoothingEnabled = true;
+  heatmapCtx.imageSmoothingQuality = "high";
+  heatmapCtx.filter = "blur(6px)";
+  heatmapCtx.drawImage(overlay, -10, -10, width + 20, height + 20);
+  heatmapCtx.restore();
+
+  heatmapCtx.fillStyle = "rgba(5, 7, 12, 0.04)";
+  heatmapCtx.fillRect(0, 0, width, height);
+}
+
+function interpolateHeatmapAt(x, y, samples, smoothing) {
+  let weightedValue = 0;
+  let weightTotal = 0;
+
+  samples.forEach((sample) => {
+    const distanceSquared = (sample.x - x) ** 2 + (sample.y - y) ** 2;
+    const weight = 1 / (distanceSquared + smoothing ** 2);
+    weightedValue += sample.normalized * weight;
+    weightTotal += weight;
   });
 
-  drawMapGrid(width, height, mapPadding, mapWidth, mapHeight);
-  drawHeatmapPlaces(activeLocation || DEFAULT_LOCATION, mapPadding, mapWidth, mapHeight);
-  drawHeatmapLabels(width, height, layer, min, max);
-  renderHeatmapLegend(layer, min, max);
+  return weightTotal ? weightedValue / weightTotal : 0;
+}
+
+function drawMapPlaces(width, height) {
+  const location = activeLocation || DEFAULT_LOCATION;
+  const selected = mapState.selected || location;
+  const position = projectToMapScreen(selected.latitude, selected.longitude, width, height);
+
+  if (position.x < -80 || position.x > width + 80 || position.y < -80 || position.y > height + 80) return;
+
+  heatmapCtx.fillStyle = "#090a10";
+  heatmapCtx.strokeStyle = "#f3f5f8";
+  heatmapCtx.lineWidth = 3;
+  heatmapCtx.beginPath();
+  heatmapCtx.arc(position.x, position.y, 8, 0, Math.PI * 2);
+  heatmapCtx.fill();
+  heatmapCtx.stroke();
+
+  heatmapCtx.font = "900 12px system-ui";
+  const label = [selected.name, selected.admin, selected.country].filter(Boolean).join(", ");
+  const labelWidth = heatmapCtx.measureText(label).width;
+  const labelX = Math.max(8, Math.min(width - labelWidth - 14, position.x + 10));
+  const labelY = Math.max(18, Math.min(height - 14, position.y + 4));
+  heatmapCtx.fillStyle = "rgba(9, 11, 18, 0.78)";
+  roundedRect(heatmapCtx, labelX - 4, labelY - 12, labelWidth + 8, 17, 5);
+  heatmapCtx.fill();
+  heatmapCtx.fillStyle = "#f3f5f8";
+  heatmapCtx.fillText(label, labelX, labelY);
+}
+
+function drawMapOverlayText(width, text) {
+  heatmapCtx.fillStyle = "#f3f5f8";
+  heatmapCtx.font = "900 15px system-ui";
+  heatmapCtx.fillText(text, 34, 28);
 }
 
 function getHeatmapValue(point, layer) {
-  if (layer === "precipitation") return point.current.precipitation;
-  if (layer === "wind") return point.current.wind_speed_10m;
-  return point.current.temperature_2m;
+  const hourly = point.hourly || {};
+  const index = Math.min(activeMapHourOffset, Math.max(0, (hourly.time?.length || 1) - 1));
+  const value = {
+    temperature: hourly.temperature_2m?.[index],
+    feels: hourly.apparent_temperature?.[index],
+    dewpoint: hourly.dew_point_2m?.[index],
+    humidity: hourly.relative_humidity_2m?.[index],
+    precipitation: hourly.precipitation?.[index],
+    precipProbability: hourly.precipitation_probability?.[index],
+    wind: hourly.wind_speed_10m?.[index],
+    gusts: hourly.wind_gusts_10m?.[index],
+    pressure: hourly.pressure_msl?.[index],
+    cloud: hourly.cloud_cover?.[index],
+    visibility: hourly.visibility?.[index],
+    cape: hourly.cape?.[index],
+  }[layer];
+  return value;
 }
 
 function normalizeValue(value, min, max) {
@@ -503,28 +889,40 @@ function normalizeValue(value, min, max) {
   return Math.max(0, Math.min(1, (value - min) / range));
 }
 
-function getHeatmapColor(value, layer) {
-  if (layer === "precipitation") {
-    return interpolateColor([
-      [6, 16, 19],
-      [30, 91, 130],
-      [81, 167, 255],
+function getHeatmapColor(value, layer, alpha = 1) {
+  const color = getHeatmapChannels(value, layer);
+  return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha})`;
+}
+
+function getHeatmapChannels(value, layer) {
+  let color;
+  if (layer === "precipitation" || layer === "precipProbability" || layer === "humidity" || layer === "cloud") {
+    color = interpolateColor([
+      [16, 185, 129],
+      [14, 165, 233],
+      [59, 130, 246],
+      [147, 51, 234],
     ], value);
+    return color;
   }
 
-  if (layer === "wind") {
-    return interpolateColor([
-      [7, 20, 26],
-      [53, 208, 165],
-      [242, 184, 75],
+  if (layer === "wind" || layer === "gusts" || layer === "cape") {
+    color = interpolateColor([
+      [34, 211, 238],
+      [167, 139, 250],
+      [251, 191, 36],
+      [251, 113, 133],
     ], value);
+    return color;
   }
 
-  return interpolateColor([
-    [24, 78, 122],
-    [53, 208, 165],
-    [242, 184, 75],
+  color = interpolateColor([
+    [96, 165, 250],
+    [34, 211, 238],
+    [248, 195, 106],
+    [251, 113, 133],
   ], value);
+  return color;
 }
 
 function interpolateColor(colors, value) {
@@ -534,97 +932,82 @@ function interpolateColor(colors, value) {
   const start = colors[index];
   const end = colors[index + 1];
   const channels = start.map((channel, channelIndex) => Math.round(channel + (end[channelIndex] - channel) * mix));
-  return `rgb(${channels[0]}, ${channels[1]}, ${channels[2]})`;
+  return channels;
 }
 
-function drawMapGrid(width, height, padding, mapWidth, mapHeight) {
-  heatmapCtx.strokeStyle = "rgba(203, 214, 212, 0.18)";
-  heatmapCtx.lineWidth = 1;
-  for (let index = 0; index <= HEATMAP_GRID_SIZE; index += 1) {
-    const x = padding + (mapWidth / HEATMAP_GRID_SIZE) * index;
-    const y = padding + (mapHeight / HEATMAP_GRID_SIZE) * index;
-    heatmapCtx.beginPath();
-    heatmapCtx.moveTo(x, padding);
-    heatmapCtx.lineTo(x, padding + mapHeight);
-    heatmapCtx.stroke();
-    heatmapCtx.beginPath();
-    heatmapCtx.moveTo(padding, y);
-    heatmapCtx.lineTo(padding + mapWidth, y);
-    heatmapCtx.stroke();
-  }
-
-  heatmapCtx.strokeStyle = "rgba(203, 214, 212, 0.35)";
-  heatmapCtx.strokeRect(padding, padding, mapWidth, mapHeight);
-  heatmapCtx.fillStyle = "#cbd6d4";
-  heatmapCtx.font = "800 12px system-ui";
-  heatmapCtx.fillText("NW", padding + 8, padding + 18);
-  heatmapCtx.fillText("NE", width - padding - 28, padding + 18);
-  heatmapCtx.fillText("SW", padding + 8, padding + mapHeight - 10);
-  heatmapCtx.fillText("SE", width - padding - 28, padding + mapHeight - 10);
-}
-
-function drawHeatmapPlaces(location, padding, mapWidth, mapHeight) {
-  const bounds = {
-    north: location.latitude + HEATMAP_RADIUS,
-    south: location.latitude - HEATMAP_RADIUS,
-    west: location.longitude - HEATMAP_RADIUS,
-    east: location.longitude + HEATMAP_RADIUS,
-  };
-
-  HEATMAP_PLACES.forEach((place) => {
-    if (place.latitude > bounds.north || place.latitude < bounds.south || place.longitude < bounds.west || place.longitude > bounds.east) {
-      return;
-    }
-
-    const position = projectHeatmapPlace(place, bounds, padding, mapWidth, mapHeight);
-    const isCenter = place.name === "Chatham";
-    heatmapCtx.fillStyle = isCenter ? "#050a0d" : "rgba(5, 10, 13, 0.8)";
-    heatmapCtx.strokeStyle = isCenter ? "#eff6f4" : "rgba(239, 246, 244, 0.82)";
-    heatmapCtx.lineWidth = isCenter ? 3 : 2;
-    heatmapCtx.beginPath();
-    heatmapCtx.arc(position.x, position.y, isCenter ? 8 : 5, 0, Math.PI * 2);
-    heatmapCtx.fill();
-    heatmapCtx.stroke();
-
-    heatmapCtx.font = isCenter ? "900 12px system-ui" : "800 11px system-ui";
-    const labelWidth = heatmapCtx.measureText(place.name).width;
-    const labelX = Math.min(padding + mapWidth - labelWidth - 7, position.x + 9);
-    const labelY = Math.max(padding + 14, Math.min(padding + mapHeight - 6, position.y + 4));
-    heatmapCtx.fillStyle = "rgba(5, 10, 13, 0.68)";
-    roundedRect(heatmapCtx, labelX - 4, labelY - 12, labelWidth + 8, 17, 5);
-    heatmapCtx.fill();
-    heatmapCtx.fillStyle = isCenter ? "#eff6f4" : "#d8e3e1";
-    heatmapCtx.fillText(place.name, labelX, labelY);
-  });
-}
-
-function projectHeatmapPlace(place, bounds, padding, mapWidth, mapHeight) {
+function latLonToWorld(latitude, longitude, zoom) {
+  const safeLatitude = Math.max(-85.05112878, Math.min(85.05112878, latitude));
+  const sinLatitude = Math.sin((safeLatitude * Math.PI) / 180);
+  const scale = MAP_TILE_SIZE * 2 ** zoom;
   return {
-    x: padding + ((place.longitude - bounds.west) / (bounds.east - bounds.west)) * mapWidth,
-    y: padding + ((bounds.north - place.latitude) / (bounds.north - bounds.south)) * mapHeight,
+    x: ((longitude + 180) / 360) * scale,
+    y: (0.5 - Math.log((1 + sinLatitude) / (1 - sinLatitude)) / (4 * Math.PI)) * scale,
   };
 }
 
-function drawHeatmapLabels(width, height, layer, min, max) {
-  heatmapCtx.fillStyle = "#eff6f4";
-  heatmapCtx.font = "900 15px system-ui";
-  heatmapCtx.fillText(getHeatmapTitle(layer), 34, 24);
-  heatmapCtx.fillStyle = "#82909a";
-  heatmapCtx.font = "800 12px system-ui";
-  heatmapCtx.fillText(`${formatHeatmapValue(min, layer)} low`, width - 190, 24);
-  heatmapCtx.fillText(`${formatHeatmapValue(max, layer)} high`, width - 98, 24);
+function worldToLatLon(x, y, zoom) {
+  const scale = MAP_TILE_SIZE * 2 ** zoom;
+  const longitude = (x / scale) * 360 - 180;
+  const n = Math.PI - (2 * Math.PI * y) / scale;
+  const latitude = (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+  return { latitude, longitude };
+}
+
+function projectToMapScreen(latitude, longitude, width, height) {
+  const zoom = Math.round(mapState.zoom);
+  const centerWorld = latLonToWorld(mapState.center.latitude, mapState.center.longitude, zoom);
+  const pointWorld = latLonToWorld(latitude, longitude, zoom);
+  return {
+    x: width / 2 + pointWorld.x - centerWorld.x,
+    y: height / 2 + pointWorld.y - centerWorld.y,
+  };
+}
+
+function screenToMapLocation(x, y, width, height) {
+  const zoom = Math.round(mapState.zoom);
+  const centerWorld = latLonToWorld(mapState.center.latitude, mapState.center.longitude, zoom);
+  return worldToLatLon(centerWorld.x + x - width / 2, centerWorld.y + y - height / 2, zoom);
+}
+
+function setMapCenterFromWorld(world, zoom = mapState.zoom) {
+  mapState.center = worldToLatLon(world.x, world.y, Math.round(zoom));
+}
+
+function clampMapZoom(zoom) {
+  return Math.max(MAP_MIN_ZOOM, Math.min(MAP_MAX_ZOOM, Math.round(zoom)));
+}
+
+function renderMapReadout(layer, min, max) {
+  elements.mapReadout.innerHTML = `
+    <span>${escapeHTML(getHeatmapTitle(layer))}</span>
+    <strong>${formatHeatmapValue(min, layer)} - ${formatHeatmapValue(max, layer)}</strong>
+    <small>low to high</small>
+  `;
 }
 
 function getHeatmapTitle(layer) {
+  if (layer === "feels") return "Apparent temperature";
+  if (layer === "dewpoint") return "Dew point";
+  if (layer === "humidity") return "Relative humidity";
   if (layer === "precipitation") return "Current rain intensity";
+  if (layer === "precipProbability") return "Rain probability";
   if (layer === "wind") return "Current wind speed";
+  if (layer === "gusts") return "Wind gusts";
+  if (layer === "pressure") return "Sea-level pressure";
+  if (layer === "cloud") return "Cloud cover";
+  if (layer === "visibility") return "Visibility";
+  if (layer === "cape") return "CAPE";
   return "Current temperature";
 }
 
 function formatHeatmapValue(value, layer) {
   if (!Number.isFinite(value)) return "--";
   if (layer === "precipitation") return `${value.toFixed(1)} mm`;
-  if (layer === "wind") return `${Math.round(value)} km/h`;
+  if (layer === "precipProbability" || layer === "humidity" || layer === "cloud") return `${Math.round(value)}%`;
+  if (layer === "wind" || layer === "gusts") return `${Math.round(value)} km/h`;
+  if (layer === "pressure") return `${Math.round(value)} hPa`;
+  if (layer === "visibility") return `${Math.round(value / 1000)} km`;
+  if (layer === "cape") return `${Math.round(value)} J/kg`;
   return `${value.toFixed(1)}°C`;
 }
 
@@ -695,6 +1078,67 @@ function renderForecastHistory(history = getForecastHistory()) {
       `,
     )
     .join("");
+}
+
+function getWatchlist() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(WATCHLIST_KEY));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveWatchlist(items) {
+  localStorage.setItem(WATCHLIST_KEY, JSON.stringify(items.slice(0, 8)));
+  renderWatchlist(items.slice(0, 8));
+}
+
+function pinCurrentLocation() {
+  if (!activeLocation || !latestForecast) return;
+  const existing = getWatchlist().filter((item) => Math.abs(item.latitude - activeLocation.latitude) > 0.01 || Math.abs(item.longitude - activeLocation.longitude) > 0.01);
+  const risk = calculateStormRisk(latestForecast);
+  saveWatchlist([
+    {
+      ...activeLocation,
+      pinnedAt: new Date().toISOString(),
+      temperature: latestForecast.current.temperature_2m,
+      gusts: maxNext(latestForecast, "wind_gusts_10m", 24),
+      rain: sumNext(latestForecast, "precipitation", 24),
+      risk: risk.level,
+    },
+    ...existing,
+  ]);
+  addLog(`${activeLocation.name} pinned to stormwatch.`);
+}
+
+function renderWatchlist(items = getWatchlist()) {
+  if (!items.length) {
+    elements.watchlistGrid.innerHTML = `<div class="empty-signal">No pinned locations yet.</div>`;
+    return;
+  }
+
+  elements.watchlistGrid.innerHTML = items
+    .map(
+      (item, index) => `
+        <div class="watchlist-row">
+          <div><strong>${escapeHTML([item.name, item.admin, item.country].filter(Boolean).join(", "))}</strong><small>${new Date(item.pinnedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</small></div>
+          <div><span>Temp</span><strong>${formatNumber(item.temperature)}°C</strong></div>
+          <div><span>Gust</span><strong>${Math.round(item.gusts || 0)} km/h</strong></div>
+          <div><span>Rain</span><strong>${formatNumber(item.rain)} mm</strong></div>
+          <div><span>Risk</span><strong>${escapeHTML(item.risk || "--")}</strong></div>
+          <button type="button" data-watch-index="${index}">Load</button>
+        </div>
+      `,
+    )
+    .join("");
+
+  elements.watchlistGrid.querySelectorAll("button[data-watch-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const location = getWatchlist()[Number(button.dataset.watchIndex)];
+      if (location) loadWeather(location);
+    });
+  });
 }
 
 function prepareCanvas(canvas, context) {
@@ -949,6 +1393,141 @@ function hideChartTooltip() {
   if (latestForecast) drawForecastChart(latestForecast);
 }
 
+function updateMapTooltip(event) {
+  if (!latestHeatmap?.length || mapState.drag) return;
+
+  const rect = heatmapCanvas.getBoundingClientRect();
+  const pointerX = event.clientX - rect.left;
+  const pointerY = event.clientY - rect.top;
+  const nearest = (mapState.samples || []).reduce(
+    (best, sample) => {
+      const distance = Math.hypot(sample.x - pointerX, sample.y - pointerY);
+      return distance < best.distance ? { sample, distance } : best;
+    },
+    { sample: null, distance: Infinity },
+  );
+
+  if (!nearest.sample || nearest.distance > 28) {
+    hideMapTooltip();
+    return;
+  }
+
+  const sample = nearest.sample;
+  elements.mapTooltip.innerHTML = `
+    <strong>${formatHeatmapValue(sample.value, activeHeatmapLayer)}</strong>
+    <span>${sample.latitude.toFixed(3)}, ${sample.longitude.toFixed(3)}</span>
+    <span>Temp: ${formatNumber(sample.hourly?.temperature_2m?.[activeMapHourOffset])}°C</span>
+    <span>Rain: ${formatNumber(sample.hourly?.precipitation?.[activeMapHourOffset])} mm</span>
+    <span>Wind: ${Math.round(sample.hourly?.wind_speed_10m?.[activeMapHourOffset] || 0)} km/h</span>
+  `;
+  elements.mapTooltip.classList.add("visible");
+
+  const tooltipWidth = elements.mapTooltip.offsetWidth;
+  const tooltipHeight = elements.mapTooltip.offsetHeight;
+  const left = Math.min(rect.width - tooltipWidth - 10, pointerX + 14);
+  const top = Math.max(10, Math.min(rect.height - tooltipHeight - 10, pointerY - tooltipHeight - 10));
+
+  elements.mapTooltip.style.left = `${Math.max(10, left)}px`;
+  elements.mapTooltip.style.top = `${top}px`;
+}
+
+function hideMapTooltip() {
+  elements.mapTooltip.classList.remove("visible");
+}
+
+function resetMapView(location = activeLocation || DEFAULT_LOCATION) {
+  mapState.center = {
+    latitude: location.latitude,
+    longitude: location.longitude,
+  };
+  mapState.zoom = MAP_DEFAULT_ZOOM;
+  hideMapTooltip();
+  renderHeatmap(latestHeatmap, activeHeatmapLayer);
+}
+
+function zoomMap(delta) {
+  const nextZoom = clampMapZoom(mapState.zoom + delta);
+  if (nextZoom === mapState.zoom) return;
+  mapState.zoom = nextZoom;
+  hideMapTooltip();
+  renderHeatmap(latestHeatmap, activeHeatmapLayer);
+}
+
+function queueMapRender() {
+  if (mapState.renderQueued) return;
+  mapState.renderQueued = true;
+  requestAnimationFrame(() => {
+    mapState.renderQueued = false;
+    renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  });
+}
+
+function startMapDrag(event) {
+  if (event.button !== 0) return;
+  const rect = heatmapCanvas.getBoundingClientRect();
+  const zoom = Math.round(mapState.zoom);
+  mapState.drag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    canvasX: event.clientX - rect.left,
+    canvasY: event.clientY - rect.top,
+    width: rect.width,
+    height: rect.height,
+    centerWorld: latLonToWorld(mapState.center.latitude, mapState.center.longitude, zoom),
+    zoom,
+    moved: false,
+  };
+  heatmapCanvas.classList.add("dragging");
+  heatmapCanvas.setPointerCapture(event.pointerId);
+  hideMapTooltip();
+}
+
+function moveMapDrag(event) {
+  if (!mapState.drag || mapState.drag.pointerId !== event.pointerId) {
+    updateMapTooltip(event);
+    return;
+  }
+
+  const dx = event.clientX - mapState.drag.startX;
+  const dy = event.clientY - mapState.drag.startY;
+  if (Math.hypot(dx, dy) > 5) {
+    mapState.drag.moved = true;
+  }
+  setMapCenterFromWorld(
+    {
+      x: mapState.drag.centerWorld.x - dx,
+      y: mapState.drag.centerWorld.y - dy,
+    },
+    mapState.drag.zoom,
+  );
+  queueMapRender();
+}
+
+function endMapDrag(event) {
+  if (!mapState.drag || mapState.drag.pointerId !== event.pointerId) return;
+  const drag = mapState.drag;
+  mapState.drag = null;
+  heatmapCanvas.classList.remove("dragging");
+
+  if (!drag.moved) {
+    const location = screenToMapLocation(drag.canvasX, drag.canvasY, drag.width, drag.height);
+    selectMapLocation(location.latitude, location.longitude);
+  }
+}
+
+async function selectMapLocation(latitude, longitude) {
+  try {
+    hideMapTooltip();
+    addLog(`Looking up ${latitude.toFixed(3)}, ${longitude.toFixed(3)} from map click.`);
+    const location = await reverseGeocodeLocation(latitude, longitude);
+    elements.locationInput.value = [location.name, location.admin, location.country].filter(Boolean).join(", ");
+    await loadWeather(location);
+  } catch (error) {
+    addLog(error.message);
+  }
+}
+
 function normalizeToRange(values, top, bottom) {
   const finiteValues = values.filter(Number.isFinite);
   const min = Math.min(...finiteValues);
@@ -968,27 +1547,38 @@ async function resolveLocation(query) {
 
 async function loadWeather(query = DEFAULT_LOCATION.name) {
   try {
+    const requestId = ++weatherLoadId;
     setLoadingState("Loading live weather data");
     const queryLabel = typeof query === "string" ? query : query.name;
     addLog(`Loading weather data for ${queryLabel}.`);
     activeLocation = typeof query === "string" ? await resolveLocation(query) : query;
+    activeMapHourOffset = 0;
+    elements.mapHourSlider.value = "0";
     latestForecast = await fetchForecast(activeLocation);
-    try {
-      latestHeatmap = await fetchHeatmap(activeLocation);
-    } catch (error) {
-      latestHeatmap = null;
-      addLog(error.message);
-    }
+    if (requestId !== weatherLoadId) return;
     updateCurrentConditions(activeLocation, latestForecast);
     updateWeatherWarning(latestForecast);
     renderPatterns(latestForecast);
-    renderHeatmap(latestHeatmap);
+    renderStormToolkit(latestForecast);
+    renderConfidence(latestForecast);
+    renderContext(latestForecast);
+    mapState.center = {
+      latitude: activeLocation.latitude,
+      longitude: activeLocation.longitude,
+    };
+    mapState.selected = activeLocation;
+    latestAirQuality = null;
+    latestHeatmap = null;
+    elements.airGrid.innerHTML = `<div class="empty-signal">Loading air quality data.</div>`;
+    renderHeatmapLoading();
     renderHourlyForecast(latestForecast);
     renderDailyForecast(latestForecast);
     renderWeeklyForecast(latestForecast);
     drawForecastChart(latestForecast);
     saveForecastSnapshot(activeLocation, latestForecast);
+    renderWatchlist();
     addLog(`Live Open-Meteo feed updated for ${activeLocation.name}.`);
+    hydrateSupplementalWeather(activeLocation, requestId);
   } catch (error) {
     addLog(error.message);
     elements.warningBar.className = "weather-warning advisory";
@@ -1001,6 +1591,31 @@ async function loadWeather(query = DEFAULT_LOCATION.name) {
     elements.windCompass.textContent = "--";
     elements.watchCopy.textContent = "No live precipitation data";
   }
+}
+
+async function hydrateSupplementalWeather(location, requestId) {
+  const [airResult, heatmapResult] = await Promise.allSettled([
+    fetchAirQuality(location),
+    fetchHeatmap(location),
+  ]);
+
+  if (requestId !== weatherLoadId) return;
+
+  if (airResult.status === "fulfilled") {
+    latestAirQuality = airResult.value;
+  } else {
+    latestAirQuality = null;
+    addLog(airResult.reason?.message || "Air quality request failed");
+  }
+  renderAirQuality(latestAirQuality);
+
+  if (heatmapResult.status === "fulfilled") {
+    latestHeatmap = heatmapResult.value;
+  } else {
+    latestHeatmap = null;
+    addLog(heatmapResult.reason?.message || "Regional heatmap request failed");
+  }
+  renderHeatmap(latestHeatmap);
 }
 
 elements.locationForm.addEventListener("submit", (event) => {
@@ -1019,14 +1634,38 @@ elements.clearHistoryButton.addEventListener("click", () => {
   addLog("Forecast history cleared.");
 });
 
+elements.pinLocationButton.addEventListener("click", pinCurrentLocation);
+elements.mapHourSlider.addEventListener("input", () => {
+  activeMapHourOffset = Number(elements.mapHourSlider.value) || 0;
+  hideMapTooltip();
+  renderHeatmap(latestHeatmap, activeHeatmapLayer);
+});
+
 window.addEventListener("resize", () => {
   hideChartTooltip();
+  hideMapTooltip();
   if (latestForecast) drawForecastChart(latestForecast);
   if (latestHeatmap) renderHeatmap(latestHeatmap);
 });
 
 chartCanvas.addEventListener("pointermove", updateChartTooltip);
 chartCanvas.addEventListener("pointerleave", hideChartTooltip);
+heatmapCanvas.addEventListener("pointerdown", startMapDrag);
+heatmapCanvas.addEventListener("pointermove", moveMapDrag);
+heatmapCanvas.addEventListener("pointerup", endMapDrag);
+heatmapCanvas.addEventListener("pointercancel", endMapDrag);
+heatmapCanvas.addEventListener("pointerleave", hideMapTooltip);
+heatmapCanvas.addEventListener(
+  "wheel",
+  (event) => {
+    event.preventDefault();
+    zoomMap(event.deltaY > 0 ? -1 : 1);
+  },
+  { passive: false },
+);
+elements.mapZoomIn.addEventListener("click", () => zoomMap(1));
+elements.mapZoomOut.addEventListener("click", () => zoomMap(-1));
+elements.mapReset.addEventListener("click", () => resetMapView());
 
 document.querySelectorAll(".heatmap-button").forEach((button) => {
   button.addEventListener("click", () => {
@@ -1037,4 +1676,5 @@ document.querySelectorAll(".heatmap-button").forEach((button) => {
 });
 
 renderForecastHistory();
+renderWatchlist();
 loadWeather(DEFAULT_LOCATION);

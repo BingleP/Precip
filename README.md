@@ -4,10 +4,13 @@ Static weather monitoring dashboard for Chatham, Ontario.
 
 ## Public Hosting Notes
 
-This app is designed to be hosted as a read-only static site behind Nginx. It has no account system, no server-side write endpoints, and no backend actions. Weather data is fetched directly in the browser from Open-Meteo:
+This app is designed to be hosted as a read-only static site behind Nginx. It has no account system, no server-side write endpoints, and no backend actions. Weather data is fetched directly in the browser from Open-Meteo, and map tiles plus click-location lookup are loaded from OpenStreetMap services:
 
 - `https://api.open-meteo.com`
+- `https://air-quality-api.open-meteo.com`
 - `https://geocoding-api.open-meteo.com`
+- `https://tile.openstreetmap.org`
+- `https://nominatim.openstreetmap.org`
 
 Use `nginx/precip.conf` as a starting server block. Replace:
 
@@ -18,7 +21,7 @@ The included Nginx config listens on internal port `7427`, intended for a revers
 
 Recommended deployment:
 
-1. Copy `index.html`, `styles.css`, and `app.js` to your Nginx web root.
+1. Copy `index.html`, `styles.css`, `app.js`, and `logo.svg` to your Nginx web root.
 2. Install the Nginx server block from `nginx/precip.conf`.
 3. Point your reverse proxy to `http://127.0.0.1:7427`.
 4. Put the public site behind HTTPS before exposing it.
@@ -30,7 +33,7 @@ Recommended deployment:
 - Public read-only dashboard.
 - No destructive server actions.
 - The `Clear` history button only clears forecast snapshots from the current visitor's browser `localStorage`.
-- CSP restricts scripts and styles to this site and allows network connections only to Open-Meteo.
+- CSP restricts scripts and styles to this site, allows network connections only to Open-Meteo and OpenStreetMap Nominatim, and allows same-origin images plus OpenStreetMap map tiles.
 - The receiver endpoint field is currently informational only; the app does not fetch from it.
 
 If you later add a backend or hardware feed, keep it behind a separate read-only API route and avoid exposing serial, radio, or filesystem controls publicly.
