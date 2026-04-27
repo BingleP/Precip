@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Choose a Location | Precip</title>
-    <link rel="icon" href="logo.svg?v=20260427f" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20260427f" />
+    <link rel="icon" href="logo.svg?v=20260427g" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=20260427g" />
   </head>
   <body class="welcome-page">
     <main class="welcome-shell">
       <section class="welcome-card">
         <a class="brand" href="#" aria-label="Precip home">
-          <img class="brand-mark" src="logo.svg?v=20260427f" alt="" />
+          <img class="brand-mark" src="logo.svg?v=20260427g" alt="" />
           <span class="brand-copy">
             <strong>Precip</strong>
             <small>Stormwatch console</small>
@@ -43,6 +43,9 @@
       const searchNote = document.querySelector("#welcome-search-note");
       const suggestions = document.querySelector("#welcome-suggestions");
       const cookieName = "precip.preferredLocation.v1";
+      const apiBaseUrl = ["127.0.0.1", "localhost"].includes(window.location.hostname)
+        ? "http://127.0.0.1:7428/api"
+        : "/api";
       let activeSelection = null;
       let searchTimer = null;
       let searchToken = 0;
@@ -80,11 +83,9 @@
       }
 
       async function fetchCandidates(query) {
-        const url = new URL("https://geocoding-api.open-meteo.com/v1/search");
+        const url = new URL(`${apiBaseUrl}/geocode`);
         url.searchParams.set("name", query);
         url.searchParams.set("count", "8");
-        url.searchParams.set("language", "en");
-        url.searchParams.set("format", "json");
         const response = await fetch(url);
         if (!response.ok) throw new Error("Location lookup failed");
         const data = await response.json();

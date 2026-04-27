@@ -1,0 +1,18 @@
+[Unit]
+Description=Precip weather cache proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/precip
+ExecStart=/usr/bin/python3 /opt/precip/proxy_server.py
+Restart=always
+RestartSec=3
+Environment=PRECIP_PROXY_HOST=127.0.0.1
+Environment=PRECIP_PROXY_PORT=7428
+
+[Install]
+WantedBy=multi-user.target

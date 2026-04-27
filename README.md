@@ -1,7 +1,7 @@
 # Precip
 
-Precip is a static, browser-only weather operations dashboard built for weather enthusiasts and stormwatching. It uses Open-Meteo for forecast and air-quality data, Open-Meteo geocoding for location search, and OpenStreetMap/Nominatim for map tiles and click-to-select location lookup.
-It also pulls NOAA GOES sector imagery by discovering the current animated GIF links from NOAA STAR sector pages in the browser.
+Precip is a weather operations dashboard built for weather enthusiasts and stormwatching. The UI is still static, but live data now goes through a small same-host cache proxy so the public site is less vulnerable to upstream rate limits.
+The app uses Open-Meteo for forecast and air-quality data, Open-Meteo geocoding for location search, OpenStreetMap/Nominatim for map tiles and click-to-select location lookup, and NOAA STAR for GOES sector imagery.
 
 The current app is global rather than single-city. Users choose a starting location on first visit, then the dashboard saves preferences in browser cookies.
 
@@ -34,22 +34,27 @@ The current app is global rather than single-city. Users choose a starting locat
 - `welcome.html` - first-visit location setup page
 - `styles.css` - full application styling
 - `app.js` - client-side app logic and data fetching
+- `proxy_server.py` - same-host cache proxy for weather/geocoding/NOAA sector requests
 - `logo.svg` - site mark and favicon source
 - `deploy/deploy.sh` - copy files to nginx web root and reload nginx
 - `deploy/precip.kerrick.ca.conf` - nginx config for `precip.kerrick.ca`
+- `deploy/precip-proxy.service` - systemd unit for the cache proxy
 
 ## Runtime Model
 
-Precip is a static site. There is no backend, account system, or write API.
+Precip is a mostly static site with a small read-only cache proxy. There is no account system and no write API.
 
-All weather data is requested directly from the browser:
+The browser talks to same-origin `/api/*` routes. That proxy fetches and caches:
 
 - `https://api.open-meteo.com`
 - `https://air-quality-api.open-meteo.com`
 - `https://geocoding-api.open-meteo.com`
-- `https://tile.openstreetmap.org`
 - `https://nominatim.openstreetmap.org`
 - `https://www.star.nesdis.noaa.gov`
+
+Map tiles and NOAA imagery still load directly in the browser from:
+
+- `https://tile.openstreetmap.org`
 - `https://cdn.star.nesdis.noaa.gov`
 
 User state is stored in browser cookies. No app data is written to the server.
@@ -79,9 +84,11 @@ cd /home/bingle/Projects/precip
 That script:
 
 1. copies the static site bundle into `/var/www/precip`
-2. installs the nginx site config
-3. validates nginx config
-4. reloads nginx
+2. installs the proxy server into `/opt/precip`
+3. installs the nginx and systemd service configs
+4. enables/restarts the proxy service
+5. validates nginx config
+6. reloads nginx
 
 The deployed bundle must include:
 
@@ -89,13 +96,14 @@ The deployed bundle must include:
 - `welcome.html`
 - `styles.css`
 - `app.js`
+- `proxy_server.py`
 - `logo.svg`
 
 ## Security Model
 
 - Public read-only dashboard
 - Only `GET`, `HEAD`, and `OPTIONS` are allowed by nginx
-- CSP restricts network access to Open-Meteo, OpenStreetMap, and NOAA services used by the app
+- CSP restricts browser network access to same-origin `/api/*`, OpenStreetMap tiles, and NOAA imagery
 - No destructive server-side actions
 - Preference resets only clear browser cookies for the current visitor
 

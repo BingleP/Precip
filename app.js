@@ -6,6 +6,9 @@ const HEATMAP_MAX_ROWS = 9;
 const HEATMAP_VIEW_PADDING = 120;
 const HEATMAP_CACHE_TTL_MS = 8 * 60 * 1000;
 const HEATMAP_MAX_CACHE_ENTRIES = 24;
+const FORECAST_CACHE_TTL_MS = 10 * 60 * 1000;
+const AIR_QUALITY_CACHE_TTL_MS = 20 * 60 * 1000;
+const API_RATE_LIMIT_BACKOFF_MS = 60 * 1000;
 const MAP_TILE_SIZE = 256;
 const MAP_MIN_ZOOM = 8;
 const MAP_MAX_ZOOM = 15;
@@ -168,11 +171,15 @@ const tileCache = new Map();
 const heatmapCache = new Map();
 const heatmapRequestCache = new Map();
 const satelliteCatalogCache = new Map();
+const forecastRequestCache = new Map();
+const airQualityRequestCache = new Map();
+const apiBackoffUntil = new Map();
 const chartState = {
   hoverIndex: null,
   points: [],
 };
 const heatmapButtons = [...document.querySelectorAll(".heatmap-button")];
+const API_BASE_URL = getApiBaseUrl();
 
 elements.satelliteSectorSelect.innerHTML = NOAA_SECTORS
   .map((sector) => `<option value="${sector.id}">${sector.name} (${sector.sat})</option>`)
@@ -191,6 +198,14 @@ function addLog(message) {
   while (elements.eventLog.children.length > 7) {
     elements.eventLog.lastElementChild.remove();
   }
+}
+
+function getApiBaseUrl() {
+  const host = window.location.hostname;
+  if (host === "127.0.0.1" || host === "localhost") {
+    return "http://127.0.0.1:7428/api";
+  }
+  return "/api";
 }
 
 function escapeHTML(value) {
@@ -213,6 +228,32 @@ function normalizeSearchText(value) {
 
 function formatLocationLabel(location) {
   return [location.name, location.admin, location.country].filter(Boolean).join(", ");
+}
+
+function readStorageJSON(name) {
+  try {
+    const value = window.localStorage.getItem(name);
+    return value ? JSON.parse(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStorageJSON(name, value) {
+  try {
+    window.localStorage.setItem(name, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getRoundedCoordinate(value, digits = 2) {
+  return Number(Number(value).toFixed(digits));
+}
+
+function getLocationCacheKey(location) {
+  return [getRoundedCoordinate(location.latitude), getRoundedCoordinate(location.longitude)].join(",");
 }
 
 function getNoaaSectorById(sectorId) {
@@ -330,6 +371,123 @@ function writeCookieJSON(name, value) {
   } catch {
     return false;
   }
+}
+
+function getCachedApiResponse(namespace, cacheKey, ttlMs, { allowStale = false } = {}) {
+  const entry = readStorageJSON(`${namespace}:${cacheKey}`);
+  if (!entry?.savedAt || !entry?.data) return null;
+  const age = Date.now() - entry.savedAt;
+  if (!allowStale && age > ttlMs) return null;
+  return {
+    data: entry.data,
+    age,
+    stale: age > ttlMs,
+  };
+}
+
+function setCachedApiResponse(namespace, cacheKey, data) {
+  writeStorageJSON(`${namespace}:${cacheKey}`, {
+    savedAt: Date.now(),
+    data,
+  });
+}
+
+function setApiBackoff(name) {
+  apiBackoffUntil.set(name, Date.now() + API_RATE_LIMIT_BACKOFF_MS);
+}
+
+function isApiBackedOff(name) {
+  const until = apiBackoffUntil.get(name) || 0;
+  return until > Date.now();
+}
+
+async function fetchJsonWithCache(url, {
+  namespace,
+  cacheKey,
+  ttlMs,
+  requestCache,
+  rateLimitName,
+  rateLimitMessage,
+}) {
+  const freshCached = getCachedApiResponse(namespace, cacheKey, ttlMs);
+  if (freshCached) {
+    return {
+      ...freshCached.data,
+      __precipCacheMeta: {
+        stale: false,
+        age: freshCached.age,
+      },
+    };
+  }
+
+  if (isApiBackedOff(rateLimitName)) {
+    const staleCached = getCachedApiResponse(namespace, cacheKey, ttlMs, { allowStale: true });
+    if (staleCached) {
+      return {
+        ...staleCached.data,
+        __precipCacheMeta: {
+          stale: true,
+          age: staleCached.age,
+          backedOff: true,
+        },
+      };
+    }
+    throw new Error(rateLimitMessage);
+  }
+
+  const requestKey = `${namespace}:${cacheKey}`;
+  if (requestCache.has(requestKey)) {
+    return requestCache.get(requestKey);
+  }
+
+  const request = (async () => {
+    try {
+      const response = await fetch(url);
+      if (response.status === 429) {
+        setApiBackoff(rateLimitName);
+        const staleCached = getCachedApiResponse(namespace, cacheKey, ttlMs, { allowStale: true });
+        if (staleCached) {
+          return {
+            ...staleCached.data,
+            __precipCacheMeta: {
+              stale: true,
+              age: staleCached.age,
+              rateLimited: true,
+            },
+          };
+        }
+        throw new Error(rateLimitMessage);
+      }
+      if (!response.ok) throw new Error(`${namespace} request failed`);
+      const data = await response.json();
+      setCachedApiResponse(namespace, cacheKey, data);
+      return {
+        ...data,
+        __precipCacheMeta: {
+          stale: false,
+          age: 0,
+        },
+      };
+    } catch (error) {
+      const staleCached = getCachedApiResponse(namespace, cacheKey, ttlMs, { allowStale: true });
+      if (staleCached) {
+        return {
+          ...staleCached.data,
+          __precipCacheMeta: {
+            stale: true,
+            age: staleCached.age,
+            fallback: true,
+          },
+        };
+      }
+      throw error;
+    } finally {
+      requestCache.delete(requestKey);
+    }
+  })();
+
+  requestCache.set(requestKey, request);
+  return request;
 }
 
 function normalizeMapLayer(value) {
@@ -645,11 +803,9 @@ function findCurrentIndex(times) {
 }
 
 async function geocodeLocationCandidates(query, count = LOCATION_SUGGESTION_LIMIT) {
-  const url = new URL("https://geocoding-api.open-meteo.com/v1/search");
+  const url = new URL(`${API_BASE_URL}/geocode`);
   url.searchParams.set("name", query);
   url.searchParams.set("count", String(count));
-  url.searchParams.set("language", "en");
-  url.searchParams.set("format", "json");
 
   const response = await fetch(url);
   if (!response.ok) throw new Error("Location lookup failed");
@@ -704,13 +860,9 @@ function rankLocationCandidates(candidates, query) {
 }
 
 async function reverseGeocodeLocation(latitude, longitude) {
-  const url = new URL("https://nominatim.openstreetmap.org/reverse");
-  url.searchParams.set("format", "jsonv2");
-  url.searchParams.set("lat", latitude.toFixed(6));
-  url.searchParams.set("lon", longitude.toFixed(6));
-  url.searchParams.set("zoom", "10");
-  url.searchParams.set("addressdetails", "1");
-  url.searchParams.set("accept-language", "en");
+  const url = new URL(`${API_BASE_URL}/reverse-geocode`);
+  url.searchParams.set("latitude", latitude.toFixed(6));
+  url.searchParams.set("longitude", longitude.toFixed(6));
 
   const response = await fetch(url);
   if (!response.ok) throw new Error("Map location lookup failed");
@@ -738,31 +890,32 @@ async function reverseGeocodeLocation(latitude, longitude) {
 }
 
 async function fetchForecast(location) {
-  const url = new URL("https://api.open-meteo.com/v1/forecast");
+  const url = new URL(`${API_BASE_URL}/forecast`);
   url.searchParams.set("latitude", location.latitude);
   url.searchParams.set("longitude", location.longitude);
-  url.searchParams.set("timezone", "auto");
-  url.searchParams.set("current", "temperature_2m,relative_humidity_2m,apparent_temperature,dew_point_2m,precipitation,pressure_msl,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m,weather_code,cloud_cover");
-  url.searchParams.set("hourly", "temperature_2m,dew_point_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,rain,showers,snowfall,snow_depth,weather_code,pressure_msl,surface_pressure,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,visibility,wind_speed_10m,wind_speed_100m,wind_direction_10m,wind_direction_100m,wind_gusts_10m,cape,vapour_pressure_deficit,soil_temperature_0cm,soil_moisture_0_to_1cm");
-  url.searchParams.set("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,sunrise,sunset,uv_index_max");
-  url.searchParams.set("forecast_days", "7");
-
-  const response = await fetch(url);
-  if (!response.ok) throw new Error("Weather data request failed");
-  return response.json();
+  url.searchParams.set("scope", "forecast");
+  return fetchJsonWithCache(url, {
+    namespace: "precip.forecastCache.v1",
+    cacheKey: getLocationCacheKey(location),
+    ttlMs: FORECAST_CACHE_TTL_MS,
+    requestCache: forecastRequestCache,
+    rateLimitName: "forecast",
+    rateLimitMessage: "Weather provider is temporarily rate-limiting requests. Try again in about a minute.",
+  });
 }
 
 async function fetchAirQuality(location) {
-  const url = new URL("https://air-quality-api.open-meteo.com/v1/air-quality");
+  const url = new URL(`${API_BASE_URL}/air-quality`);
   url.searchParams.set("latitude", location.latitude);
   url.searchParams.set("longitude", location.longitude);
-  url.searchParams.set("timezone", "auto");
-  url.searchParams.set("hourly", "pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,ozone,uv_index,us_aqi");
-  url.searchParams.set("forecast_days", "2");
-
-  const response = await fetch(url);
-  if (!response.ok) throw new Error("Air quality request failed");
-  return response.json();
+  return fetchJsonWithCache(url, {
+    namespace: "precip.airCache.v1",
+    cacheKey: getLocationCacheKey(location),
+    ttlMs: AIR_QUALITY_CACHE_TTL_MS,
+    requestCache: airQualityRequestCache,
+    rateLimitName: "air-quality",
+    rateLimitMessage: "Air quality provider is temporarily rate-limiting requests.",
+  });
 }
 
 async function fetchNoaaSectorCatalog(sector) {
@@ -772,7 +925,7 @@ async function fetchNoaaSectorCatalog(sector) {
     return cached.data;
   }
 
-  const response = await fetch(`https://www.star.nesdis.noaa.gov/goes/sector.php?sat=${sector.sat}&sector=${sector.id}`);
+  const response = await fetch(`${API_BASE_URL}/noaa-sector?sat=${encodeURIComponent(sector.sat)}&sector=${encodeURIComponent(sector.id)}`);
   if (!response.ok) throw new Error("NOAA sector page request failed");
 
   const html = await response.text();
@@ -821,12 +974,10 @@ async function fetchHeatmap() {
 
   const points = buildHeatmapPoints(viewport);
   const request = (async () => {
-    const url = new URL("https://api.open-meteo.com/v1/forecast");
+    const url = new URL(`${API_BASE_URL}/forecast`);
     url.searchParams.set("latitude", points.map((point) => point.latitude.toFixed(4)).join(","));
     url.searchParams.set("longitude", points.map((point) => point.longitude.toFixed(4)).join(","));
-    url.searchParams.set("timezone", "auto");
-    url.searchParams.set("hourly", "temperature_2m,dew_point_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,wind_speed_10m,wind_gusts_10m,pressure_msl,cloud_cover,visibility,cape");
-    url.searchParams.set("forecast_hours", String(MAP_HOURS_TO_SHOW));
+    url.searchParams.set("scope", "heatmap");
 
     const response = await fetch(url);
     if (!response.ok) throw new Error("Regional heatmap request failed");
@@ -996,6 +1147,14 @@ function setLoadingState(message) {
   elements.pressureTrend.textContent = "Waiting for API response";
   elements.windDirection.textContent = "Waiting for API response";
   elements.watchCopy.textContent = "Waiting for API response";
+}
+
+function applyForecastCacheStatus(forecast) {
+  const cacheMeta = forecast?.__precipCacheMeta;
+  if (!cacheMeta?.stale) return;
+  const ageMinutes = Math.max(1, Math.round((cacheMeta.age || 0) / 60000));
+  elements.tempTrend.textContent = `Showing cached forecast from about ${ageMinutes} minute${ageMinutes === 1 ? "" : "s"} ago`;
+  addLog(`Using cached forecast data (${ageMinutes} minute${ageMinutes === 1 ? "" : "s"} old).`);
 }
 
 function updateCurrentConditions(location, forecast) {
@@ -2324,6 +2483,7 @@ async function loadWeather(query) {
     latestForecast = await fetchForecast(activeLocation);
     if (requestId !== weatherLoadId) return;
     updateCurrentConditions(activeLocation, latestForecast);
+    applyForecastCacheStatus(latestForecast);
     updateWeatherWarning(latestForecast);
     renderPatterns(latestForecast);
     renderStormToolkit(latestForecast);
