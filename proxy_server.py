@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import concurrent.futures
 import json
 import math
 import os
@@ -156,6 +157,36 @@ def dew_point_celsius(temp_c, humidity):
     return round((b * alpha) / (a - alpha), 1)
 
 
+def estimate_visibility_meters(humidity, cloud_cover, precipitation):
+    if humidity is None and cloud_cover is None and precipitation is None:
+        return None
+
+    visibility = 24000
+    if humidity is not None:
+        visibility -= max(0, humidity - 55) * 110
+    if cloud_cover is not None:
+        visibility -= max(0, cloud_cover - 40) * 55
+    if precipitation is not None:
+        visibility -= precipitation * 3200
+    return max(800, min(24000, round(visibility)))
+
+
+def estimate_gust_kmh(wind_speed):
+    if wind_speed is None:
+        return None
+    return round(max(wind_speed, wind_speed * 1.35), 1)
+
+
+def estimate_cape_jkg(temperature, dew_point, precipitation):
+    if temperature is None or dew_point is None:
+        return 0
+    spread = max(0.0, temperature - dew_point)
+    moisture_bonus = max(0.0, dew_point - 8.0) * 28
+    instability_penalty = spread * 22
+    precipitation_bonus = max(0.0, precipitation or 0.0) * 35
+    return max(0, round(moisture_bonus + precipitation_bonus - instability_penalty))
+
+
 def symbol_to_weather_code(symbol):
     symbol = (symbol or "").lower()
     if "thunder" in symbol:
@@ -278,9 +309,11 @@ def build_met_no_forecast(latitude, longitude):
         humidity = instant.get("relative_humidity")
         wind_speed = instant.get("wind_speed")
         wind_gust = instant.get("wind_speed_of_gust")
+        cloud_cover = instant.get("cloud_area_fraction")
+        dew_point = dew_point_celsius(temperature, humidity)
         hourly["time"].append(item.get("time"))
         hourly["temperature_2m"].append(temperature)
-        hourly["dew_point_2m"].append(dew_point_celsius(temperature, humidity))
+        hourly["dew_point_2m"].append(dew_point)
         hourly["apparent_temperature"].append(temperature)
         hourly["relative_humidity_2m"].append(humidity)
         hourly["precipitation_probability"].append(100 if precipitation and precipitation > 0 else 0)
@@ -292,17 +325,17 @@ def build_met_no_forecast(latitude, longitude):
         hourly["weather_code"].append(symbol_to_weather_code(symbol_code))
         hourly["pressure_msl"].append(instant.get("air_pressure_at_sea_level"))
         hourly["surface_pressure"].append(instant.get("air_pressure_at_sea_level"))
-        hourly["cloud_cover"].append(instant.get("cloud_area_fraction"))
+        hourly["cloud_cover"].append(cloud_cover)
         hourly["cloud_cover_low"].append(None)
         hourly["cloud_cover_mid"].append(None)
         hourly["cloud_cover_high"].append(None)
-        hourly["visibility"].append(None)
+        hourly["visibility"].append(estimate_visibility_meters(humidity, cloud_cover, precipitation))
         hourly["wind_speed_10m"].append(wind_speed)
         hourly["wind_speed_100m"].append(None)
         hourly["wind_direction_10m"].append(instant.get("wind_from_direction"))
         hourly["wind_direction_100m"].append(None)
-        hourly["wind_gusts_10m"].append(wind_gust)
-        hourly["cape"].append(None)
+        hourly["wind_gusts_10m"].append(wind_gust if wind_gust is not None else estimate_gust_kmh(wind_speed))
+        hourly["cape"].append(estimate_cape_jkg(temperature, dew_point, precipitation))
         hourly["vapour_pressure_deficit"].append(None)
         hourly["soil_temperature_0cm"].append(None)
         hourly["soil_moisture_0_to_1cm"].append(None)
@@ -341,6 +374,23 @@ def build_met_no_forecast(latitude, longitude):
         ),
     }
     return json.dumps(forecast).encode("utf-8")
+
+
+def build_met_no_heatmap_batch(latitude_value, longitude_value):
+    latitudes = [float(item) for item in str(latitude_value).split(",")]
+    longitudes = [float(item) for item in str(longitude_value).split(",")]
+    if len(latitudes) != len(longitudes):
+        raise ValueError("latitude/longitude point counts do not match")
+
+    def build_point(index):
+        forecast = json.loads(build_met_no_forecast(latitudes[index], longitudes[index]).decode("utf-8"))
+        return {"hourly": forecast.get("hourly", {})}
+
+    max_workers = min(8, max(1, len(latitudes)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        rows = list(executor.map(build_point, range(len(latitudes))))
+
+    return json.dumps(rows).encode("utf-8")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -391,6 +441,18 @@ class Handler(BaseHTTPRequestHandler):
             if error.code == 429 and parsed.path == "/api/forecast" and query.get("scope", ["forecast"])[0] == "forecast":
                 try:
                     fallback_body = build_met_no_forecast(require(query, "latitude"), require(query, "longitude"))
+                    cache_set(cache_key, fallback_body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
+                    self.send_response(200)
+                    self.send_common_headers("application/json; charset=utf-8", len(fallback_body))
+                    self.send_header("X-Precip-Cache", "FALLBACK")
+                    self.end_headers()
+                    self.wfile.write(fallback_body)
+                    return
+                except Exception:
+                    pass
+            if error.code == 429 and parsed.path == "/api/forecast" and query.get("scope", ["heatmap"])[0] == "heatmap":
+                try:
+                    fallback_body = build_met_no_heatmap_batch(require(query, "latitude"), require(query, "longitude"))
                     cache_set(cache_key, fallback_body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
                     self.send_response(200)
                     self.send_common_headers("application/json; charset=utf-8", len(fallback_body))

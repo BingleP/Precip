@@ -1,8 +1,8 @@
 const HOURS_TO_SHOW = 24;
-const HEATMAP_MIN_COLUMNS = 6;
-const HEATMAP_MAX_COLUMNS = 11;
-const HEATMAP_MIN_ROWS = 5;
-const HEATMAP_MAX_ROWS = 9;
+const HEATMAP_MIN_COLUMNS = 5;
+const HEATMAP_MAX_COLUMNS = 7;
+const HEATMAP_MIN_ROWS = 4;
+const HEATMAP_MAX_ROWS = 6;
 const HEATMAP_VIEW_PADDING = 120;
 const HEATMAP_CACHE_TTL_MS = 8 * 60 * 1000;
 const HEATMAP_MAX_CACHE_ENTRIES = 24;
@@ -203,9 +203,14 @@ function addLog(message) {
 function getApiBaseUrl() {
   const host = window.location.hostname;
   if (host === "127.0.0.1" || host === "localhost") {
-    return "http://127.0.0.1:7428/api";
+    return "http://127.0.0.1:7428";
   }
-  return "/api";
+  return window.location.origin;
+}
+
+function buildApiUrl(path) {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return new URL(`/api${normalizedPath}`, API_BASE_URL);
 }
 
 function escapeHTML(value) {
@@ -803,7 +808,7 @@ function findCurrentIndex(times) {
 }
 
 async function geocodeLocationCandidates(query, count = LOCATION_SUGGESTION_LIMIT) {
-  const url = new URL(`${API_BASE_URL}/geocode`);
+  const url = buildApiUrl("/geocode");
   url.searchParams.set("name", query);
   url.searchParams.set("count", String(count));
 
@@ -860,7 +865,7 @@ function rankLocationCandidates(candidates, query) {
 }
 
 async function reverseGeocodeLocation(latitude, longitude) {
-  const url = new URL(`${API_BASE_URL}/reverse-geocode`);
+  const url = buildApiUrl("/reverse-geocode");
   url.searchParams.set("latitude", latitude.toFixed(6));
   url.searchParams.set("longitude", longitude.toFixed(6));
 
@@ -890,7 +895,7 @@ async function reverseGeocodeLocation(latitude, longitude) {
 }
 
 async function fetchForecast(location) {
-  const url = new URL(`${API_BASE_URL}/forecast`);
+  const url = buildApiUrl("/forecast");
   url.searchParams.set("latitude", location.latitude);
   url.searchParams.set("longitude", location.longitude);
   url.searchParams.set("scope", "forecast");
@@ -905,7 +910,7 @@ async function fetchForecast(location) {
 }
 
 async function fetchAirQuality(location) {
-  const url = new URL(`${API_BASE_URL}/air-quality`);
+  const url = buildApiUrl("/air-quality");
   url.searchParams.set("latitude", location.latitude);
   url.searchParams.set("longitude", location.longitude);
   return fetchJsonWithCache(url, {
@@ -925,7 +930,10 @@ async function fetchNoaaSectorCatalog(sector) {
     return cached.data;
   }
 
-  const response = await fetch(`${API_BASE_URL}/noaa-sector?sat=${encodeURIComponent(sector.sat)}&sector=${encodeURIComponent(sector.id)}`);
+  const url = buildApiUrl("/noaa-sector");
+  url.searchParams.set("sat", sector.sat);
+  url.searchParams.set("sector", sector.id);
+  const response = await fetch(url);
   if (!response.ok) throw new Error("NOAA sector page request failed");
 
   const html = await response.text();
@@ -974,7 +982,7 @@ async function fetchHeatmap() {
 
   const points = buildHeatmapPoints(viewport);
   const request = (async () => {
-    const url = new URL(`${API_BASE_URL}/forecast`);
+    const url = buildApiUrl("/forecast");
     url.searchParams.set("latitude", points.map((point) => point.latitude.toFixed(4)).join(","));
     url.searchParams.set("longitude", points.map((point) => point.longitude.toFixed(4)).join(","));
     url.searchParams.set("scope", "heatmap");
@@ -1041,12 +1049,12 @@ function getHeatmapViewportDefinition() {
 
 function getHeatmapColumnCount(width, zoom) {
   const zoomBias = Math.max(0, zoom - MAP_DEFAULT_ZOOM);
-  return Math.max(HEATMAP_MIN_COLUMNS, Math.min(HEATMAP_MAX_COLUMNS, Math.round(width / 165) + Math.min(3, zoomBias)));
+  return Math.max(HEATMAP_MIN_COLUMNS, Math.min(HEATMAP_MAX_COLUMNS, Math.round(width / 220) + Math.min(2, zoomBias)));
 }
 
 function getHeatmapRowCount(height, zoom) {
   const zoomBias = Math.max(0, zoom - MAP_DEFAULT_ZOOM);
-  return Math.max(HEATMAP_MIN_ROWS, Math.min(HEATMAP_MAX_ROWS, Math.round(height / 135) + Math.min(2, zoomBias)));
+  return Math.max(HEATMAP_MIN_ROWS, Math.min(HEATMAP_MAX_ROWS, Math.round(height / 180) + Math.min(1, zoomBias)));
 }
 
 function getHeatmapViewportCacheKey(viewport) {

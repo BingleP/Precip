@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=www-data
-Group=www-data
+User=nobody
+Group=nobody
 WorkingDirectory=/opt/precip
 ExecStart=/usr/bin/python3 /opt/precip/proxy_server.py
 Restart=always

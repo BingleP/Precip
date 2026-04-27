@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Choose a Location | Precip</title>
-    <link rel="icon" href="logo.svg?v=20260427g" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20260427g" />
+    <link rel="icon" href="logo.svg?v=20260427h" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=20260427h" />
   </head>
   <body class="welcome-page">
     <main class="welcome-shell">
       <section class="welcome-card">
         <a class="brand" href="#" aria-label="Precip home">
-          <img class="brand-mark" src="logo.svg?v=20260427g" alt="" />
+          <img class="brand-mark" src="logo.svg?v=20260427h" alt="" />
           <span class="brand-copy">
             <strong>Precip</strong>
             <small>Stormwatch console</small>
@@ -44,11 +44,16 @@
       const suggestions = document.querySelector("#welcome-suggestions");
       const cookieName = "precip.preferredLocation.v1";
       const apiBaseUrl = ["127.0.0.1", "localhost"].includes(window.location.hostname)
-        ? "http://127.0.0.1:7428/api"
-        : "/api";
+        ? "http://127.0.0.1:7428"
+        : window.location.origin;
       let activeSelection = null;
       let searchTimer = null;
       let searchToken = 0;
+
+      function buildApiUrl(path) {
+        const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+        return new URL(`/api${normalizedPath}`, apiBaseUrl);
+      }
 
       function escapeHTML(value) {
         return String(value ?? "")
@@ -83,7 +88,7 @@
       }
 
       async function fetchCandidates(query) {
-        const url = new URL(`${apiBaseUrl}/geocode`);
+        const url = buildApiUrl("/geocode");
         url.searchParams.set("name", query);
         url.searchParams.set("count", "8");
         const response = await fetch(url);
