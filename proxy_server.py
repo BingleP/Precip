@@ -33,6 +33,7 @@ ALLOWED_ENDPOINTS = {
 
 cache = {}
 cache_lock = threading.Lock()
+PLACE_CLASSES = {"place", "boundary"}
 
 
 def cache_get(key, allow_stale=False):
@@ -146,6 +147,138 @@ def fetch_upstream(url, content_type):
         body = response.read()
         upstream_type = response.headers.get_content_type()
         return body, response.status, content_type if content_type.startswith("text/html") else f"{upstream_type}; charset=utf-8"
+
+
+def fetch_json(url):
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=25) as response:
+        return json.load(response)
+
+
+def normalize_text(value):
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def build_open_meteo_geocode_url(name, count):
+    return "https://geocoding-api.open-meteo.com/v1/search?" + urllib.parse.urlencode({
+        "name": name,
+        "count": str(count),
+        "language": "en",
+        "format": "json",
+    })
+
+
+def build_nominatim_search_url(name, count):
+    return "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode({
+        "q": name,
+        "format": "jsonv2",
+        "addressdetails": "1",
+        "limit": str(count * 2),
+    })
+
+
+def convert_open_meteo_result(result):
+    return {
+        "id": result.get("id"),
+        "name": result.get("name"),
+        "latitude": result.get("latitude"),
+        "longitude": result.get("longitude"),
+        "country_code": result.get("country_code"),
+        "country": result.get("country"),
+        "admin1": result.get("admin1"),
+        "timezone": result.get("timezone"),
+        "population": result.get("population") or 0,
+    }
+
+
+def convert_nominatim_result(result):
+    address = result.get("address") or {}
+    osm_class = result.get("category") or result.get("class")
+    if osm_class not in PLACE_CLASSES:
+        return None
+
+    name = (
+        address.get("city")
+        or address.get("town")
+        or address.get("village")
+        or address.get("municipality")
+        or address.get("hamlet")
+        or address.get("county")
+        or result.get("name")
+        or (result.get("display_name") or "").split(",")[0].strip()
+    )
+    if not name:
+        return None
+
+    return {
+        "id": f"osm-{result.get('osm_type', 'x')}-{result.get('osm_id', '0')}",
+        "name": name,
+        "latitude": float(result.get("lat")),
+        "longitude": float(result.get("lon")),
+        "country_code": (address.get("country_code") or "").upper() or None,
+        "country": address.get("country"),
+        "admin1": address.get("state") or address.get("province") or address.get("region") or address.get("county"),
+        "timezone": "auto",
+        "population": 0,
+    }
+
+
+def geocode_dedupe_key(result):
+    return "|".join([
+        normalize_text(result.get("name")),
+        normalize_text(result.get("admin1")),
+        normalize_text(result.get("country")),
+    ])
+
+
+def build_geocode_payload(name, count):
+    open_meteo_url = build_open_meteo_geocode_url(name, count)
+    nominatim_url = build_nominatim_search_url(name, count)
+    sources = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(fetch_json, open_meteo_url),
+            executor.submit(fetch_json, nominatim_url),
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                sources.append(future.result())
+            except Exception:
+                continue
+
+    merged = []
+    seen = set()
+
+    for payload in sources:
+        if isinstance(payload, dict):
+            raw_results = payload.get("results") or []
+            converted = [convert_open_meteo_result(item) for item in raw_results]
+        else:
+            converted = [convert_nominatim_result(item) for item in payload]
+
+        for item in converted:
+            if not item or not item.get("name"):
+                continue
+            key = geocode_dedupe_key(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+
+    normalized_query = normalize_text(name)
+    merged.sort(key=lambda item: (
+        0 if normalize_text(item.get("name")) == normalized_query else 1,
+        0 if normalize_text(item.get("admin1")) == normalized_query else 1,
+        -(item.get("population") or 0),
+        normalize_text(item.get("country")),
+        normalize_text(item.get("admin1")),
+    ))
+
+    return json.dumps({
+        "results": merged[:count],
+        "generationtime_ms": 0,
+    }).encode("utf-8")
 
 
 def dew_point_celsius(temp_c, humidity):
@@ -427,6 +560,17 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         try:
+            if parsed.path == "/api/geocode":
+                name = require(query, "name").strip()
+                count = min(10, max(1, int(query.get("count", ["8"])[0])))
+                body = build_geocode_payload(name, count)
+                cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
+                self.send_response(200)
+                self.send_common_headers("application/json; charset=utf-8", len(body))
+                self.send_header("X-Precip-Cache", "MISS")
+                self.end_headers()
+                self.wfile.write(body)
+                return
             upstream_url, expected_type = build_upstream(parsed.path, query)
             body, status, content_type = fetch_upstream(upstream_url, expected_type)
         except urllib.error.HTTPError as error:
