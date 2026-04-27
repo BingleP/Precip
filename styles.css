@@ -617,6 +617,7 @@ a {
 }
 
 .operations-board,
+.satellite-board,
 .insights-board,
 .forecast-board,
 .support-board {
@@ -651,6 +652,10 @@ a {
 
 .forecast-board {
   grid-template-columns: minmax(300px, 0.95fr) minmax(0, 1.35fr);
+}
+
+.satellite-board {
+  grid-template-columns: 1fr;
 }
 
 .support-board {
@@ -873,6 +878,62 @@ a {
   height: 8px;
   border-radius: 999px;
   background: linear-gradient(90deg, #72aee6 0%, #81c5ab 44%, #d8a06a 72%, #cf6d72 100%);
+}
+
+.satellite-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.satellite-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.satellite-actions {
+  align-content: space-between;
+}
+
+.satellite-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  text-decoration: none;
+}
+
+.satellite-stage {
+  position: relative;
+  min-height: 320px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0f141a;
+}
+
+#satellite-image {
+  display: block;
+  width: 100%;
+  min-height: 320px;
+  object-fit: cover;
+  background: #0f141a;
+}
+
+#satellite-image[hidden] {
+  display: none;
+}
+
+#satellite-empty {
+  position: absolute;
+  inset: 18px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+#satellite-empty[hidden] {
+  display: none;
 }
 
 .overview-panel {
@@ -1478,6 +1539,7 @@ a {
   .insights-board,
   .forecast-board,
   .support-board,
+  .satellite-controls,
   .daily-grid,
   .hardware-layout,
   .signal-readout,

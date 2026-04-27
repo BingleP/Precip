@@ -264,6 +264,37 @@
           </article>
         </section>
 
+        <section class="satellite-board">
+          <article class="panel satellite-panel" id="satellite">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">NOAA Satellite</span>
+                <h2>GOES Sector Animation</h2>
+              </div>
+              <span class="status-pill standby" id="satellite-status">Awaiting location</span>
+            </div>
+            <p class="panel-subtitle" id="satellite-copy">The nearest NOAA GOES sector animation will load here after a location is selected. You can override the sector and imagery product at any time.</p>
+            <div class="satellite-controls">
+              <label class="setting-block" for="satellite-sector-select">
+                <span class="setting-label">Sector</span>
+                <select class="settings-select" id="satellite-sector-select"></select>
+              </label>
+              <label class="setting-block" for="satellite-product-select">
+                <span class="setting-label">Animation</span>
+                <select class="settings-select" id="satellite-product-select"></select>
+              </label>
+              <div class="setting-block satellite-actions">
+                <span class="setting-label">Source</span>
+                <a class="ghost-button satellite-link" id="satellite-link" href="https://www.star.nesdis.noaa.gov/GOES/" target="_blank" rel="noreferrer">Open NOAA</a>
+              </div>
+            </div>
+            <div class="satellite-stage">
+              <img id="satellite-image" alt="" />
+              <div class="empty-signal" id="satellite-empty">Select a location to load the nearest NOAA sector animation.</div>
+            </div>
+          </article>
+        </section>
+
         <section class="insights-board">
           <article class="panel" id="patterns">
             <div class="panel-header">

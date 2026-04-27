@@ -1,6 +1,7 @@
 # Precip
 
 Precip is a static, browser-only weather operations dashboard built for weather enthusiasts and stormwatching. It uses Open-Meteo for forecast and air-quality data, Open-Meteo geocoding for location search, and OpenStreetMap/Nominatim for map tiles and click-to-select location lookup.
+It also pulls NOAA GOES sector imagery by discovering the current animated GIF links from NOAA STAR sector pages in the browser.
 
 The current app is global rather than single-city. Users choose a starting location on first visit, then the dashboard saves preferences in browser cookies.
 
@@ -20,6 +21,10 @@ The current app is global rather than single-city. Users choose a starting locat
   - click-to-load any map point
   - viewport-based heatmap sampling
   - cursor hover readout with coordinates and interpolated weather values
+- NOAA GOES satellite panel with:
+  - nearest-sector auto selection from the active location
+  - manual sector override
+  - live animated imagery product selection
 - Current conditions, hourly forecast, daily forecast, weekly outlook
 - Stormwatch metrics, air quality, forecast confidence, and regional context
 
@@ -44,6 +49,8 @@ All weather data is requested directly from the browser:
 - `https://geocoding-api.open-meteo.com`
 - `https://tile.openstreetmap.org`
 - `https://nominatim.openstreetmap.org`
+- `https://www.star.nesdis.noaa.gov`
+- `https://cdn.star.nesdis.noaa.gov`
 
 User state is stored in browser cookies. No app data is written to the server.
 
@@ -88,7 +95,7 @@ The deployed bundle must include:
 
 - Public read-only dashboard
 - Only `GET`, `HEAD`, and `OPTIONS` are allowed by nginx
-- CSP restricts network access to Open-Meteo and OpenStreetMap services used by the app
+- CSP restricts network access to Open-Meteo, OpenStreetMap, and NOAA services used by the app
 - No destructive server-side actions
 - Preference resets only clear browser cookies for the current visitor
 

@@ -22,10 +22,42 @@ const SETTINGS_KEY = "precip.settings.v1";
 const MAX_HISTORY_ITEMS = 12;
 const MAP_HOURS_TO_SHOW = 24;
 const LOCATION_SUGGESTION_LIMIT = 8;
+const SATELLITE_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_APP_SETTINGS = {
   mapLayer: "temperature",
   mapHourOffset: 0,
 };
+const NOAA_SECTORS = [
+  { id: "ak", name: "Alaska", sat: "G18", latitude: 64.2, longitude: -150.0 },
+  { id: "cak", name: "Central Alaska", sat: "G18", latitude: 64.8, longitude: -149.5 },
+  { id: "sea", name: "Southeastern Alaska", sat: "G18", latitude: 58.3, longitude: -135.5 },
+  { id: "can", name: "Canada/Northern U.S.", sat: "G19", latitude: 49.0, longitude: -86.0 },
+  { id: "na", name: "Northern Atlantic", sat: "G19", latitude: 43.0, longitude: -49.0 },
+  { id: "np", name: "Northern Pacific", sat: "G18", latitude: 42.0, longitude: -154.0 },
+  { id: "wus", name: "U.S. Pacific Coast", sat: "G18", latitude: 37.5, longitude: -123.5 },
+  { id: "pnw", name: "Pacific Northwest", sat: "G18", latitude: 46.0, longitude: -121.5 },
+  { id: "nr", name: "Northern Rockies", sat: "G19", latitude: 46.5, longitude: -111.5 },
+  { id: "umv", name: "Upper Mississippi Valley", sat: "G19", latitude: 44.5, longitude: -92.0 },
+  { id: "cgl", name: "Great Lakes", sat: "G19", latitude: 44.0, longitude: -84.5 },
+  { id: "ne", name: "Northeast", sat: "G19", latitude: 42.5, longitude: -72.0 },
+  { id: "psw", name: "Pacific Southwest", sat: "G18", latitude: 34.0, longitude: -117.5 },
+  { id: "sr", name: "Southern Rockies", sat: "G19", latitude: 37.0, longitude: -106.5 },
+  { id: "sp", name: "Southern Plains", sat: "G19", latitude: 34.5, longitude: -98.0 },
+  { id: "smv", name: "Southern Mississippi Valley", sat: "G19", latitude: 33.0, longitude: -90.5 },
+  { id: "se", name: "Southeast", sat: "G19", latitude: 32.5, longitude: -84.0 },
+  { id: "eus", name: "U.S. Atlantic Coast", sat: "G19", latitude: 33.5, longitude: -77.5 },
+  { id: "mex", name: "Mexico", sat: "G19", latitude: 23.0, longitude: -102.0 },
+  { id: "ga", name: "Gulf of America", sat: "G19", latitude: 25.5, longitude: -89.5 },
+  { id: "car", name: "Caribbean", sat: "G19", latitude: 17.5, longitude: -71.0 },
+  { id: "pr", name: "Puerto Rico", sat: "G19", latitude: 18.2, longitude: -66.5 },
+  { id: "taw", name: "Tropical Atlantic", sat: "G19", latitude: 18.0, longitude: -52.0 },
+  { id: "hi", name: "Hawaii", sat: "G18", latitude: 20.5, longitude: -157.0 },
+  { id: "tpw", name: "Tropical Pacific", sat: "G18", latitude: 13.0, longitude: -145.0 },
+  { id: "tsp", name: "South Pacific", sat: "G18", latitude: -15.0, longitude: -145.0 },
+  { id: "eep", name: "Eastern East Pacific", sat: "G19", latitude: 14.0, longitude: -107.0 },
+  { id: "cam", name: "Central America", sat: "G19", latitude: 14.0, longitude: -88.0 },
+];
+const NOAA_AUTO_SECTOR_IDS = ["ak", "can", "na", "np", "wus", "pnw", "psw", "sr", "sp", "smv", "se", "eus", "mex", "ga", "car", "pr", "hi", "taw", "tpw", "eep", "cam"];
 
 const elements = {
   stationTitle: document.querySelector("#station-title"),
@@ -71,6 +103,13 @@ const elements = {
   mapZoomIn: document.querySelector("#map-zoom-in"),
   mapZoomOut: document.querySelector("#map-zoom-out"),
   mapReset: document.querySelector("#map-reset"),
+  satelliteStatus: document.querySelector("#satellite-status"),
+  satelliteCopy: document.querySelector("#satellite-copy"),
+  satelliteSectorSelect: document.querySelector("#satellite-sector-select"),
+  satelliteProductSelect: document.querySelector("#satellite-product-select"),
+  satelliteLink: document.querySelector("#satellite-link"),
+  satelliteImage: document.querySelector("#satellite-image"),
+  satelliteEmpty: document.querySelector("#satellite-empty"),
   locationForm: document.querySelector("#location-form"),
   locationInput: document.querySelector("#location-input"),
   locationSearchNote: document.querySelector("#location-search-note"),
@@ -106,7 +145,10 @@ let latestForecast = null;
 let latestHeatmap = null;
 let latestHeatmapMeta = null;
 let latestAirQuality = null;
+let activeSatelliteSectorId = "";
+let activeSatelliteProductKey = "";
 let weatherLoadId = 0;
+let satelliteRequestToken = 0;
 let heatmapRefreshToken = 0;
 let heatmapRefreshTimer = null;
 let activeHeatmapLayer = "temperature";
@@ -125,11 +167,16 @@ const mapState = {
 const tileCache = new Map();
 const heatmapCache = new Map();
 const heatmapRequestCache = new Map();
+const satelliteCatalogCache = new Map();
 const chartState = {
   hoverIndex: null,
   points: [],
 };
 const heatmapButtons = [...document.querySelectorAll(".heatmap-button")];
+
+elements.satelliteSectorSelect.innerHTML = NOAA_SECTORS
+  .map((sector) => `<option value="${sector.id}">${sector.name} (${sector.sat})</option>`)
+  .join("");
 
 function addLog(message) {
   const item = document.createElement("li");
@@ -166,6 +213,89 @@ function normalizeSearchText(value) {
 
 function formatLocationLabel(location) {
   return [location.name, location.admin, location.country].filter(Boolean).join(", ");
+}
+
+function getNoaaSectorById(sectorId) {
+  return NOAA_SECTORS.find((sector) => sector.id === sectorId) || NOAA_SECTORS[0];
+}
+
+function getAutoNoaaSectors() {
+  return NOAA_AUTO_SECTOR_IDS.map(getNoaaSectorById);
+}
+
+function haversineDistance(latitudeA, longitudeA, latitudeB, longitudeB) {
+  const toRadians = (value) => (value * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const latDelta = toRadians(latitudeB - latitudeA);
+  const lonDelta = toRadians(longitudeB - longitudeA);
+  const startLatitude = toRadians(latitudeA);
+  const endLatitude = toRadians(latitudeB);
+  const a = Math.sin(latDelta / 2) ** 2 + Math.cos(startLatitude) * Math.cos(endLatitude) * Math.sin(lonDelta / 2) ** 2;
+  return 2 * earthRadiusKm * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function getNearestNoaaSector(location, sectors = NOAA_SECTORS) {
+  return sectors.reduce((best, sector) => {
+    const distance = haversineDistance(location.latitude, location.longitude, sector.latitude, sector.longitude);
+    return distance < best.distance ? { sector, distance } : best;
+  }, { sector: sectors[0] || NOAA_SECTORS[0], distance: Number.POSITIVE_INFINITY }).sector;
+}
+
+function locationMatchesAdmin(location, names) {
+  const admin = normalizeSearchText(location.admin || "");
+  return names.some((name) => admin.includes(normalizeSearchText(name)));
+}
+
+function resolveAutoNoaaSector(location) {
+  const country = String(location.country || "").toUpperCase();
+  const latitude = Number(location.latitude);
+  const longitude = Number(location.longitude);
+
+  if (country === "CA" || country === "CANADA") {
+    return getNoaaSectorById("can");
+  }
+
+  if (country === "US" || country === "USA" || country === "UNITED STATES") {
+    if (locationMatchesAdmin(location, ["alaska"])) return getNoaaSectorById("ak");
+    if (locationMatchesAdmin(location, ["hawaii"])) return getNoaaSectorById("hi");
+    if (locationMatchesAdmin(location, ["florida", "georgia", "south carolina", "north carolina", "alabama", "mississippi", "tennessee"])) {
+      return getNoaaSectorById("se");
+    }
+    if (locationMatchesAdmin(location, ["louisiana", "texas"])) return getNoaaSectorById("sp");
+    if (locationMatchesAdmin(location, ["virginia", "maryland", "delaware", "new jersey"])) return getNoaaSectorById("eus");
+    if (locationMatchesAdmin(location, ["new york", "connecticut", "rhode island", "massachusetts", "vermont", "new hampshire", "maine", "pennsylvania"])) {
+      return getNoaaSectorById("can");
+    }
+    if (locationMatchesAdmin(location, ["washington", "oregon", "idaho"])) return getNoaaSectorById("pnw");
+    if (locationMatchesAdmin(location, ["california"])) return getNoaaSectorById("wus");
+    if (locationMatchesAdmin(location, ["arizona", "nevada", "utah"])) return getNoaaSectorById("psw");
+    if (locationMatchesAdmin(location, ["new mexico", "colorado", "wyoming", "montana"])) return getNoaaSectorById("sr");
+
+    if (latitude >= 42) return getNoaaSectorById("can");
+    if (longitude <= -122) return getNoaaSectorById(latitude >= 42 ? "pnw" : "wus");
+    if (longitude >= -80 && latitude >= 33) return getNoaaSectorById("eus");
+    if (latitude >= 29 && longitude >= -91 && longitude <= -80) return getNoaaSectorById("se");
+    if (latitude >= 29 && longitude >= -106 && longitude < -91) return getNoaaSectorById("sp");
+    if (longitude <= -104) return getNoaaSectorById("sr");
+    if (longitude >= -90 && latitude < 30) return getNoaaSectorById("ga");
+    return getNoaaSectorById("smv");
+  }
+
+  if (country === "MX" || country === "MEXICO") return getNoaaSectorById("mex");
+  if (["PR", "PUERTO RICO"].includes(country)) return getNoaaSectorById("pr");
+  if (["CU", "DO", "HT", "JM", "BS", "BB", "TT", "AG", "DM", "GD", "KN", "LC", "VC", "AW", "CW", "SX"].includes(country)) {
+    return getNoaaSectorById("car");
+  }
+
+  if (latitude >= 48 && longitude >= -110 && longitude <= -52) return getNoaaSectorById("can");
+  if (longitude <= -125) return getNoaaSectorById(latitude >= 40 ? "np" : "tpw");
+  if (longitude >= -70 && latitude >= 35) return getNoaaSectorById("na");
+  if (latitude >= 12 && longitude >= -100 && longitude <= -75) return getNoaaSectorById("cam");
+  if (latitude >= 10 && longitude >= -85 && longitude <= -55) return getNoaaSectorById("car");
+  if (latitude >= 5 && longitude <= -100) return getNoaaSectorById("eep");
+  if (latitude >= 5 && longitude > -100) return getNoaaSectorById("taw");
+
+  return getNearestNoaaSector(location, getAutoNoaaSectors());
 }
 
 function getCookieValue(name) {
@@ -288,6 +418,72 @@ function clearSavedHistory() {
   removeCookieValue(HISTORY_KEY);
   renderForecastHistory([]);
   addLog("Forecast history cleared.");
+}
+
+function setSatelliteLoadingState(message) {
+  elements.satelliteStatus.textContent = "Loading NOAA";
+  elements.satelliteStatus.className = "status-pill standby";
+  elements.satelliteCopy.textContent = message;
+  elements.satelliteEmpty.textContent = message;
+  elements.satelliteEmpty.hidden = false;
+  elements.satelliteImage.removeAttribute("src");
+  elements.satelliteImage.hidden = true;
+  elements.satelliteProductSelect.innerHTML = `<option value="">Loading animations...</option>`;
+}
+
+function renderSatelliteProductOptions(products, selectedKey) {
+  elements.satelliteProductSelect.innerHTML = products
+    .map((product) => `<option value="${product.key}"${product.key === selectedKey ? " selected" : ""}>${product.title}</option>`)
+    .join("");
+}
+
+function renderSatelliteImage(sector, product) {
+  activeSatelliteProductKey = product.key;
+  elements.satelliteStatus.textContent = `${sector.sat} ${sector.name}`;
+  elements.satelliteStatus.className = "status-pill";
+  elements.satelliteCopy.textContent = `${product.title} animation for the nearest NOAA sector to the active location. Source imagery updates on NOAA roughly every 10 minutes.`;
+  elements.satelliteLink.href = `https://www.star.nesdis.noaa.gov/goes/sector.php?sat=${sector.sat}&sector=${sector.id}`;
+  elements.satelliteImage.alt = `${product.title} animation for ${sector.name}`;
+  elements.satelliteImage.src = product.url;
+  elements.satelliteImage.hidden = false;
+  elements.satelliteEmpty.hidden = true;
+}
+
+async function loadSatelliteSector(sectorId, { preferredProductKey = "", autoSelected = false } = {}) {
+  const sector = getNoaaSectorById(sectorId);
+  const requestToken = ++satelliteRequestToken;
+  activeSatelliteSectorId = sector.id;
+  elements.satelliteSectorSelect.value = sector.id;
+  setSatelliteLoadingState(`Loading NOAA ${sector.name} sector imagery.`);
+  try {
+    const catalog = await fetchNoaaSectorCatalog(sector);
+    if (requestToken !== satelliteRequestToken) return;
+    const selectedProduct = catalog.products.find((product) => product.key === preferredProductKey)
+      || catalog.products.find((product) => product.key === activeSatelliteProductKey)
+      || catalog.products.find((product) => product.key === "geocolor")
+      || catalog.products[0];
+    renderSatelliteProductOptions(catalog.products, selectedProduct.key);
+    renderSatelliteImage(sector, selectedProduct);
+    if (autoSelected) {
+      addLog(`NOAA sector auto-selected: ${sector.name}.`);
+    }
+  } catch (error) {
+    if (requestToken !== satelliteRequestToken) return;
+    elements.satelliteStatus.textContent = "NOAA unavailable";
+    elements.satelliteStatus.className = "status-pill standby";
+    elements.satelliteCopy.textContent = error.message;
+    elements.satelliteEmpty.textContent = error.message;
+    elements.satelliteEmpty.hidden = false;
+    elements.satelliteImage.hidden = true;
+    elements.satelliteProductSelect.innerHTML = `<option value="">No animations available</option>`;
+    addLog(error.message);
+  }
+}
+
+function updateSatelliteForLocation(location) {
+  if (!location) return;
+  const autoSector = resolveAutoNoaaSector(location);
+  loadSatelliteSector(autoSector.id, { preferredProductKey: activeSatelliteProductKey, autoSelected: true });
 }
 
 function buildSettingsPreset() {
@@ -567,6 +763,48 @@ async function fetchAirQuality(location) {
   const response = await fetch(url);
   if (!response.ok) throw new Error("Air quality request failed");
   return response.json();
+}
+
+async function fetchNoaaSectorCatalog(sector) {
+  const cacheKey = `${sector.sat}:${sector.id}`;
+  const cached = satelliteCatalogCache.get(cacheKey);
+  if (cached && Date.now() - cached.savedAt < SATELLITE_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  const response = await fetch(`https://www.star.nesdis.noaa.gov/goes/sector.php?sat=${sector.sat}&sector=${sector.id}`);
+  if (!response.ok) throw new Error("NOAA sector page request failed");
+
+  const html = await response.text();
+  const documentFragment = new DOMParser().parseFromString(html, "text/html");
+  const products = [];
+
+  documentFragment.querySelectorAll("h2").forEach((heading) => {
+    const title = heading.textContent.trim();
+    const summaryCard = heading.closest(".summaryContainer");
+    const linksPanel = summaryCard?.nextElementSibling;
+    const animatedLink = [...(linksPanel?.querySelectorAll("a") || [])].find((link) => /animated gif/i.test(link.textContent || ""));
+    if (!animatedLink) return;
+    const url = animatedLink.getAttribute("href");
+    if (!url) return;
+    const productKey = title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    products.push({
+      key: productKey,
+      title,
+      url,
+    });
+  });
+
+  if (!products.length) {
+    throw new Error("NOAA animated imagery unavailable for this sector");
+  }
+
+  const data = { products };
+  satelliteCatalogCache.set(cacheKey, {
+    savedAt: Date.now(),
+    data,
+  });
+  return data;
 }
 
 async function fetchHeatmap() {
@@ -2079,6 +2317,7 @@ async function loadWeather(query) {
     addLog(`Loading weather data for ${queryLabel}.`);
     activeLocation = typeof query === "string" ? await resolveLocation(query) : query;
     setLoadingState(`Loading live weather data for ${activeLocation.name}`);
+    updateSatelliteForLocation(activeLocation);
     updateSettingsUI();
     setActiveMapHourOffset(settings.mapHourOffset);
     setActiveHeatmapLayer(settings.mapLayer);
@@ -2242,6 +2481,32 @@ elements.settingsStartHour.addEventListener("change", () => {
 });
 elements.clearWatchlistButton.addEventListener("click", clearSavedWatchlist);
 elements.clearHistorySettingsButton.addEventListener("click", clearSavedHistory);
+elements.satelliteImage.addEventListener("load", () => {
+  elements.satelliteEmpty.hidden = true;
+});
+elements.satelliteImage.addEventListener("error", () => {
+  elements.satelliteStatus.textContent = "NOAA unavailable";
+  elements.satelliteStatus.className = "status-pill standby";
+  elements.satelliteEmpty.textContent = "NOAA animation could not be loaded for this sector.";
+  elements.satelliteEmpty.hidden = false;
+  elements.satelliteImage.hidden = true;
+});
+elements.satelliteSectorSelect.addEventListener("change", () => {
+  loadSatelliteSector(elements.satelliteSectorSelect.value, { preferredProductKey: "geocolor" });
+});
+elements.satelliteProductSelect.addEventListener("change", async () => {
+  const sector = getNoaaSectorById(activeSatelliteSectorId || elements.satelliteSectorSelect.value);
+  try {
+    const catalog = await fetchNoaaSectorCatalog(sector);
+    const selectedProduct = catalog.products.find((product) => product.key === elements.satelliteProductSelect.value) || catalog.products[0];
+    renderSatelliteProductOptions(catalog.products, selectedProduct.key);
+    renderSatelliteImage(sector, selectedProduct);
+  } catch (error) {
+    elements.satelliteEmpty.textContent = error.message;
+    elements.satelliteEmpty.hidden = false;
+    elements.satelliteImage.hidden = true;
+  }
+});
 elements.exportSettingsButton.addEventListener("click", exportSettingsPreset);
 elements.importSettingsButton.addEventListener("click", () => {
   elements.importSettingsFile.click();
@@ -2254,6 +2519,8 @@ elements.importSettingsFile.addEventListener("change", (event) => {
 const initialSettings = getAppSettings();
 setActiveHeatmapLayer(initialSettings.mapLayer);
 setActiveMapHourOffset(initialSettings.mapHourOffset);
+elements.satelliteSectorSelect.value = NOAA_SECTORS[0].id;
+elements.satelliteProductSelect.innerHTML = `<option value="">Select a location first</option>`;
 renderForecastHistory();
 renderWatchlist();
 updateSettingsUI();
