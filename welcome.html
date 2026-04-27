@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Choose a Location | Precip</title>
+    <link rel="icon" href="logo.svg?v=20260427f" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=20260427f" />
+  </head>
+  <body class="welcome-page">
+    <main class="welcome-shell">
+      <section class="welcome-card">
+        <a class="brand" href="#" aria-label="Precip home">
+          <img class="brand-mark" src="logo.svg?v=20260427f" alt="" />
+          <span class="brand-copy">
+            <strong>Precip</strong>
+            <small>Stormwatch console</small>
+          </span>
+        </a>
+
+        <div class="welcome-copy">
+          <span class="section-kicker">First Visit</span>
+          <h1>Where do you want weather from?</h1>
+          <p>Set a starting location for your dashboard. Precip will remember it in your browser and use it the next time you return.</p>
+        </div>
+
+        <form class="welcome-form" id="welcome-form">
+          <label class="visually-hidden" for="welcome-location-input">Starting location</label>
+          <input id="welcome-location-input" type="search" placeholder="Example: Dallas, Texas, United States" autocomplete="off" />
+          <div class="field-note" id="welcome-search-note">Choose an exact match from the suggestions before opening the dashboard.</div>
+          <div class="suggestion-list" id="welcome-suggestions" role="listbox" aria-label="Welcome location suggestions"></div>
+          <button class="primary-button" type="submit">Open Dashboard</button>
+        </form>
+
+        <div class="welcome-note" id="welcome-note">Your selected location, pins, and forecast snapshots stay in this browser.</div>
+      </section>
+    </main>
+
+    <script>
+      const form = document.querySelector("#welcome-form");
+      const input = document.querySelector("#welcome-location-input");
+      const note = document.querySelector("#welcome-note");
+      const searchNote = document.querySelector("#welcome-search-note");
+      const suggestions = document.querySelector("#welcome-suggestions");
+      const cookieName = "precip.preferredLocation.v1";
+      let activeSelection = null;
+      let searchTimer = null;
+      let searchToken = 0;
+
+      function escapeHTML(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function formatLabel(item) {
+        return [item.name, item.admin, item.country].filter(Boolean).join(", ");
+      }
+
+      function normalize(value) {
+        return String(value ?? "")
+          .toLowerCase()
+          .normalize("NFKD")
+          .replaceAll(/[^\w\s,]/g, " ")
+          .replaceAll(/\s+/g, " ")
+          .trim();
+      }
+
+      function matchesQuery(item, query) {
+        const normalized = normalize(query);
+        const variants = [
+          item.name,
+          [item.name, item.admin].filter(Boolean).join(", "),
+          formatLabel(item),
+        ].map(normalize);
+        return variants.some((variant) => variant === normalized);
+      }
+
+      async function fetchCandidates(query) {
+        const url = new URL("https://geocoding-api.open-meteo.com/v1/search");
+        url.searchParams.set("name", query);
+        url.searchParams.set("count", "8");
+        url.searchParams.set("language", "en");
+        url.searchParams.set("format", "json");
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("Location lookup failed");
+        const data = await response.json();
+        const results = Array.isArray(data.results) ? data.results : [];
+        return results
+          .map((result) => ({
+            name: result.name,
+            admin: result.admin1,
+            country: result.country,
+            countryCode: result.country_code,
+            latitude: result.latitude,
+            longitude: result.longitude,
+            timezone: result.timezone,
+            population: result.population || 0,
+          }))
+          .sort((a, b) => b.population - a.population);
+      }
+
+      function renderSuggestions(items, query) {
+        if (!items.length) {
+          suggestions.classList.remove("visible");
+          suggestions.innerHTML = "";
+          activeSelection = null;
+          return;
+        }
+        suggestions.innerHTML = items
+          .map((item, index) => {
+            const exact = matchesQuery(item, query);
+            return `
+              <button class="suggestion-item${exact ? " exact" : ""}" type="button" data-suggestion-index="${index}">
+                <strong>${escapeHTML(item.name)}</strong>
+                <small>${escapeHTML([item.admin, item.country].filter(Boolean).join(", "))}</small>
+              </button>
+            `;
+          })
+          .join("");
+        suggestions.classList.add("visible");
+        suggestions.querySelectorAll("[data-suggestion-index]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const item = items[Number(button.dataset.suggestionIndex)];
+            activeSelection = item;
+            input.value = formatLabel(item);
+            searchNote.textContent = "Exact location selected.";
+            suggestions.classList.remove("visible");
+          });
+        });
+      }
+
+      async function runSearch(query) {
+        const token = ++searchToken;
+        if (query.length < 2) {
+          activeSelection = null;
+          suggestions.classList.remove("visible");
+          suggestions.innerHTML = "";
+          searchNote.textContent = "Choose an exact match from the suggestions before opening the dashboard.";
+          return;
+        }
+        searchNote.textContent = "Searching for matching locations...";
+        try {
+          const items = await fetchCandidates(query);
+          if (token !== searchToken) return;
+          renderSuggestions(items, query);
+          searchNote.textContent = items.length
+            ? "Pick the exact city or region from the list."
+            : "No matching locations found yet.";
+        } catch (error) {
+          if (token !== searchToken) return;
+          suggestions.classList.remove("visible");
+          suggestions.innerHTML = "";
+          searchNote.textContent = error.message;
+        }
+      }
+
+      input.addEventListener("input", () => {
+        activeSelection = null;
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => runSearch(input.value.trim()), 180);
+      });
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        if (!activeSelection) {
+          searchNote.textContent = "Select an exact location from the suggestions to continue.";
+          runSearch(input.value.trim());
+          return;
+        }
+        if (!input.value.trim()) {
+          note.textContent = "Enter a city, region, or country to continue.";
+          return;
+        }
+        document.cookie = `${cookieName}=${encodeURIComponent(JSON.stringify(activeSelection))}; path=/; max-age=31536000; samesite=lax`;
+        window.location.href = "index.html";
+      });
+    </script>
+  </body>
+</html>

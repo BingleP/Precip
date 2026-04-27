@@ -1,28 +1,41 @@
-const DEFAULT_LOCATION = {
-  name: "Chatham",
-  admin: "Ontario",
-  country: "CA",
-  latitude: 42.4048,
-  longitude: -82.191,
-  timezone: "America/Toronto",
-};
 const HOURS_TO_SHOW = 24;
-const HEATMAP_GRID_SIZE = 7;
-const HEATMAP_RADIUS = 0.42;
+const HEATMAP_MIN_COLUMNS = 6;
+const HEATMAP_MAX_COLUMNS = 11;
+const HEATMAP_MIN_ROWS = 5;
+const HEATMAP_MAX_ROWS = 9;
+const HEATMAP_VIEW_PADDING = 120;
+const HEATMAP_CACHE_TTL_MS = 8 * 60 * 1000;
+const HEATMAP_MAX_CACHE_ENTRIES = 24;
 const MAP_TILE_SIZE = 256;
 const MAP_MIN_ZOOM = 8;
 const MAP_MAX_ZOOM = 15;
 const MAP_DEFAULT_ZOOM = 10;
 const HEATMAP_SCALE = 0.22;
+const INITIAL_MAP_CENTER = {
+  latitude: 39.8283,
+  longitude: -98.5795,
+};
 const HISTORY_KEY = "precip.forecastHistory.v1";
 const WATCHLIST_KEY = "precip.watchlist.v1";
+const PREFERRED_LOCATION_KEY = "precip.preferredLocation.v1";
+const SETTINGS_KEY = "precip.settings.v1";
 const MAX_HISTORY_ITEMS = 12;
 const MAP_HOURS_TO_SHOW = 24;
+const LOCATION_SUGGESTION_LIMIT = 8;
+const DEFAULT_APP_SETTINGS = {
+  mapLayer: "temperature",
+  mapHourOffset: 0,
+};
 
 const elements = {
   stationTitle: document.querySelector("#station-title"),
   stationCopy: document.querySelector("#station-copy"),
+  stationCoordinates: document.querySelector("#station-coordinates"),
   updatedAt: document.querySelector("#updated-at"),
+  heroKicker: document.querySelector("#hero-kicker"),
+  heroLocation: document.querySelector("#hero-location"),
+  heroCopy: document.querySelector("#hero-copy"),
+  heroTimezone: document.querySelector("#hero-timezone"),
   temperature: document.querySelector("#temperature"),
   currentCondition: document.querySelector("#current-condition"),
   conditionCopy: document.querySelector("#condition-copy"),
@@ -52,11 +65,26 @@ const elements = {
   mapHourLabel: document.querySelector("#map-hour-label"),
   mapReadout: document.querySelector("#map-readout"),
   mapTooltip: document.querySelector("#map-tooltip"),
+  mapHoverIndicator: document.querySelector("#map-hover-indicator"),
+  mapTitle: document.querySelector("#map-title"),
+  mapCopy: document.querySelector("#map-copy"),
   mapZoomIn: document.querySelector("#map-zoom-in"),
   mapZoomOut: document.querySelector("#map-zoom-out"),
   mapReset: document.querySelector("#map-reset"),
   locationForm: document.querySelector("#location-form"),
   locationInput: document.querySelector("#location-input"),
+  locationSearchNote: document.querySelector("#location-search-note"),
+  locationSuggestions: document.querySelector("#location-suggestions"),
+  defaultLocationLabel: document.querySelector("#default-location-label"),
+  setDefaultLocationButton: document.querySelector("#set-default-location-button"),
+  resetDefaultLocationButton: document.querySelector("#reset-default-location-button"),
+  settingsMapLayer: document.querySelector("#settings-map-layer"),
+  settingsStartHour: document.querySelector("#settings-start-hour"),
+  clearWatchlistButton: document.querySelector("#clear-watchlist-button"),
+  clearHistorySettingsButton: document.querySelector("#clear-history-settings-button"),
+  exportSettingsButton: document.querySelector("#export-settings-button"),
+  importSettingsButton: document.querySelector("#import-settings-button"),
+  importSettingsFile: document.querySelector("#import-settings-file"),
   stormGrid: document.querySelector("#storm-grid"),
   stormSignals: document.querySelector("#storm-signals"),
   stormRiskBadge: document.querySelector("#storm-risk-badge"),
@@ -76,22 +104,32 @@ const heatmapCtx = heatmapCanvas.getContext("2d");
 let activeLocation = null;
 let latestForecast = null;
 let latestHeatmap = null;
+let latestHeatmapMeta = null;
 let latestAirQuality = null;
 let weatherLoadId = 0;
+let heatmapRefreshToken = 0;
+let heatmapRefreshTimer = null;
 let activeHeatmapLayer = "temperature";
 let activeMapHourOffset = 0;
+let searchDebounceTimer = null;
+let searchRequestToken = 0;
+let activeLocationSuggestions = [];
+let selectedLocationSuggestion = null;
 const mapState = {
-  center: { latitude: DEFAULT_LOCATION.latitude, longitude: DEFAULT_LOCATION.longitude },
+  center: { latitude: INITIAL_MAP_CENTER.latitude, longitude: INITIAL_MAP_CENTER.longitude },
   zoom: MAP_DEFAULT_ZOOM,
   drag: null,
   selected: null,
   renderQueued: false,
 };
 const tileCache = new Map();
+const heatmapCache = new Map();
+const heatmapRequestCache = new Map();
 const chartState = {
   hoverIndex: null,
   points: [],
 };
+const heatmapButtons = [...document.querySelectorAll(".heatmap-button")];
 
 function addLog(message) {
   const item = document.createElement("li");
@@ -115,6 +153,225 @@ function escapeHTML(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function normalizeSearchText(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replaceAll(/[^\w\s,]/g, " ")
+    .replaceAll(/\s+/g, " ")
+    .trim();
+}
+
+function formatLocationLabel(location) {
+  return [location.name, location.admin, location.country].filter(Boolean).join(", ");
+}
+
+function getCookieValue(name) {
+  const row = document.cookie
+    .split("; ")
+    .find((item) => item.startsWith(`${name}=`));
+  return row ? row.slice(name.length + 1) : null;
+}
+
+function setCookieValue(name, value, maxAge = 31536000) {
+  document.cookie = `${name}=${value}; path=/; max-age=${maxAge}; samesite=lax`;
+}
+
+function removeCookieValue(name) {
+  document.cookie = `${name}=; path=/; max-age=0; samesite=lax`;
+}
+
+function readCookieJSON(name) {
+  const value = getCookieValue(name);
+  if (!value) return null;
+  try {
+    return JSON.parse(decodeURIComponent(value));
+  } catch {
+    return null;
+  }
+}
+
+function writeCookieJSON(name, value) {
+  try {
+    setCookieValue(name, encodeURIComponent(JSON.stringify(value)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeMapLayer(value) {
+  return heatmapButtons.some((button) => button.dataset.layer === value) ? value : DEFAULT_APP_SETTINGS.mapLayer;
+}
+
+function normalizeMapHourOffset(value) {
+  const next = Number(value);
+  if (!Number.isFinite(next)) return DEFAULT_APP_SETTINGS.mapHourOffset;
+  return Math.max(0, Math.min(MAP_HOURS_TO_SHOW - 1, Math.round(next)));
+}
+
+function getAppSettings() {
+  const parsed = readCookieJSON(SETTINGS_KEY);
+  return {
+    mapLayer: normalizeMapLayer(parsed?.mapLayer),
+    mapHourOffset: normalizeMapHourOffset(parsed?.mapHourOffset),
+  };
+}
+
+function saveAppSettings(partial) {
+  const next = {
+    ...getAppSettings(),
+    ...partial,
+  };
+  next.mapLayer = normalizeMapLayer(next.mapLayer);
+  next.mapHourOffset = normalizeMapHourOffset(next.mapHourOffset);
+  writeCookieJSON(SETTINGS_KEY, next);
+  return next;
+}
+
+function formatSavedLocation(location) {
+  if (!location) return "Not set";
+  if (typeof location === "string") return location;
+  return formatLocationLabel(location);
+}
+
+function updateSettingsUI() {
+  const savedLocation = getPreferredLocation();
+  const settings = getAppSettings();
+  elements.defaultLocationLabel.textContent = formatSavedLocation(savedLocation);
+  elements.settingsMapLayer.value = settings.mapLayer;
+  elements.settingsStartHour.value = `${settings.mapHourOffset}`;
+  elements.setDefaultLocationButton.disabled = !activeLocation;
+  elements.resetDefaultLocationButton.disabled = !savedLocation;
+}
+
+function setActiveHeatmapLayer(layer, { persist = false } = {}) {
+  activeHeatmapLayer = normalizeMapLayer(layer);
+  heatmapButtons.forEach((button) => button.classList.toggle("active", button.dataset.layer === activeHeatmapLayer));
+  elements.settingsMapLayer.value = activeHeatmapLayer;
+  if (persist) saveAppSettings({ mapLayer: activeHeatmapLayer });
+  if (latestHeatmap) renderHeatmap(latestHeatmap, activeHeatmapLayer);
+}
+
+function setActiveMapHourOffset(offset, { persist = false } = {}) {
+  activeMapHourOffset = normalizeMapHourOffset(offset);
+  elements.mapHourSlider.value = `${activeMapHourOffset}`;
+  elements.settingsStartHour.value = `${activeMapHourOffset}`;
+  hideMapTooltip();
+  if (persist) saveAppSettings({ mapHourOffset: activeMapHourOffset });
+  if (latestHeatmap) renderHeatmap(latestHeatmap, activeHeatmapLayer);
+}
+
+function saveCurrentAsPreferredLocation() {
+  if (!activeLocation) return;
+  savePreferredLocation(activeLocation);
+  updateSettingsUI();
+  addLog(`${activeLocation.name} saved as the default location.`);
+}
+
+function clearPreferredLocationSetting() {
+  removeCookieValue(PREFERRED_LOCATION_KEY);
+  updateSettingsUI();
+  addLog("Saved default location cleared.");
+  window.location.replace("welcome.html");
+}
+
+function clearSavedWatchlist() {
+  removeCookieValue(WATCHLIST_KEY);
+  renderWatchlist([]);
+  addLog("Pinned locations cleared.");
+}
+
+function clearSavedHistory() {
+  removeCookieValue(HISTORY_KEY);
+  renderForecastHistory([]);
+  addLog("Forecast history cleared.");
+}
+
+function buildSettingsPreset() {
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    preferredLocation: getPreferredLocation(),
+    settings: getAppSettings(),
+    watchlist: getWatchlist(),
+    history: getForecastHistory(),
+  };
+}
+
+function exportSettingsPreset() {
+  try {
+    const preset = buildSettingsPreset();
+    const blob = new Blob([JSON.stringify(preset, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `precip-preset-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    addLog("Settings preset exported.");
+  } catch {
+    addLog("Settings preset export failed.");
+  }
+}
+
+function isLocationLike(value) {
+  return value && typeof value === "object" && typeof value.name === "string" && Number.isFinite(Number(value.latitude)) && Number.isFinite(Number(value.longitude));
+}
+
+function applyImportedPreset(payload) {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Preset file is invalid.");
+  }
+
+  const settings = payload.settings && typeof payload.settings === "object" ? payload.settings : {};
+  const nextSettings = saveAppSettings({
+    mapLayer: settings.mapLayer,
+    mapHourOffset: settings.mapHourOffset,
+  });
+
+  if (payload.preferredLocation && isLocationLike(payload.preferredLocation)) {
+    savePreferredLocation(payload.preferredLocation);
+  } else if (payload.preferredLocation === null) {
+    removeCookieValue(PREFERRED_LOCATION_KEY);
+  }
+
+  if (Array.isArray(payload.watchlist)) {
+    saveWatchlist(payload.watchlist.filter(isLocationLike));
+  }
+
+  if (Array.isArray(payload.history)) {
+    writeCookieJSON(HISTORY_KEY, payload.history.slice(0, MAX_HISTORY_ITEMS));
+    renderForecastHistory(payload.history.slice(0, MAX_HISTORY_ITEMS));
+  }
+
+  setActiveHeatmapLayer(nextSettings.mapLayer);
+  setActiveMapHourOffset(nextSettings.mapHourOffset);
+  updateSettingsUI();
+
+  const preferredLocation = getPreferredLocation();
+  if (preferredLocation) {
+    elements.locationInput.value = formatSavedLocation(preferredLocation);
+  }
+
+  addLog("Settings preset imported.");
+}
+
+async function importSettingsPreset(file) {
+  if (!file) return;
+  try {
+    const raw = await file.text();
+    const payload = JSON.parse(raw);
+    applyImportedPreset(payload);
+  } catch (error) {
+    addLog(error.message || "Settings preset import failed.");
+  } finally {
+    elements.importSettingsFile.value = "";
+  }
 }
 
 function getPrecipBarClass(value) {
@@ -191,10 +448,10 @@ function findCurrentIndex(times) {
   return bestIndex;
 }
 
-async function geocodeLocation(query) {
+async function geocodeLocationCandidates(query, count = LOCATION_SUGGESTION_LIMIT) {
   const url = new URL("https://geocoding-api.open-meteo.com/v1/search");
   url.searchParams.set("name", query);
-  url.searchParams.set("count", "1");
+  url.searchParams.set("count", String(count));
   url.searchParams.set("language", "en");
   url.searchParams.set("format", "json");
 
@@ -204,15 +461,50 @@ async function geocodeLocation(query) {
   const data = await response.json();
   if (!data.results?.length) throw new Error(`No weather location found for "${query}"`);
 
-  const result = data.results[0];
-  return {
-    name: result.name,
-    admin: result.admin1,
-    country: result.country_code,
-    latitude: result.latitude,
-    longitude: result.longitude,
-    timezone: result.timezone,
-  };
+  return data.results
+    .map((result) => ({
+      name: result.name,
+      admin: result.admin1,
+      country: result.country,
+      countryCode: result.country_code,
+      latitude: result.latitude,
+      longitude: result.longitude,
+      timezone: result.timezone,
+      population: result.population || 0,
+    }))
+    .sort((a, b) => b.population - a.population);
+}
+
+function locationSearchVariants(location) {
+  return [
+    location.name,
+    [location.name, location.admin].filter(Boolean).join(", "),
+    formatLocationLabel(location),
+  ]
+    .map(normalizeSearchText)
+    .filter(Boolean);
+}
+
+function matchesLocationQuery(location, query) {
+  const normalizedQuery = normalizeSearchText(query);
+  return locationSearchVariants(location).some((variant) => variant === normalizedQuery);
+}
+
+function rankLocationCandidates(candidates, query) {
+  const normalizedQuery = normalizeSearchText(query);
+  return [...candidates].sort((left, right) => {
+    const leftVariants = locationSearchVariants(left);
+    const rightVariants = locationSearchVariants(right);
+    const leftExact = leftVariants.includes(normalizedQuery) ? 1 : 0;
+    const rightExact = rightVariants.includes(normalizedQuery) ? 1 : 0;
+    if (leftExact !== rightExact) return rightExact - leftExact;
+
+    const leftStarts = leftVariants.some((variant) => variant.startsWith(normalizedQuery)) ? 1 : 0;
+    const rightStarts = rightVariants.some((variant) => variant.startsWith(normalizedQuery)) ? 1 : 0;
+    if (leftStarts !== rightStarts) return rightStarts - leftStarts;
+
+    return (right.population || 0) - (left.population || 0);
+  });
 }
 
 async function reverseGeocodeLocation(latitude, longitude) {
@@ -277,37 +569,147 @@ async function fetchAirQuality(location) {
   return response.json();
 }
 
-async function fetchHeatmap(location) {
-  const points = buildHeatmapPoints(location);
-  const url = new URL("https://api.open-meteo.com/v1/forecast");
-  url.searchParams.set("latitude", points.map((point) => point.latitude.toFixed(4)).join(","));
-  url.searchParams.set("longitude", points.map((point) => point.longitude.toFixed(4)).join(","));
-  url.searchParams.set("timezone", "auto");
-  url.searchParams.set("hourly", "temperature_2m,dew_point_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,wind_speed_10m,wind_gusts_10m,pressure_msl,cloud_cover,visibility,cape");
-  url.searchParams.set("forecast_hours", String(MAP_HOURS_TO_SHOW));
+async function fetchHeatmap() {
+  const viewport = getHeatmapViewportDefinition();
+  const cacheKey = getHeatmapViewportCacheKey(viewport);
+  const cached = getCachedHeatmap(cacheKey);
+  if (cached) {
+    return cached;
+  }
 
-  const response = await fetch(url);
-  if (!response.ok) throw new Error("Regional heatmap request failed");
+  if (heatmapRequestCache.has(cacheKey)) {
+    return heatmapRequestCache.get(cacheKey);
+  }
 
-  const data = await response.json();
-  const rows = Array.isArray(data) ? data : [data];
-  return points.map((point, index) => ({
-    ...point,
-    hourly: rows[index]?.hourly || {},
-  }));
+  const points = buildHeatmapPoints(viewport);
+  const request = (async () => {
+    const url = new URL("https://api.open-meteo.com/v1/forecast");
+    url.searchParams.set("latitude", points.map((point) => point.latitude.toFixed(4)).join(","));
+    url.searchParams.set("longitude", points.map((point) => point.longitude.toFixed(4)).join(","));
+    url.searchParams.set("timezone", "auto");
+    url.searchParams.set("hourly", "temperature_2m,dew_point_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,wind_speed_10m,wind_gusts_10m,pressure_msl,cloud_cover,visibility,cape");
+    url.searchParams.set("forecast_hours", String(MAP_HOURS_TO_SHOW));
+
+    const response = await fetch(url);
+    if (!response.ok) throw new Error("Regional heatmap request failed");
+
+    const data = await response.json();
+    const rows = Array.isArray(data) ? data : [data];
+    const result = {
+      points: points.map((point, index) => ({
+        ...point,
+        hourly: rows[index]?.hourly || {},
+      })),
+      meta: {
+        ...viewport,
+        cacheKey,
+        fetchedAt: Date.now(),
+      },
+    };
+    setCachedHeatmap(cacheKey, result);
+    return result;
+  })();
+
+  heatmapRequestCache.set(cacheKey, request);
+  try {
+    return await request;
+  } finally {
+    heatmapRequestCache.delete(cacheKey);
+  }
 }
 
-function buildHeatmapPoints(location) {
-  const points = [];
-  const step = (HEATMAP_RADIUS * 2) / (HEATMAP_GRID_SIZE - 1);
+function getMapViewportSize() {
+  const rect = heatmapCanvas.getBoundingClientRect();
+  return {
+    width: Math.max(320, Math.round(rect.width || heatmapCanvas.clientWidth || 920)),
+    height: Math.max(260, Math.round(rect.height || heatmapCanvas.clientHeight || 560)),
+  };
+}
 
-  for (let row = 0; row < HEATMAP_GRID_SIZE; row += 1) {
-    for (let column = 0; column < HEATMAP_GRID_SIZE; column += 1) {
+function getHeatmapViewportDefinition() {
+  const { width, height } = getMapViewportSize();
+  const zoom = Math.round(mapState.zoom);
+  const centerWorld = latLonToWorld(mapState.center.latitude, mapState.center.longitude, zoom);
+  const padding = Math.max(60, Math.min(HEATMAP_VIEW_PADDING, Math.round(Math.min(width, height) * 0.2)));
+  const left = centerWorld.x - width / 2 - padding;
+  const right = centerWorld.x + width / 2 + padding;
+  const top = centerWorld.y - height / 2 - padding;
+  const bottom = centerWorld.y + height / 2 + padding;
+
+  return {
+    zoom,
+    width,
+    height,
+    padding,
+    left,
+    right,
+    top,
+    bottom,
+    columns: getHeatmapColumnCount(width, zoom),
+    rows: getHeatmapRowCount(height, zoom),
+  };
+}
+
+function getHeatmapColumnCount(width, zoom) {
+  const zoomBias = Math.max(0, zoom - MAP_DEFAULT_ZOOM);
+  return Math.max(HEATMAP_MIN_COLUMNS, Math.min(HEATMAP_MAX_COLUMNS, Math.round(width / 165) + Math.min(3, zoomBias)));
+}
+
+function getHeatmapRowCount(height, zoom) {
+  const zoomBias = Math.max(0, zoom - MAP_DEFAULT_ZOOM);
+  return Math.max(HEATMAP_MIN_ROWS, Math.min(HEATMAP_MAX_ROWS, Math.round(height / 135) + Math.min(2, zoomBias)));
+}
+
+function getHeatmapViewportCacheKey(viewport) {
+  const center = worldToLatLon((viewport.left + viewport.right) / 2, (viewport.top + viewport.bottom) / 2, viewport.zoom);
+  const latStep = viewport.rows > 1 ? Math.abs(worldToLatLon((viewport.left + viewport.right) / 2, viewport.top, viewport.zoom).latitude - worldToLatLon((viewport.left + viewport.right) / 2, viewport.top + (viewport.bottom - viewport.top) / (viewport.rows - 1), viewport.zoom).latitude) : 0.5;
+  const lonStep = viewport.columns > 1 ? Math.abs(worldToLatLon(viewport.left, (viewport.top + viewport.bottom) / 2, viewport.zoom).longitude - worldToLatLon(viewport.left + (viewport.right - viewport.left) / (viewport.columns - 1), (viewport.top + viewport.bottom) / 2, viewport.zoom).longitude) : 0.5;
+  const precisionLat = Math.max(0.08, latStep * 0.9);
+  const precisionLon = Math.max(0.08, lonStep * 0.9);
+  const latBucket = Math.round(center.latitude / precisionLat);
+  const lonBucket = Math.round(center.longitude / precisionLon);
+  return [viewport.zoom, viewport.columns, viewport.rows, latBucket, lonBucket].join(":");
+}
+
+function getCachedHeatmap(cacheKey) {
+  const entry = heatmapCache.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() - entry.savedAt > HEATMAP_CACHE_TTL_MS) {
+    heatmapCache.delete(cacheKey);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCachedHeatmap(cacheKey, data) {
+  heatmapCache.set(cacheKey, {
+    savedAt: Date.now(),
+    data,
+  });
+
+  while (heatmapCache.size > HEATMAP_MAX_CACHE_ENTRIES) {
+    const oldestKey = heatmapCache.keys().next().value;
+    heatmapCache.delete(oldestKey);
+  }
+}
+
+function buildHeatmapPoints(viewport = getHeatmapViewportDefinition()) {
+  const points = [];
+  const rowStep = viewport.rows > 1 ? (viewport.bottom - viewport.top) / (viewport.rows - 1) : 0;
+  const columnStep = viewport.columns > 1 ? (viewport.right - viewport.left) / (viewport.columns - 1) : 0;
+
+  for (let row = 0; row < viewport.rows; row += 1) {
+    for (let column = 0; column < viewport.columns; column += 1) {
+      const world = {
+        x: viewport.left + column * columnStep,
+        y: viewport.top + row * rowStep,
+      };
+      const projected = worldToLatLon(world.x, world.y, viewport.zoom);
       points.push({
         row,
         column,
-        latitude: location.latitude + HEATMAP_RADIUS - row * step,
-        longitude: location.longitude - HEATMAP_RADIUS + column * step,
+        latitude: projected.latitude,
+        longitude: projected.longitude,
       });
     }
   }
@@ -315,7 +717,43 @@ function buildHeatmapPoints(location) {
   return points;
 }
 
+function scheduleHeatmapRefresh(delay = 320) {
+  if (!activeLocation) return;
+  clearTimeout(heatmapRefreshTimer);
+  const requestToken = ++heatmapRefreshToken;
+  heatmapRefreshTimer = setTimeout(() => {
+    refreshHeatmapForViewport(requestToken);
+  }, delay);
+}
+
+async function refreshHeatmapForViewport(requestToken = ++heatmapRefreshToken) {
+  if (!activeLocation) return;
+  try {
+    const result = await fetchHeatmap();
+    if (requestToken !== heatmapRefreshToken || !activeLocation) return;
+    latestHeatmap = result.points;
+    latestHeatmapMeta = result.meta;
+    renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  } catch (error) {
+    if (requestToken !== heatmapRefreshToken) return;
+    addLog(error.message || "Regional heatmap request failed");
+    if (latestHeatmap?.length) {
+      renderHeatmap(latestHeatmap, activeHeatmapLayer);
+      return;
+    }
+    latestHeatmap = null;
+    latestHeatmapMeta = null;
+    renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  }
+}
+
 function setLoadingState(message) {
+  if (activeLocation) {
+    elements.heroLocation.textContent = activeLocation.name;
+    elements.heroKicker.textContent = "Refreshing weather brief";
+    elements.heroTimezone.textContent = activeLocation.timezone || "Local timezone pending";
+  }
+  elements.heroCopy.textContent = "Pulling the latest forecast, regional map samples, and analysis tools for the selected location.";
   elements.tempTrend.textContent = message;
   elements.pressureTrend.textContent = "Waiting for API response";
   elements.windDirection.textContent = "Waiting for API response";
@@ -336,9 +774,18 @@ function updateCurrentConditions(location, forecast) {
   const nextPrecipChance = hourly.precipitation_probability[nextIndex];
 
   const placeName = [location.name, location.admin, location.country].filter(Boolean).join(", ");
+  const regionalName = [location.admin, location.country].filter(Boolean).join(", ");
   elements.stationTitle.textContent = placeName;
   elements.stationCopy.textContent = `Live forecast feed for ${location.name}. Hardware receiver feed is separate.`;
+  elements.stationCoordinates.textContent = `${location.latitude.toFixed(2)}, ${location.longitude.toFixed(2)}`;
   elements.updatedAt.textContent = new Date(current.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  elements.heroKicker.textContent = regionalName ? `Live weather brief for ${regionalName}` : "Live weather brief";
+  elements.heroLocation.textContent = location.name;
+  elements.heroTimezone.textContent = location.timezone || forecast.timezone || "Local timezone unavailable";
+  elements.heroCopy.textContent = `${describeWeatherCode(daily.weather_code[0])} with ${Math.round(daily.temperature_2m_max[0])}° / ${Math.round(daily.temperature_2m_min[0])}° today. Next-hour precipitation signal is ${Number.isFinite(nextPrecipChance) ? `${nextPrecipChance}%` : "unavailable"}.`;
+  elements.mapTitle.textContent = `${location.name} Regional Weather Field`;
+  elements.mapCopy.textContent = `Interactive forecast map centered on ${placeName}. Click any point on the map to switch the briefing to that area.`;
+  elements.locationInput.value = placeName;
   elements.temperature.textContent = formatNumber(current.temperature_2m);
   elements.currentCondition.textContent = describeWeatherCode(daily.weather_code[0]);
   elements.conditionCopy.textContent = `${Math.round(daily.temperature_2m_max[0])}° high, ${Math.round(daily.temperature_2m_min[0])}° low today`;
@@ -817,21 +1264,28 @@ function drawHeatmapOverlay(points, values, layer, min, max, width, height) {
 }
 
 function interpolateHeatmapAt(x, y, samples, smoothing) {
+  return interpolateSampleMetricAt(x, y, samples, smoothing, (sample) => sample.normalized) ?? 0;
+}
+
+function interpolateSampleMetricAt(x, y, samples, smoothing, getValue) {
   let weightedValue = 0;
   let weightTotal = 0;
 
   samples.forEach((sample) => {
+    const sampleValue = getValue(sample);
+    if (!Number.isFinite(sampleValue)) return;
     const distanceSquared = (sample.x - x) ** 2 + (sample.y - y) ** 2;
     const weight = 1 / (distanceSquared + smoothing ** 2);
-    weightedValue += sample.normalized * weight;
+    weightedValue += sampleValue * weight;
     weightTotal += weight;
   });
 
-  return weightTotal ? weightedValue / weightTotal : 0;
+  return weightTotal ? weightedValue / weightTotal : null;
 }
 
 function drawMapPlaces(width, height) {
-  const location = activeLocation || DEFAULT_LOCATION;
+  const location = activeLocation || mapState.selected;
+  if (!location) return;
   const selected = mapState.selected || location;
   const position = projectToMapScreen(selected.latitude, selected.longitude, width, height);
 
@@ -898,29 +1352,29 @@ function getHeatmapChannels(value, layer) {
   let color;
   if (layer === "precipitation" || layer === "precipProbability" || layer === "humidity" || layer === "cloud") {
     color = interpolateColor([
-      [16, 185, 129],
-      [14, 165, 233],
-      [59, 130, 246],
-      [147, 51, 234],
+      [129, 197, 171],
+      [114, 174, 230],
+      [181, 171, 141],
+      [207, 109, 114],
     ], value);
     return color;
   }
 
   if (layer === "wind" || layer === "gusts" || layer === "cape") {
     color = interpolateColor([
-      [34, 211, 238],
-      [167, 139, 250],
-      [251, 191, 36],
-      [251, 113, 133],
+      [114, 174, 230],
+      [129, 197, 171],
+      [216, 160, 106],
+      [207, 109, 114],
     ], value);
     return color;
   }
 
   color = interpolateColor([
-    [96, 165, 250],
-    [34, 211, 238],
-    [248, 195, 106],
-    [251, 113, 133],
+    [114, 174, 230],
+    [129, 197, 171],
+    [216, 160, 106],
+    [207, 109, 114],
   ], value);
   return color;
 }
@@ -978,10 +1432,13 @@ function clampMapZoom(zoom) {
 }
 
 function renderMapReadout(layer, min, max) {
+  const coverage = latestHeatmapMeta
+    ? `${latestHeatmapMeta.columns}x${latestHeatmapMeta.rows} samples · zoom ${latestHeatmapMeta.zoom}`
+    : "Viewport coverage pending";
   elements.mapReadout.innerHTML = `
     <span>${escapeHTML(getHeatmapTitle(layer))}</span>
     <strong>${formatHeatmapValue(min, layer)} - ${formatHeatmapValue(max, layer)}</strong>
-    <small>low to high</small>
+    <small>${coverage}</small>
   `;
 }
 
@@ -1020,12 +1477,8 @@ function renderHeatmapLegend(layer, min, max) {
 }
 
 function getForecastHistory() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(HISTORY_KEY));
-    return Array.isArray(parsed) ? parsed.slice(0, MAX_HISTORY_ITEMS) : [];
-  } catch {
-    return [];
-  }
+  const parsed = readCookieJSON(HISTORY_KEY);
+  return Array.isArray(parsed) ? parsed.slice(0, MAX_HISTORY_ITEMS) : [];
 }
 
 function saveForecastSnapshot(location, forecast) {
@@ -1048,7 +1501,7 @@ function saveForecastSnapshot(location, forecast) {
   try {
     const existing = getForecastHistory();
     const next = [snapshot, ...existing].slice(0, MAX_HISTORY_ITEMS);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+    if (!writeCookieJSON(HISTORY_KEY, next)) throw new Error("cookie-write-failed");
     renderForecastHistory(next);
   } catch {
     addLog("Forecast history could not be saved in this browser.");
@@ -1081,17 +1534,14 @@ function renderForecastHistory(history = getForecastHistory()) {
 }
 
 function getWatchlist() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(WATCHLIST_KEY));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  const parsed = readCookieJSON(WATCHLIST_KEY);
+  return Array.isArray(parsed) ? parsed : [];
 }
 
 function saveWatchlist(items) {
-  localStorage.setItem(WATCHLIST_KEY, JSON.stringify(items.slice(0, 8)));
-  renderWatchlist(items.slice(0, 8));
+  const next = items.slice(0, 8);
+  writeCookieJSON(WATCHLIST_KEY, next);
+  renderWatchlist(next);
 }
 
 function pinCurrentLocation() {
@@ -1195,12 +1645,12 @@ function drawForecastChart(forecast) {
 
   chartCtx.clearRect(0, 0, width, height);
   const background = chartCtx.createLinearGradient(0, 0, 0, height);
-  background.addColorStop(0, "#07161a");
-  background.addColorStop(1, "#050c10");
+  background.addColorStop(0, "#171c23");
+  background.addColorStop(1, "#11161b");
   chartCtx.fillStyle = background;
   chartCtx.fillRect(0, 0, width, height);
 
-  chartCtx.strokeStyle = "rgba(47, 71, 80, 0.65)";
+  chartCtx.strokeStyle = "rgba(120, 134, 152, 0.36)";
   chartCtx.lineWidth = 1;
   for (let i = 0; i <= 5; i += 1) {
     const y = chartTop + (chartHeight / 5) * i;
@@ -1210,7 +1660,7 @@ function drawForecastChart(forecast) {
     chartCtx.stroke();
 
     const labelValue = tempMax - ((tempMax - tempMin) / 5) * i;
-    chartCtx.fillStyle = "#7f9098";
+    chartCtx.fillStyle = "#98a4b3";
     chartCtx.font = "700 12px system-ui";
     chartCtx.fillText(`${labelValue.toFixed(0)}°`, 14, y + 4);
   }
@@ -1220,17 +1670,17 @@ function drawForecastChart(forecast) {
     const barWidth = Math.max(8, Math.min(18, xStep * 0.5));
     const x = chartLeft + offset * xStep - barWidth / 2;
     const barGradient = chartCtx.createLinearGradient(0, chartBottom - barHeight, 0, chartBottom);
-    barGradient.addColorStop(0, "rgba(81, 167, 255, 0.7)");
-    barGradient.addColorStop(1, "rgba(81, 167, 255, 0.14)");
+    barGradient.addColorStop(0, "rgba(114, 174, 230, 0.64)");
+    barGradient.addColorStop(1, "rgba(114, 174, 230, 0.1)");
     chartCtx.fillStyle = barGradient;
     roundedRect(chartCtx, x, chartBottom - barHeight, barWidth, barHeight, 5);
     chartCtx.fill();
   });
 
   const areaGradient = chartCtx.createLinearGradient(0, chartTop, 0, chartBottom);
-  areaGradient.addColorStop(0, "rgba(53, 208, 165, 0.28)");
-  areaGradient.addColorStop(0.72, "rgba(53, 208, 165, 0.04)");
-  areaGradient.addColorStop(1, "rgba(53, 208, 165, 0)");
+  areaGradient.addColorStop(0, "rgba(129, 197, 171, 0.22)");
+  areaGradient.addColorStop(0.72, "rgba(129, 197, 171, 0.04)");
+  areaGradient.addColorStop(1, "rgba(129, 197, 171, 0)");
   chartCtx.beginPath();
   temperatureY.forEach((y, offset) => {
     const x = chartLeft + offset * xStep;
@@ -1244,7 +1694,7 @@ function drawForecastChart(forecast) {
   chartCtx.fill();
 
   chartCtx.beginPath();
-  chartCtx.strokeStyle = "#35d0a5";
+  chartCtx.strokeStyle = "#81c5ab";
   chartCtx.lineWidth = 4;
   chartCtx.lineJoin = "round";
   chartCtx.lineCap = "round";
@@ -1257,26 +1707,26 @@ function drawForecastChart(forecast) {
 
   chartState.points.forEach((point, offset) => {
     if (offset % 3 !== 0 && offset !== 0) return;
-    drawSmallPoint(point.x, point.temperatureY, "#35d0a5");
+    drawSmallPoint(point.x, point.temperatureY, "#81c5ab");
   });
 
   if (chartState.hoverIndex !== null && chartState.points[chartState.hoverIndex]) {
     drawChartHover(chartState.points[chartState.hoverIndex], chartTop, chartBottom);
   }
 
-  chartCtx.fillStyle = "#cbd6d4";
+  chartCtx.fillStyle = "#d5dde7";
   chartCtx.font = "700 15px system-ui";
   chartCtx.fillText("Temperature", chartLeft, 30);
-  chartCtx.fillStyle = "#35d0a5";
+  chartCtx.fillStyle = "#81c5ab";
   roundedRect(chartCtx, chartLeft + 105, 20, 28, 5, 3);
   chartCtx.fill();
-  chartCtx.fillStyle = "#cbd6d4";
+  chartCtx.fillStyle = "#d5dde7";
   chartCtx.fillText("Rain chance", chartLeft + 154, 30);
-  chartCtx.fillStyle = "#51a7ff";
+  chartCtx.fillStyle = "#72aee6";
   roundedRect(chartCtx, chartLeft + 246, 20, 28, 5, 3);
   chartCtx.fill();
 
-  chartCtx.fillStyle = "#82909a";
+  chartCtx.fillStyle = "#98a4b3";
   chartCtx.font = "700 12px system-ui";
   indexes.forEach((index, offset) => {
     if (offset % 3 !== 0) return;
@@ -1298,7 +1748,7 @@ function roundedRect(context, x, y, width, height, radius) {
 }
 
 function drawSmallPoint(x, y, color) {
-  chartCtx.fillStyle = "#061013";
+  chartCtx.fillStyle = "#141a20";
   chartCtx.strokeStyle = color;
   chartCtx.lineWidth = 2;
   chartCtx.beginPath();
@@ -1308,19 +1758,19 @@ function drawSmallPoint(x, y, color) {
 }
 
 function drawChartHover(point, chartTop, chartBottom) {
-  chartCtx.strokeStyle = "rgba(203, 214, 212, 0.32)";
+  chartCtx.strokeStyle = "rgba(213, 221, 231, 0.28)";
   chartCtx.lineWidth = 1;
   chartCtx.beginPath();
   chartCtx.moveTo(point.x, chartTop);
   chartCtx.lineTo(point.x, chartBottom);
   chartCtx.stroke();
 
-  drawPointMarker(point.x, point.temperatureY, "#35d0a5");
-  drawPointMarker(point.x, point.precipY, "#51a7ff");
+  drawPointMarker(point.x, point.temperatureY, "#81c5ab");
+  drawPointMarker(point.x, point.precipY, "#72aee6");
 }
 
 function drawPointMarker(x, y, color) {
-  chartCtx.fillStyle = "#061013";
+  chartCtx.fillStyle = "#141a20";
   chartCtx.strokeStyle = color;
   chartCtx.lineWidth = 3;
   chartCtx.beginPath();
@@ -1394,33 +1844,30 @@ function hideChartTooltip() {
 }
 
 function updateMapTooltip(event) {
-  if (!latestHeatmap?.length || mapState.drag) return;
+  if (!latestHeatmap?.length || mapState.drag || !(mapState.samples || []).length) return;
 
   const rect = heatmapCanvas.getBoundingClientRect();
   const pointerX = event.clientX - rect.left;
   const pointerY = event.clientY - rect.top;
-  const nearest = (mapState.samples || []).reduce(
-    (best, sample) => {
-      const distance = Math.hypot(sample.x - pointerX, sample.y - pointerY);
-      return distance < best.distance ? { sample, distance } : best;
-    },
-    { sample: null, distance: Infinity },
-  );
+  const location = screenToMapLocation(pointerX, pointerY, rect.width, rect.height);
+  const samples = mapState.samples || [];
+  const smoothing = Math.max(rect.width, rect.height) / 18;
+  const layerValue = interpolateSampleMetricAt(pointerX, pointerY, samples, smoothing, (sample) => sample.value);
+  const temperature = interpolateSampleMetricAt(pointerX, pointerY, samples, smoothing, (sample) => sample.hourly?.temperature_2m?.[activeMapHourOffset]);
+  const precipitation = interpolateSampleMetricAt(pointerX, pointerY, samples, smoothing, (sample) => sample.hourly?.precipitation?.[activeMapHourOffset]);
+  const wind = interpolateSampleMetricAt(pointerX, pointerY, samples, smoothing, (sample) => sample.hourly?.wind_speed_10m?.[activeMapHourOffset]);
 
-  if (!nearest.sample || nearest.distance > 28) {
-    hideMapTooltip();
-    return;
-  }
-
-  const sample = nearest.sample;
   elements.mapTooltip.innerHTML = `
-    <strong>${formatHeatmapValue(sample.value, activeHeatmapLayer)}</strong>
-    <span>${sample.latitude.toFixed(3)}, ${sample.longitude.toFixed(3)}</span>
-    <span>Temp: ${formatNumber(sample.hourly?.temperature_2m?.[activeMapHourOffset])}°C</span>
-    <span>Rain: ${formatNumber(sample.hourly?.precipitation?.[activeMapHourOffset])} mm</span>
-    <span>Wind: ${Math.round(sample.hourly?.wind_speed_10m?.[activeMapHourOffset] || 0)} km/h</span>
+    <strong>${formatHeatmapValue(layerValue, activeHeatmapLayer)}</strong>
+    <span>${location.latitude.toFixed(3)}, ${location.longitude.toFixed(3)}</span>
+    <span>Temp: ${formatNumber(temperature)}°C</span>
+    <span>Rain: ${formatNumber(precipitation)} mm</span>
+    <span>Wind: ${Number.isFinite(wind) ? Math.round(wind) : "--"} km/h</span>
   `;
   elements.mapTooltip.classList.add("visible");
+  elements.mapHoverIndicator.classList.add("visible");
+  elements.mapHoverIndicator.style.left = `${pointerX}px`;
+  elements.mapHoverIndicator.style.top = `${pointerY}px`;
 
   const tooltipWidth = elements.mapTooltip.offsetWidth;
   const tooltipHeight = elements.mapTooltip.offsetHeight;
@@ -1429,13 +1876,16 @@ function updateMapTooltip(event) {
 
   elements.mapTooltip.style.left = `${Math.max(10, left)}px`;
   elements.mapTooltip.style.top = `${top}px`;
+  elements.mapTooltip.style.bottom = "auto";
 }
 
 function hideMapTooltip() {
   elements.mapTooltip.classList.remove("visible");
+  elements.mapHoverIndicator.classList.remove("visible");
 }
 
-function resetMapView(location = activeLocation || DEFAULT_LOCATION) {
+function resetMapView(location = activeLocation || mapState.selected) {
+  if (!location) return;
   mapState.center = {
     latitude: location.latitude,
     longitude: location.longitude,
@@ -1443,6 +1893,7 @@ function resetMapView(location = activeLocation || DEFAULT_LOCATION) {
   mapState.zoom = MAP_DEFAULT_ZOOM;
   hideMapTooltip();
   renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  scheduleHeatmapRefresh(0);
 }
 
 function zoomMap(delta) {
@@ -1451,6 +1902,7 @@ function zoomMap(delta) {
   mapState.zoom = nextZoom;
   hideMapTooltip();
   renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  scheduleHeatmapRefresh();
 }
 
 function queueMapRender() {
@@ -1513,7 +1965,10 @@ function endMapDrag(event) {
   if (!drag.moved) {
     const location = screenToMapLocation(drag.canvasX, drag.canvasY, drag.width, drag.height);
     selectMapLocation(location.latitude, location.longitude);
+    return;
   }
+
+  scheduleHeatmapRefresh();
 }
 
 async function selectMapLocation(latitude, longitude) {
@@ -1538,22 +1993,95 @@ function normalizeToRange(values, top, bottom) {
 }
 
 async function resolveLocation(query) {
-  if (!query || query === DEFAULT_LOCATION.name || query === "Chatham, Ontario, Canada") {
-    return DEFAULT_LOCATION;
-  }
-
-  return geocodeLocation(query);
+  if (!query) throw new Error("Location is required");
+  const candidates = rankLocationCandidates(await geocodeLocationCandidates(query), query);
+  const exactMatches = candidates.filter((candidate) => matchesLocationQuery(candidate, query));
+  if (exactMatches.length === 1) return exactMatches[0];
+  if (candidates.length === 1) return candidates[0];
+  throw new Error("Choose the exact location from the suggestions.");
 }
 
-async function loadWeather(query = DEFAULT_LOCATION.name) {
+function savePreferredLocation(location) {
+  writeCookieJSON(PREFERRED_LOCATION_KEY, location);
+}
+
+function getPreferredLocation() {
+  return readCookieJSON(PREFERRED_LOCATION_KEY);
+}
+
+function clearLocationSuggestions() {
+  activeLocationSuggestions = [];
+  selectedLocationSuggestion = null;
+  elements.locationSuggestions.innerHTML = "";
+  elements.locationSuggestions.classList.remove("visible");
+}
+
+function selectLocationSuggestion(location, { submit = false } = {}) {
+  selectedLocationSuggestion = location;
+  elements.locationInput.value = formatLocationLabel(location);
+  elements.locationSearchNote.textContent = "Exact location selected.";
+  clearLocationSuggestions();
+  selectedLocationSuggestion = location;
+  if (submit) loadWeather(location);
+}
+
+function renderLocationSuggestions(candidates, query) {
+  activeLocationSuggestions = candidates;
+  if (!candidates.length) {
+    clearLocationSuggestions();
+    elements.locationSearchNote.textContent = "No matching locations found.";
+    return;
+  }
+
+  elements.locationSuggestions.innerHTML = candidates
+    .map((candidate, index) => `
+      <button class="suggestion-item${matchesLocationQuery(candidate, query) ? " exact" : ""}" type="button" data-location-index="${index}">
+        <strong>${escapeHTML(candidate.name)}</strong>
+        <small>${escapeHTML([candidate.admin, candidate.country].filter(Boolean).join(", "))}</small>
+      </button>
+    `)
+    .join("");
+  elements.locationSuggestions.classList.add("visible");
+  elements.locationSuggestions.querySelectorAll("[data-location-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const candidate = activeLocationSuggestions[Number(button.dataset.locationIndex)];
+      if (candidate) selectLocationSuggestion(candidate, { submit: true });
+    });
+  });
+}
+
+async function searchLocationSuggestions(query) {
+  const currentToken = ++searchRequestToken;
+  if (query.length < 2) {
+    clearLocationSuggestions();
+    elements.locationSearchNote.textContent = "Search suggestions will appear as you type so you can choose the exact place.";
+    return;
+  }
+
+  elements.locationSearchNote.textContent = "Searching for matching locations...";
+  try {
+    const candidates = rankLocationCandidates(await geocodeLocationCandidates(query), query);
+    if (currentToken !== searchRequestToken) return;
+    renderLocationSuggestions(candidates, query);
+    elements.locationSearchNote.textContent = "Choose the exact city or region from the list.";
+  } catch (error) {
+    if (currentToken !== searchRequestToken) return;
+    clearLocationSuggestions();
+    elements.locationSearchNote.textContent = error.message;
+  }
+}
+
+async function loadWeather(query) {
   try {
     const requestId = ++weatherLoadId;
-    setLoadingState("Loading live weather data");
     const queryLabel = typeof query === "string" ? query : query.name;
+    const settings = getAppSettings();
     addLog(`Loading weather data for ${queryLabel}.`);
     activeLocation = typeof query === "string" ? await resolveLocation(query) : query;
-    activeMapHourOffset = 0;
-    elements.mapHourSlider.value = "0";
+    setLoadingState(`Loading live weather data for ${activeLocation.name}`);
+    updateSettingsUI();
+    setActiveMapHourOffset(settings.mapHourOffset);
+    setActiveHeatmapLayer(settings.mapLayer);
     latestForecast = await fetchForecast(activeLocation);
     if (requestId !== weatherLoadId) return;
     updateCurrentConditions(activeLocation, latestForecast);
@@ -1569,6 +2097,7 @@ async function loadWeather(query = DEFAULT_LOCATION.name) {
     mapState.selected = activeLocation;
     latestAirQuality = null;
     latestHeatmap = null;
+    latestHeatmapMeta = null;
     elements.airGrid.innerHTML = `<div class="empty-signal">Loading air quality data.</div>`;
     renderHeatmapLoading();
     renderHourlyForecast(latestForecast);
@@ -1577,6 +2106,7 @@ async function loadWeather(query = DEFAULT_LOCATION.name) {
     drawForecastChart(latestForecast);
     saveForecastSnapshot(activeLocation, latestForecast);
     renderWatchlist();
+    updateSettingsUI();
     addLog(`Live Open-Meteo feed updated for ${activeLocation.name}.`);
     hydrateSupplementalWeather(activeLocation, requestId);
   } catch (error) {
@@ -1596,7 +2126,7 @@ async function loadWeather(query = DEFAULT_LOCATION.name) {
 async function hydrateSupplementalWeather(location, requestId) {
   const [airResult, heatmapResult] = await Promise.allSettled([
     fetchAirQuality(location),
-    fetchHeatmap(location),
+    fetchHeatmap(),
   ]);
 
   if (requestId !== weatherLoadId) return;
@@ -1610,9 +2140,11 @@ async function hydrateSupplementalWeather(location, requestId) {
   renderAirQuality(latestAirQuality);
 
   if (heatmapResult.status === "fulfilled") {
-    latestHeatmap = heatmapResult.value;
+    latestHeatmap = heatmapResult.value.points;
+    latestHeatmapMeta = heatmapResult.value.meta;
   } else {
     latestHeatmap = null;
+    latestHeatmapMeta = null;
     addLog(heatmapResult.reason?.message || "Regional heatmap request failed");
   }
   renderHeatmap(latestHeatmap);
@@ -1621,31 +2153,58 @@ async function hydrateSupplementalWeather(location, requestId) {
 elements.locationForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const query = elements.locationInput.value.trim();
-  if (query) loadWeather(query);
+  if (!query) return;
+  if (selectedLocationSuggestion && normalizeSearchText(formatLocationLabel(selectedLocationSuggestion)) === normalizeSearchText(query)) {
+    loadWeather(selectedLocationSuggestion);
+    return;
+  }
+  resolveLocation(query)
+    .then((location) => {
+      selectedLocationSuggestion = location;
+      loadWeather(location);
+    })
+    .catch(() => {
+      searchLocationSuggestions(query);
+      elements.locationSearchNote.textContent = "Choose the exact location from the suggestions before loading weather.";
+    });
+});
+
+elements.locationInput.addEventListener("input", () => {
+  selectedLocationSuggestion = null;
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    searchLocationSuggestions(elements.locationInput.value.trim());
+  }, 180);
+});
+
+document.addEventListener("click", (event) => {
+  if (!elements.locationForm.contains(event.target)) {
+    elements.locationSuggestions.classList.remove("visible");
+  }
 });
 
 elements.refreshButton.addEventListener("click", () => {
-  loadWeather(activeLocation || elements.locationInput.value || DEFAULT_LOCATION);
+  const query = activeLocation || elements.locationInput.value.trim() || getPreferredLocation();
+  if (query) loadWeather(query);
 });
 
 elements.clearHistoryButton.addEventListener("click", () => {
-  localStorage.removeItem(HISTORY_KEY);
-  renderForecastHistory([]);
-  addLog("Forecast history cleared.");
+  clearSavedHistory();
 });
 
 elements.pinLocationButton.addEventListener("click", pinCurrentLocation);
 elements.mapHourSlider.addEventListener("input", () => {
-  activeMapHourOffset = Number(elements.mapHourSlider.value) || 0;
-  hideMapTooltip();
-  renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  setActiveMapHourOffset(elements.mapHourSlider.value, { persist: true });
 });
 
 window.addEventListener("resize", () => {
   hideChartTooltip();
   hideMapTooltip();
   if (latestForecast) drawForecastChart(latestForecast);
-  if (latestHeatmap) renderHeatmap(latestHeatmap);
+  if (latestHeatmap) {
+    renderHeatmap(latestHeatmap);
+    scheduleHeatmapRefresh(220);
+  }
 });
 
 chartCanvas.addEventListener("pointermove", updateChartTooltip);
@@ -1667,14 +2226,44 @@ elements.mapZoomIn.addEventListener("click", () => zoomMap(1));
 elements.mapZoomOut.addEventListener("click", () => zoomMap(-1));
 elements.mapReset.addEventListener("click", () => resetMapView());
 
-document.querySelectorAll(".heatmap-button").forEach((button) => {
+heatmapButtons.forEach((button) => {
   button.addEventListener("click", () => {
-    activeHeatmapLayer = button.dataset.layer;
-    document.querySelectorAll(".heatmap-button").forEach((item) => item.classList.toggle("active", item === button));
-    renderHeatmap(latestHeatmap, activeHeatmapLayer);
+    setActiveHeatmapLayer(button.dataset.layer, { persist: true });
   });
 });
 
+elements.setDefaultLocationButton.addEventListener("click", saveCurrentAsPreferredLocation);
+elements.resetDefaultLocationButton.addEventListener("click", clearPreferredLocationSetting);
+elements.settingsMapLayer.addEventListener("change", () => {
+  setActiveHeatmapLayer(elements.settingsMapLayer.value, { persist: true });
+});
+elements.settingsStartHour.addEventListener("change", () => {
+  setActiveMapHourOffset(elements.settingsStartHour.value, { persist: true });
+});
+elements.clearWatchlistButton.addEventListener("click", clearSavedWatchlist);
+elements.clearHistorySettingsButton.addEventListener("click", clearSavedHistory);
+elements.exportSettingsButton.addEventListener("click", exportSettingsPreset);
+elements.importSettingsButton.addEventListener("click", () => {
+  elements.importSettingsFile.click();
+});
+elements.importSettingsFile.addEventListener("change", (event) => {
+  const [file] = event.target.files || [];
+  importSettingsPreset(file);
+});
+
+const initialSettings = getAppSettings();
+setActiveHeatmapLayer(initialSettings.mapLayer);
+setActiveMapHourOffset(initialSettings.mapHourOffset);
 renderForecastHistory();
 renderWatchlist();
-loadWeather(DEFAULT_LOCATION);
+updateSettingsUI();
+
+const preferredLocation = getPreferredLocation();
+if (preferredLocation) {
+  if (typeof preferredLocation === "string") {
+    elements.locationInput.value = preferredLocation;
+  } else {
+    elements.locationInput.value = formatLocationLabel(preferredLocation);
+  }
+  loadWeather(preferredLocation);
+}

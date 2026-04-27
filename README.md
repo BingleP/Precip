@@ -1,10 +1,43 @@
 # Precip
 
-Static weather monitoring dashboard for Chatham, Ontario.
+Precip is a static, browser-only weather operations dashboard built for weather enthusiasts and stormwatching. It uses Open-Meteo for forecast and air-quality data, Open-Meteo geocoding for location search, and OpenStreetMap/Nominatim for map tiles and click-to-select location lookup.
 
-## Public Hosting Notes
+The current app is global rather than single-city. Users choose a starting location on first visit, then the dashboard saves preferences in browser cookies.
 
-This app is designed to be hosted as a read-only static site behind Nginx. It has no account system, no server-side write endpoints, and no backend actions. Weather data is fetched directly in the browser from Open-Meteo, and map tiles plus click-location lookup are loaded from OpenStreetMap services:
+## Current Feature Set
+
+- First-visit setup flow in `welcome.html`
+- Exact-match location search with suggestions
+- Cookie-backed saved preferences
+  - default location
+  - default map layer
+  - default map hour
+  - pinned locations
+  - forecast history
+- Import/export settings presets as JSON
+- Interactive dark-mode map with:
+  - zoom and pan
+  - click-to-load any map point
+  - viewport-based heatmap sampling
+  - cursor hover readout with coordinates and interpolated weather values
+- Current conditions, hourly forecast, daily forecast, weekly outlook
+- Stormwatch metrics, air quality, forecast confidence, and regional context
+
+## Project Files
+
+- `index.html` - main dashboard
+- `welcome.html` - first-visit location setup page
+- `styles.css` - full application styling
+- `app.js` - client-side app logic and data fetching
+- `logo.svg` - site mark and favicon source
+- `deploy/deploy.sh` - copy files to nginx web root and reload nginx
+- `deploy/precip.kerrick.ca.conf` - nginx config for `precip.kerrick.ca`
+
+## Runtime Model
+
+Precip is a static site. There is no backend, account system, or write API.
+
+All weather data is requested directly from the browser:
 
 - `https://api.open-meteo.com`
 - `https://air-quality-api.open-meteo.com`
@@ -12,28 +45,51 @@ This app is designed to be hosted as a read-only static site behind Nginx. It ha
 - `https://tile.openstreetmap.org`
 - `https://nominatim.openstreetmap.org`
 
-Use `nginx/precip.conf` as a starting server block. Replace:
+User state is stored in browser cookies. No app data is written to the server.
 
-- `weather.example.com`
-- `/var/www/precip`
+## Local Preview
 
-The included Nginx config listens on internal port `7427`, intended for a reverse proxy to forward public HTTPS traffic to.
+From the project directory:
 
-Recommended deployment:
+```bash
+python3 -m http.server 8088
+```
 
-1. Copy `index.html`, `styles.css`, `app.js`, and `logo.svg` to your Nginx web root.
-2. Install the Nginx server block from `nginx/precip.conf`.
-3. Point your reverse proxy to `http://127.0.0.1:7427`.
-4. Put the public site behind HTTPS before exposing it.
-5. Enable the HSTS line in the config only after HTTPS is confirmed working.
-6. Do not expose any future hardware receiver endpoint directly to the open internet unless it is read-only and separately secured.
+Then open:
+
+- `http://127.0.0.1:8088/welcome.html`
+- `http://127.0.0.1:8088/index.html`
+
+## Deployment
+
+This repo ships with a deployment helper for the live site:
+
+```bash
+cd /home/bingle/Projects/precip
+./deploy/deploy.sh
+```
+
+That script:
+
+1. copies the static site bundle into `/var/www/precip`
+2. installs the nginx site config
+3. validates nginx config
+4. reloads nginx
+
+The deployed bundle must include:
+
+- `index.html`
+- `welcome.html`
+- `styles.css`
+- `app.js`
+- `logo.svg`
 
 ## Security Model
 
-- Public read-only dashboard.
-- No destructive server actions.
-- The `Clear` history button only clears forecast snapshots from the current visitor's browser `localStorage`.
-- CSP restricts scripts and styles to this site, allows network connections only to Open-Meteo and OpenStreetMap Nominatim, and allows same-origin images plus OpenStreetMap map tiles.
-- The receiver endpoint field is currently informational only; the app does not fetch from it.
+- Public read-only dashboard
+- Only `GET`, `HEAD`, and `OPTIONS` are allowed by nginx
+- CSP restricts network access to Open-Meteo and OpenStreetMap services used by the app
+- No destructive server-side actions
+- Preference resets only clear browser cookies for the current visitor
 
-If you later add a backend or hardware feed, keep it behind a separate read-only API route and avoid exposing serial, radio, or filesystem controls publicly.
+If a backend or hardware receiver is added later, keep it on a separate read-only API surface rather than mixing it into the public static site.

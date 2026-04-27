@@ -4,126 +4,154 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Precip Weather Operations</title>
-    <link rel="icon" href="logo.svg?v=e5a83cc" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=e5a83cc" />
+    <script>
+      if (!document.cookie.split("; ").find((row) => row.startsWith("precip.preferredLocation.v1="))) {
+        window.location.replace("welcome.html");
+      }
+    </script>
+    <link rel="icon" href="logo.svg?v=20260427f" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=20260427f" />
   </head>
   <body>
     <div class="app-shell">
-      <aside class="sidebar">
+      <aside class="side-rail">
         <a class="brand" href="#" aria-label="Precip dashboard home">
-          <img class="brand-mark" src="logo.svg?v=e5a83cc" alt="" />
-          <span>
+          <img class="brand-mark" src="logo.svg?v=20260427f" alt="" />
+          <span class="brand-copy">
             <strong>Precip</strong>
-            <small>Weather Monitor</small>
+            <small>Stormwatch console</small>
           </span>
         </a>
 
-        <nav class="sidebar-nav" aria-label="Weather toolkit sections">
-          <section>
-            <span>Operations</span>
-            <a href="#overview">Current Conditions</a>
-            <a href="#map">Interactive Map</a>
-            <a href="#chart">Hourly Timeline</a>
-          </section>
-          <section>
-            <span>Stormwatch</span>
-            <a href="#storm">Storm Ingredients</a>
-            <a href="#patterns">Trend Watch</a>
-            <a href="#confidence">Forecast Confidence</a>
-          </section>
-          <section>
-            <span>Environment</span>
-            <a href="#air">Air Quality</a>
-          </section>
-          <section>
-            <span>Tools</span>
-            <a href="#devices">Equipment</a>
-            <a href="#context">Recent Context</a>
-            <a href="#history">History</a>
-            <a href="#watchlist">Pinned Locations</a>
-            <a href="#logs">Operations Log</a>
-          </section>
-        </nav>
-
-        <section class="station-card" aria-labelledby="station-title">
-          <span class="section-kicker">Station</span>
-          <h2 id="station-title">Open-Meteo Feed</h2>
-          <p id="station-copy">Live public weather data. Hardware receiver feed is not connected yet.</p>
-          <div class="station-status">
-            <span></span>
-            Browser forecast feed
+        <section class="rail-card search-card">
+          <div class="rail-head">
+            <span class="section-kicker">Location</span>
+            <h2>Track Any Region</h2>
           </div>
-          <div class="station-meta">
-            <span>Updated</span>
-            <strong id="updated-at">--:--</strong>
+          <form class="location-form" id="location-form">
+            <label class="visually-hidden" for="location-input">Weather location</label>
+            <input id="location-input" type="search" value="" placeholder="Search for a city, region, or country" autocomplete="off" />
+            <div class="search-actions">
+              <button class="primary-button" type="submit">Update</button>
+              <button class="ghost-icon" type="button" aria-label="Refresh telemetry" id="refresh-button">
+                <span aria-hidden="true">&#8635;</span>
+              </button>
+            </div>
+            <div class="field-note" id="location-search-note">Search suggestions will appear as you type so you can choose the exact place.</div>
+            <div class="suggestion-list" id="location-suggestions" role="listbox" aria-label="Location suggestions"></div>
+          </form>
+          <div class="feed-chip">
+            <span></span>
+            Open-Meteo feed online
+          </div>
+        </section>
+
+        <section class="rail-card active-card" aria-labelledby="station-title">
+          <div class="rail-head">
+            <span class="section-kicker">Active Target</span>
+            <h2 id="station-title">No active location</h2>
+          </div>
+          <p id="station-copy">Choose a location to start the live forecast dashboard.</p>
+          <dl class="active-meta">
+            <div>
+              <dt>Updated</dt>
+              <dd id="updated-at">--:--</dd>
+            </div>
+            <div>
+              <dt>Coordinates</dt>
+              <dd id="station-coordinates">--</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="rail-card settings-card" aria-labelledby="settings-title">
+          <div class="rail-head">
+            <span class="section-kicker">Settings</span>
+            <h2 id="settings-title">Saved Preferences</h2>
+          </div>
+          <div class="settings-stack">
+            <div class="setting-block">
+              <span class="setting-label">Default location</span>
+              <strong class="setting-value" id="default-location-label">Not set</strong>
+              <div class="setting-actions">
+                <button class="ghost-button" type="button" id="set-default-location-button">Use Current</button>
+                <button class="ghost-button" type="button" id="reset-default-location-button">Forget</button>
+              </div>
+            </div>
+            <label class="setting-block" for="settings-map-layer">
+              <span class="setting-label">Default map layer</span>
+              <select class="settings-select" id="settings-map-layer">
+                <option value="temperature">Temperature</option>
+                <option value="feels">Feels like</option>
+                <option value="dewpoint">Dew point</option>
+                <option value="humidity">Humidity</option>
+                <option value="precipitation">Rain</option>
+                <option value="precipProbability">Rain chance</option>
+                <option value="wind">Wind</option>
+                <option value="gusts">Wind gusts</option>
+                <option value="pressure">Pressure</option>
+                <option value="cloud">Cloud cover</option>
+                <option value="visibility">Visibility</option>
+                <option value="cape">CAPE</option>
+              </select>
+            </label>
+            <label class="setting-block" for="settings-start-hour">
+              <span class="setting-label">Default map hour</span>
+              <select class="settings-select" id="settings-start-hour">
+                <option value="0">Now</option>
+                <option value="1">+1 hour</option>
+                <option value="3">+3 hours</option>
+                <option value="6">+6 hours</option>
+                <option value="12">+12 hours</option>
+                <option value="23">+23 hours</option>
+              </select>
+            </label>
+            <div class="setting-block">
+              <span class="setting-label">Saved data</span>
+              <div class="setting-actions stacked">
+                <button class="ghost-button" type="button" id="clear-watchlist-button">Clear Pins</button>
+                <button class="ghost-button" type="button" id="clear-history-settings-button">Clear History</button>
+              </div>
+            </div>
+            <div class="setting-block">
+              <span class="setting-label">Backup preset</span>
+              <div class="setting-actions">
+                <button class="ghost-button" type="button" id="export-settings-button">Export</button>
+                <button class="ghost-button" type="button" id="import-settings-button">Import</button>
+              </div>
+              <input class="visually-hidden" id="import-settings-file" type="file" accept="application/json,.json" />
+              <small class="setting-note">Exports saved location, map defaults, pins, and forecast history to a JSON preset.</small>
+            </div>
           </div>
         </section>
       </aside>
 
-      <main class="main-panel">
-        <header class="topbar">
-          <div class="topbar-copy">
-            <span class="section-kicker">Chatham Weather</span>
-            <h1>Live Weather Operations</h1>
-            <p>Regional forecast, rainfall risk, wind shifts, and station readiness for Chatham-Kent.</p>
+      <main class="workspace">
+        <header class="hero-bar">
+          <div class="hero-copy">
+            <span class="section-kicker" id="hero-kicker">Live Weather Brief</span>
+            <h1 id="hero-location">Select a location</h1>
+            <p id="hero-copy">Live forecast guidance, regional mapping, and storm analysis will appear after a location is chosen.</p>
           </div>
-          <div class="topbar-actions">
-            <form class="location-form" id="location-form">
-              <label class="visually-hidden" for="location-input">Weather location</label>
-              <input id="location-input" type="search" value="Chatham, Ontario, Canada" autocomplete="off" />
-              <button class="primary-button" type="submit">Set Location</button>
-            </form>
-            <button class="icon-button" type="button" aria-label="Refresh telemetry" id="refresh-button">
-              <span aria-hidden="true">&#8635;</span>
-            </button>
+          <div class="hero-meta">
+            <div class="meta-tile">
+              <span>Timezone</span>
+              <strong id="hero-timezone">Awaiting selection</strong>
+            </div>
+            <div class="meta-tile">
+              <span>Actions</span>
+              <button class="ghost-button" type="button" id="pin-location-button">Pin Current</button>
+            </div>
           </div>
         </header>
 
-        <section class="weather-warning" id="weather-warning" aria-live="polite">
-          <div>
-            <span id="warning-label">Weather Status</span>
-            <strong id="warning-title">Checking forecast conditions</strong>
-            <p id="warning-copy">Live weather guidance will appear here after the feed loads.</p>
-          </div>
-        </section>
-
-        <section class="status-grid" id="overview" aria-label="Current conditions">
-          <article class="metric-card">
-            <span>Temperature</span>
-            <strong><span class="metric-value temp-value" id="temperature">--</span><span class="metric-unit">°C</span></strong>
-            <small id="temp-trend">Loading current conditions</small>
-          </article>
-          <article class="metric-card condition">
-            <span>Condition</span>
-            <strong id="current-condition">--</strong>
-            <small id="condition-copy">Today forecast pending</small>
-          </article>
-          <article class="metric-card">
-            <span>Pressure</span>
-            <strong><span class="metric-value pressure-value" id="pressure">--</span><span class="metric-unit"> hPa</span></strong>
-            <small id="pressure-trend">Waiting for live data</small>
-          </article>
-          <article class="metric-card wind-card">
-            <span>Wind</span>
-            <div class="wind-reading">
-              <strong><span class="metric-value wind-value" id="wind">--</span><span class="metric-unit"> km/h</span></strong>
-              <span class="wind-compass" id="wind-compass">--</span>
-            </div>
-            <small id="wind-direction">Direction pending</small>
-          </article>
-          <article class="metric-card alert">
-            <span>Precipitation</span>
-            <strong><span class="metric-value precip-value" id="watch-level">--</span><span class="metric-unit"> mm</span></strong>
-            <small id="watch-copy">Next-hour forecast pending</small>
-          </article>
-        </section>
-
-        <section class="dashboard-grid">
-          <article class="panel heatmap-panel" id="map">
-            <div class="panel-header">
+        <section class="operations-board">
+          <article class="panel map-panel" id="map">
+            <div class="panel-header panel-header-stack">
               <div>
-                <span class="section-kicker">Regional Heatmap</span>
-                <h2>Chatham Area Weather Pattern</h2>
+                <span class="section-kicker">Interactive Map</span>
+                <h2 id="map-title">Regional Weather Field</h2>
+                <p class="panel-subtitle" id="map-copy">Interactive forecast map centered on the active location. Click any city or point on the map to switch the briefing to that area.</p>
               </div>
               <div class="heatmap-controls" aria-label="Heatmap layer">
                 <button class="heatmap-button active" type="button" data-layer="temperature">Temp</button>
@@ -148,6 +176,7 @@
                 <button class="map-button" type="button" id="map-zoom-out" aria-label="Zoom map out">-</button>
                 <button class="map-button" type="button" id="map-reset" aria-label="Reset map view">Reset</button>
               </div>
+              <div class="map-hover-indicator" id="map-hover-indicator" aria-hidden="true"></div>
               <div class="map-tooltip" id="map-tooltip" role="status" aria-live="polite"></div>
               <a class="map-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>
               <div class="heatmap-legend" id="heatmap-legend"></div>
@@ -158,13 +187,59 @@
             </div>
           </article>
 
-          <article class="panel radar-panel" id="chart">
+          <article class="panel overview-panel" id="overview" aria-label="Current conditions">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Current Briefing</span>
+                <h2>Conditions and Immediate Risk</h2>
+              </div>
+            </div>
+            <article class="weather-warning" id="weather-warning" aria-live="polite">
+              <div>
+                <span id="warning-label">Weather Status</span>
+                <strong id="warning-title">Checking forecast conditions</strong>
+                <p id="warning-copy">Live weather guidance will appear here after the feed loads.</p>
+              </div>
+            </article>
+            <div class="metrics-grid">
+              <article class="metric-card">
+                <span>Temperature</span>
+                <strong><span class="metric-value temp-value" id="temperature">--</span><span class="metric-unit">°C</span></strong>
+                <small id="temp-trend">Loading current conditions</small>
+              </article>
+              <article class="metric-card">
+                <span>Condition</span>
+                <strong id="current-condition">--</strong>
+                <small id="condition-copy">Today forecast pending</small>
+              </article>
+              <article class="metric-card">
+                <span>Pressure</span>
+                <strong><span class="metric-value pressure-value" id="pressure">--</span><span class="metric-unit"> hPa</span></strong>
+                <small id="pressure-trend">Waiting for live data</small>
+              </article>
+              <article class="metric-card">
+                <span>Wind</span>
+                <div class="wind-reading">
+                  <strong><span class="metric-value wind-value" id="wind">--</span><span class="metric-unit"> km/h</span></strong>
+                  <span class="wind-compass" id="wind-compass">--</span>
+                </div>
+                <small id="wind-direction">Direction pending</small>
+              </article>
+              <article class="metric-card">
+                <span>Precipitation</span>
+                <strong><span class="metric-value precip-value" id="watch-level">--</span><span class="metric-unit"> mm</span></strong>
+                <small id="watch-copy">Next-hour forecast pending</small>
+              </article>
+            </div>
+          </article>
+
+          <article class="panel chart-panel" id="chart">
             <div class="panel-header">
               <div>
                 <span class="section-kicker">Hourly Outlook</span>
                 <h2>Next 24 Hours</h2>
               </div>
-              <span class="live-pill"><span></span> Live Weather Feed</span>
+              <span class="live-pill"><span></span> Live forecast</span>
             </div>
             <div class="chart-wrap">
               <canvas id="weather-chart" width="920" height="560" aria-label="Hourly weather forecast chart"></canvas>
@@ -173,20 +248,10 @@
             <div class="hourly-strip" id="hourly-strip" aria-label="Hourly forecast list"></div>
           </article>
 
-          <article class="panel" id="patterns">
-            <div class="panel-header">
-              <div>
-                <span class="section-kicker">Trend Watch</span>
-                <h2>What Is Changing</h2>
-              </div>
-            </div>
-            <div class="pattern-list" id="pattern-list"></div>
-          </article>
-
           <article class="panel storm-panel" id="storm">
             <div class="panel-header">
               <div>
-                <span class="section-kicker">Storm Ingredients</span>
+                <span class="section-kicker">Storm Analysis</span>
                 <h2>Convective Setup and Severe Potential</h2>
               </div>
               <span class="risk-badge" id="storm-risk-badge">--</span>
@@ -197,15 +262,17 @@
             </div>
             <div class="storm-signals" id="storm-signals"></div>
           </article>
+        </section>
 
-          <article class="panel air-panel" id="air">
+        <section class="insights-board">
+          <article class="panel" id="patterns">
             <div class="panel-header">
               <div>
-                <span class="section-kicker">Air and Exposure</span>
-                <h2>Air Quality, UV, Smoke Indicators</h2>
+                <span class="section-kicker">Trend Watch</span>
+                <h2>What Is Changing</h2>
               </div>
             </div>
-            <div class="air-grid" id="air-grid"></div>
+            <div class="pattern-list" id="pattern-list"></div>
           </article>
 
           <article class="panel confidence-panel" id="confidence">
@@ -218,10 +285,32 @@
             <div class="confidence-grid" id="confidence-grid"></div>
           </article>
 
+          <article class="panel air-panel" id="air">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Air and Exposure</span>
+                <h2>Air Quality and UV</h2>
+              </div>
+            </div>
+            <div class="air-grid" id="air-grid"></div>
+          </article>
+
+          <article class="panel context-panel" id="context">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Recent Context</span>
+                <h2>Rainfall, Instability, and Surface Signals</h2>
+              </div>
+            </div>
+            <div class="context-grid" id="context-grid"></div>
+          </article>
+        </section>
+
+        <section class="forecast-board">
           <article class="panel daily-panel" id="daily">
             <div class="panel-header">
               <div>
-                <span class="section-kicker">Daily Forecast</span>
+                <span class="section-kicker">Short Range</span>
                 <h2>Today and Tomorrow</h2>
               </div>
             </div>
@@ -231,20 +320,43 @@
           <article class="panel weekly-panel" id="weekly">
             <div class="panel-header">
               <div>
-                <span class="section-kicker">Weekly Forecast</span>
-                <h2>Seven-Day Outlook</h2>
+                <span class="section-kicker">Extended Outlook</span>
+                <h2>Seven-Day Forecast</h2>
               </div>
             </div>
             <div class="weekly-list" id="weekly-list"></div>
+          </article>
+        </section>
+
+        <section class="support-board">
+          <article class="panel watchlist-panel" id="watchlist">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Pinned Locations</span>
+                <h2>Stormwatch Watchlist</h2>
+              </div>
+            </div>
+            <div class="watchlist-grid" id="watchlist-grid"></div>
+          </article>
+
+          <article class="panel history-panel" id="history">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Forecast History</span>
+                <h2>Saved Forecast Snapshots</h2>
+              </div>
+              <button class="ghost-button" type="button" id="clear-history-button">Clear</button>
+            </div>
+            <div class="history-list" id="history-list"></div>
           </article>
 
           <article class="panel devices-panel" id="devices">
             <div class="panel-header">
               <div>
                 <span class="section-kicker">Hardware Feed</span>
-                <h2>Weather Equipment and Receiver Sources</h2>
+                <h2>Receiver and Ingest Sources</h2>
               </div>
-              <span class="status-pill standby">Not Connected</span>
+              <span class="status-pill standby">Not connected</span>
             </div>
             <div class="hardware-layout">
               <div class="receiver-panel" id="radio">
@@ -293,38 +405,6 @@
             </div>
           </article>
 
-          <article class="panel context-panel" id="context">
-            <div class="panel-header">
-              <div>
-                <span class="section-kicker">Recent Context</span>
-                <h2>Rainfall, Temperature, and Storm Windows</h2>
-              </div>
-            </div>
-            <div class="context-grid" id="context-grid"></div>
-          </article>
-
-          <article class="panel history-panel" id="history">
-            <div class="panel-header">
-              <div>
-                <span class="section-kicker">Forecast History</span>
-                <h2>Saved Forecast Snapshots</h2>
-              </div>
-              <button class="ghost-button" type="button" id="clear-history-button">Clear</button>
-            </div>
-            <div class="history-list" id="history-list"></div>
-          </article>
-
-          <article class="panel watchlist-panel" id="watchlist">
-            <div class="panel-header">
-              <div>
-                <span class="section-kicker">Pinned Locations</span>
-                <h2>Stormwatch Watchlist</h2>
-              </div>
-              <button class="ghost-button" type="button" id="pin-location-button">Pin Current</button>
-            </div>
-            <div class="watchlist-grid" id="watchlist-grid"></div>
-          </article>
-
           <article class="panel log-panel" id="logs">
             <div class="panel-header">
               <div>
@@ -338,6 +418,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=e5a83cc"></script>
+    <script src="app.js?v=20260427f"></script>
   </body>
 </html>

@@ -4,7 +4,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 sudo install -d -m 755 /var/www/precip
-sudo install -m 644 index.html styles.css app.js logo.svg /var/www/precip/
+sudo install -m 644 index.html welcome.html styles.css app.js logo.svg /var/www/precip/
 sudo install -m 644 deploy/precip.kerrick.ca.conf /etc/nginx/sites-available/precip.conf
 
 if [ ! -e /etc/nginx/sites-enabled/precip.conf ]; then

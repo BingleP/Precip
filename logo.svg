@@ -1,26 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
   <title id="title">Precip</title>
-  <desc id="desc">A modern stylized raindrop mark for the Precip weather dashboard.</desc>
+  <desc id="desc">A refined weather mark combining a raindrop and atmospheric contour lines.</desc>
   <defs>
-    <linearGradient id="tile" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#1c2540" />
-      <stop offset="0.62" stop-color="#111827" />
-      <stop offset="1" stop-color="#090a10" />
+    <linearGradient id="bg" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#232b34" />
+      <stop offset="1" stop-color="#161b21" />
     </linearGradient>
-    <linearGradient id="drop" x1="21" y1="11" x2="44" y2="55" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#f3f5f8" />
-      <stop offset="0.42" stop-color="#7dd3fc" />
-      <stop offset="1" stop-color="#a78bfa" />
-    </linearGradient>
-    <linearGradient id="cut" x1="30" y1="17" x2="41" y2="49" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#090a10" stop-opacity=".18" />
-      <stop offset="1" stop-color="#090a10" stop-opacity=".58" />
+    <linearGradient id="drop" x1="24" y1="14" x2="39" y2="49" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8bb8e2" />
+      <stop offset="0.62" stop-color="#79c0bd" />
+      <stop offset="1" stop-color="#d6a06d" />
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="16" fill="url(#tile)" />
-  <path d="M32 8.5c6.7 8 16.8 18.8 16.8 31.1 0 9.8-7.1 16.9-16.8 16.9s-16.8-7.1-16.8-16.9C15.2 27.3 25.3 16.5 32 8.5Z" fill="url(#drop)" />
-  <path d="M38.5 18.1c2.5 5 4.7 10.7 4.7 17.2 0 9-5.5 14.8-13.9 16.1 2.1 1.2 4.2 1.7 6.2 1.7 7 0 12.1-5.6 12.1-13.2 0-8.2-4.8-15.2-9.1-21.8Z" fill="url(#cut)" />
-  <path d="M25.4 37.6c.4 4.9 3.7 8.2 8.6 8.8" fill="none" stroke="#f3f5f8" stroke-width="3.8" stroke-linecap="round" opacity=".9" />
-  <path d="M22.7 20.6 16.9 15" fill="none" stroke="#f8c36a" stroke-width="3.4" stroke-linecap="round" opacity=".92" />
-  <path d="M47.1 15 41.3 20.6" fill="none" stroke="#f8c36a" stroke-width="3.4" stroke-linecap="round" opacity=".92" />
+  <rect width="64" height="64" rx="16" fill="url(#bg)" />
+  <path d="M17 25.5c3.3-2.4 6.6-3.6 10-3.6 3.2 0 6 .7 8.6 2.2 2.8 1.6 5.8 2.4 9 2.4 1.6 0 3.2-.2 4.8-.7" fill="none" stroke="#6c7683" stroke-width="2.2" stroke-linecap="round" opacity=".92" />
+  <path d="M15.6 34.8c3.8-2.2 7.8-3.3 12.1-3.3 3 0 5.9.6 8.7 1.8 3 1.3 5.9 2 8.8 2 1.3 0 2.7-.1 4-.4" fill="none" stroke="#4d5967" stroke-width="2.2" stroke-linecap="round" opacity=".9" />
+  <path d="M32 12.5c5.8 7 12 14.6 12 23.1 0 7.4-5 12.9-12 12.9s-12-5.5-12-12.9c0-8.5 6.2-16.1 12-23.1Z" fill="url(#drop)" />
+  <path d="M27.2 36.4c1.6 2.2 3.7 3.3 6.3 3.3 1.2 0 2.5-.2 3.8-.7" fill="none" stroke="#eef2f6" stroke-width="2.6" stroke-linecap="round" opacity=".95" />
+  <circle cx="46.5" cy="19.2" r="2.4" fill="#d6a06d" opacity=".95" />
 </svg>
