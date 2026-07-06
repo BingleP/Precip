@@ -65,6 +65,24 @@
               <button class="heatmap-button" type="button" data-layer="cape">CAPE</button>
             </div>
 
+            <button class="layers-toggle" id="layers-toggle" type="button">Layers</button>
+            <div class="layers-popover" id="layers-popover">
+              <div class="layers-popover-body">
+                <button class="heatmap-button active" type="button" data-layer="temperature">Temp</button>
+                <button class="heatmap-button" type="button" data-layer="feels">Feels</button>
+                <button class="heatmap-button" type="button" data-layer="dewpoint">Dew</button>
+                <button class="heatmap-button" type="button" data-layer="humidity">Humidity</button>
+                <button class="heatmap-button" type="button" data-layer="precipitation">Rain</button>
+                <button class="heatmap-button" type="button" data-layer="precipProbability">Chance</button>
+                <button class="heatmap-button" type="button" data-layer="wind">Wind</button>
+                <button class="heatmap-button" type="button" data-layer="gusts">Gusts</button>
+                <button class="heatmap-button" type="button" data-layer="pressure">Pressure</button>
+                <button class="heatmap-button" type="button" data-layer="cloud">Cloud</button>
+                <button class="heatmap-button" type="button" data-layer="visibility">Visibility</button>
+                <button class="heatmap-button" type="button" data-layer="cape">CAPE</button>
+              </div>
+            </div>
+
             <div class="heatmap-legend" id="heatmap-legend"></div>
             <div class="timeline-control">
               <label for="map-hour-slider"><strong id="map-hour-label">Now</strong></label>
@@ -93,6 +111,11 @@
           <span>&#9664;</span>
           <span class="collapse-label">Collapse</span>
         </button>
+        <div class="drawer-peek" id="drawer-peek">
+          <span class="drawer-handle"></span>
+          <span class="peek-temp" id="peek-temp">--°</span>
+          <span class="peek-condition" id="peek-condition">Loading...</span>
+        </div>
         <div class="data-panel-scroll">
 
           <!-- Now Section -->

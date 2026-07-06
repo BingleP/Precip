@@ -1304,6 +1304,10 @@ function updateCurrentConditions(location, forecast) {
   elements.mapCopy.textContent = `Interactive forecast map centered on ${placeName}. Click any point on the map to switch the briefing to that area.`;
   elements.locationInput.value = placeName;
   elements.temperature.textContent = formatNumber(current.temperature_2m);
+  const peekTemp = document.querySelector("#peek-temp");
+  const peekCondition = document.querySelector("#peek-condition");
+  if (peekTemp) peekTemp.textContent = formatTemp(current.temperature_2m);
+  if (peekCondition) peekCondition.textContent = describeWeatherCode(daily.weather_code[0]);
   elements.currentCondition.textContent = describeWeatherCode(daily.weather_code[0]);
   elements.conditionCopy.textContent = `${imp ? `${Math.round(daily.temperature_2m_max[0] * 9 / 5 + 32)}°F` : `${Math.round(daily.temperature_2m_max[0])}°C`} high, ${imp ? `${Math.round(daily.temperature_2m_min[0] * 9 / 5 + 32)}°F` : `${Math.round(daily.temperature_2m_min[0])}°C`} low today`;
   elements.pressure.textContent = imp ? (current.pressure_msl / 33.864).toFixed(2) : Math.round(current.pressure_msl);
@@ -3201,6 +3205,29 @@ function togglePanel() {
 
 document.querySelector("#panel-collapse")?.addEventListener("click", togglePanel);
 document.querySelector("#panel-expand")?.addEventListener("click", togglePanel);
+
+document.querySelector("#drawer-peek")?.addEventListener("click", () => {
+  document.querySelector("#data-panel")?.classList.remove("collapsed");
+});
+
+document.querySelector("#layers-toggle")?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const popover = document.querySelector("#layers-popover");
+  const toggle = document.querySelector("#layers-toggle");
+  if (popover) {
+    const isOpen = popover.classList.toggle("open");
+    toggle?.classList.toggle("active", isOpen);
+  }
+});
+
+document.addEventListener("click", (e) => {
+  const popover = document.querySelector("#layers-popover");
+  const toggle = document.querySelector("#layers-toggle");
+  if (popover && toggle && !popover.contains(e.target) && !toggle.contains(e.target)) {
+    popover.classList.remove("open");
+    toggle.classList.remove("active");
+  }
+});
 
 selectTab("now");
 document.querySelector(".app-shell")?.classList.add("panel-expanded");
