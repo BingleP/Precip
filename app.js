@@ -1,10 +1,10 @@
 const HOURS_TO_SHOW = 24;
 const HEATMAP_MIN_COLUMNS = 5;
-const HEATMAP_MAX_COLUMNS = 7;
+const HEATMAP_MAX_COLUMNS = 5;
 const HEATMAP_MIN_ROWS = 4;
-const HEATMAP_MAX_ROWS = 6;
+const HEATMAP_MAX_ROWS = 4;
 const HEATMAP_VIEW_PADDING = 120;
-const HEATMAP_CACHE_TTL_MS = 8 * 60 * 1000;
+const HEATMAP_CACHE_TTL_MS = 15 * 60 * 1000;
 const HEATMAP_MAX_CACHE_ENTRIES = 24;
 const FORECAST_CACHE_TTL_MS = 10 * 60 * 1000;
 const AIR_QUALITY_CACHE_TTL_MS = 20 * 60 * 1000;
@@ -80,6 +80,8 @@ const elements = {
   tempTrend: document.querySelector("#temp-trend"),
   pressureTrend: document.querySelector("#pressure-trend"),
   windDirection: document.querySelector("#wind-direction"),
+  humidity: document.querySelector("#humidity"),
+  humidityTrend: document.querySelector("#humidity-trend"),
   watchLevel: document.querySelector("#watch-level"),
   watchCopy: document.querySelector("#watch-copy"),
   warningBar: document.querySelector("#weather-warning"),
@@ -98,6 +100,7 @@ const elements = {
   heatmapLegend: document.querySelector("#heatmap-legend"),
   mapHourSlider: document.querySelector("#map-hour-slider"),
   mapHourLabel: document.querySelector("#map-hour-label"),
+  mapPlayButton: document.querySelector("#map-play-button"),
   mapReadout: document.querySelector("#map-readout"),
   mapTooltip: document.querySelector("#map-tooltip"),
   mapHoverIndicator: document.querySelector("#map-hover-indicator"),
@@ -136,6 +139,7 @@ const elements = {
   contextGrid: document.querySelector("#context-grid"),
   watchlistGrid: document.querySelector("#watchlist-grid"),
   pinLocationButton: document.querySelector("#pin-location-button"),
+  tornadoGrid: document.querySelector("#tornado-grid"),
 };
 
 const chartCanvas = document.querySelector("#weather-chart");
@@ -174,6 +178,14 @@ const satelliteCatalogCache = new Map();
 const forecastRequestCache = new Map();
 const airQualityRequestCache = new Map();
 const apiBackoffUntil = new Map();
+let overlayCanvas = null;
+let tileLoadTimer = null;
+let resizeTimer = null;
+let tooltipRaf = null;
+const activePointers = new Map();
+let latestAlerts = null;
+let pinchStartDist = 0;
+let pinchStartZoom = MAP_DEFAULT_ZOOM;
 const chartState = {
   hoverIndex: null,
   points: [],
@@ -198,6 +210,20 @@ function addLog(message) {
   while (elements.eventLog.children.length > 7) {
     elements.eventLog.lastElementChild.remove();
   }
+}
+
+function showToast(message, type = "info", duration = 3000) {
+  const container = document.querySelector("#toast-container");
+  if (!container) return;
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  requestAnimationFrame(() => requestAnimationFrame(() => toast.classList.add("visible")));
+  setTimeout(() => {
+    toast.classList.remove("visible");
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
 }
 
 function getApiBaseUrl() {
@@ -505,11 +531,38 @@ function normalizeMapHourOffset(value) {
   return Math.max(0, Math.min(MAP_HOURS_TO_SHOW - 1, Math.round(next)));
 }
 
+let mapAnimationTimer = null;
+let mapAnimationPlaying = false;
+
+function toggleMapAnimation() {
+  if (mapAnimationPlaying) {
+    mapAnimationPlaying = false;
+    if (mapAnimationTimer) clearInterval(mapAnimationTimer);
+    mapAnimationTimer = null;
+    if (elements.mapPlayButton) {
+      elements.mapPlayButton.classList.remove("playing");
+      elements.mapPlayButton.innerHTML = "&#9654;";
+    }
+    return;
+  }
+  mapAnimationPlaying = true;
+  if (elements.mapPlayButton) {
+    elements.mapPlayButton.classList.add("playing");
+    elements.mapPlayButton.innerHTML = "&#10074;&#10074;";
+  }
+  mapAnimationTimer = setInterval(() => {
+    let next = parseInt(elements.mapHourSlider.value, 10) + 1;
+    if (next > 23) next = 0;
+    setActiveMapHourOffset(next);
+  }, 1200);
+}
+
 function getAppSettings() {
   const parsed = readCookieJSON(SETTINGS_KEY);
   return {
     mapLayer: normalizeMapLayer(parsed?.mapLayer),
     mapHourOffset: normalizeMapHourOffset(parsed?.mapHourOffset),
+    useImperial: parsed?.useImperial === true,
   };
 }
 
@@ -536,6 +589,8 @@ function updateSettingsUI() {
   elements.defaultLocationLabel.textContent = formatSavedLocation(savedLocation);
   elements.settingsMapLayer.value = settings.mapLayer;
   elements.settingsStartHour.value = `${settings.mapHourOffset}`;
+  document.querySelector("#units-metric").checked = !settings.useImperial;
+  document.querySelector("#units-imperial").checked = settings.useImperial;
   elements.setDefaultLocationButton.disabled = !activeLocation;
   elements.resetDefaultLocationButton.disabled = !savedLocation;
 }
@@ -742,6 +797,30 @@ function formatNumber(value, digits = 1) {
   return Number.isFinite(value) ? value.toFixed(digits) : "--";
 }
 
+function isImperial() {
+  return getAppSettings().useImperial;
+}
+
+function formatTemp(celsius) {
+  if (!Number.isFinite(celsius)) return "--";
+  return isImperial() ? `${Math.round(celsius * 9 / 5 + 32)}°F` : `${formatNumber(celsius)}°C`;
+}
+
+function formatSpeed(kmh) {
+  if (!Number.isFinite(kmh)) return "--";
+  return isImperial() ? `${Math.round(kmh / 1.609)} mph` : `${Math.round(kmh)} km/h`;
+}
+
+function formatPrecip(mm) {
+  if (!Number.isFinite(mm)) return "--";
+  return isImperial() ? `${(mm / 25.4).toFixed(2)} in` : `${formatNumber(mm)} mm`;
+}
+
+function formatPressure(hpa) {
+  if (!Number.isFinite(hpa)) return "--";
+  return isImperial() ? `${(hpa / 33.864).toFixed(2)} inHg` : `${Math.round(hpa)} hPa`;
+}
+
 function degreesToCompass(degrees) {
   if (!Number.isFinite(degrees)) return "--";
   const directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
@@ -923,6 +1002,22 @@ async function fetchAirQuality(location) {
   });
 }
 
+async function fetchAlerts(location) {
+  const isCanada = location.countryCode === "CA";
+  const endpoint = isCanada ? "/ca-alerts" : "/alerts";
+  try {
+    const url = buildApiUrl(endpoint);
+    url.searchParams.set("latitude", location.latitude.toFixed(4));
+    url.searchParams.set("longitude", location.longitude.toFixed(4));
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) return [];
+    const body = await response.json();
+    return body.features || [];
+  } catch {
+    return [];
+  }
+}
+
 async function fetchNoaaSectorCatalog(sector) {
   const cacheKey = `${sector.sat}:${sector.id}`;
   const cached = satelliteCatalogCache.get(cacheKey);
@@ -1015,6 +1110,16 @@ async function fetchHeatmap() {
   }
 }
 
+async function fetchSpcOutlook(layer = "1") {
+  try {
+    const r = await fetch(`http://127.0.0.1:7428/api/spc-outlook?layer=${layer}`);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
 function getMapViewportSize() {
   const rect = heatmapCanvas.getBoundingClientRect();
   return {
@@ -1070,19 +1175,19 @@ function getHeatmapViewportCacheKey(viewport) {
 
 function getCachedHeatmap(cacheKey) {
   const entry = heatmapCache.get(cacheKey);
-  if (!entry) return null;
-  if (Date.now() - entry.savedAt > HEATMAP_CACHE_TTL_MS) {
-    heatmapCache.delete(cacheKey);
-    return null;
+  if (entry) return entry.data;
+  const stored = readStorageJSON(`precip.heatmapCache.v1:${cacheKey}`);
+  if (stored?.savedAt && stored?.data && Date.now() - stored.savedAt < HEATMAP_CACHE_TTL_MS) {
+    heatmapCache.set(cacheKey, stored);
+    return stored.data;
   }
-  return entry.data;
+  return null;
 }
 
 function setCachedHeatmap(cacheKey, data) {
-  heatmapCache.set(cacheKey, {
-    savedAt: Date.now(),
-    data,
-  });
+  const entry = { savedAt: Date.now(), data };
+  heatmapCache.set(cacheKey, entry);
+  writeStorageJSON(`precip.heatmapCache.v1:${cacheKey}`, entry);
 
   while (heatmapCache.size > HEATMAP_MAX_CACHE_ENTRIES) {
     const oldestKey = heatmapCache.keys().next().value;
@@ -1144,17 +1249,21 @@ async function refreshHeatmapForViewport(requestToken = ++heatmapRefreshToken) {
   }
 }
 
+function spinner() {
+  return `<span class="spinner"></span>`;
+}
+
 function setLoadingState(message) {
   if (activeLocation) {
     elements.heroLocation.textContent = activeLocation.name;
     elements.heroKicker.textContent = "Refreshing weather brief";
     elements.heroTimezone.textContent = activeLocation.timezone || "Local timezone pending";
   }
-  elements.heroCopy.textContent = "Pulling the latest forecast, regional map samples, and analysis tools for the selected location.";
-  elements.tempTrend.textContent = message;
-  elements.pressureTrend.textContent = "Waiting for API response";
-  elements.windDirection.textContent = "Waiting for API response";
-  elements.watchCopy.textContent = "Waiting for API response";
+  elements.heroCopy.innerHTML = `${spinner()} Pulling the latest forecast, regional map samples, and analysis tools for the selected location.`;
+  elements.tempTrend.innerHTML = `${spinner()} ${message}`;
+  elements.pressureTrend.innerHTML = `${spinner()} Waiting for API response`;
+  elements.windDirection.innerHTML = `${spinner()} Waiting for API response`;
+  elements.watchCopy.innerHTML = `${spinner()} Waiting for API response`;
 }
 
 function applyForecastCacheStatus(forecast) {
@@ -1178,6 +1287,7 @@ function updateCurrentConditions(location, forecast) {
   const nextPrecip = hourly.precipitation[nextIndex] ?? current.precipitation;
   const nextPrecipChance = hourly.precipitation_probability[nextIndex];
 
+  const imp = isImperial();
   const placeName = [location.name, location.admin, location.country].filter(Boolean).join(", ");
   const regionalName = [location.admin, location.country].filter(Boolean).join(", ");
   elements.stationTitle.textContent = placeName;
@@ -1187,19 +1297,34 @@ function updateCurrentConditions(location, forecast) {
   elements.heroKicker.textContent = regionalName ? `Live weather brief for ${regionalName}` : "Live weather brief";
   elements.heroLocation.textContent = location.name;
   elements.heroTimezone.textContent = location.timezone || forecast.timezone || "Local timezone unavailable";
-  elements.heroCopy.textContent = `${describeWeatherCode(daily.weather_code[0])} with ${Math.round(daily.temperature_2m_max[0])}° / ${Math.round(daily.temperature_2m_min[0])}° today. Next-hour precipitation signal is ${Number.isFinite(nextPrecipChance) ? `${nextPrecipChance}%` : "unavailable"}.`;
+  const hi = imp ? `${Math.round(daily.temperature_2m_max[0] * 9 / 5 + 32)}°F` : `${Math.round(daily.temperature_2m_max[0])}°C`;
+  const lo = imp ? `${Math.round(daily.temperature_2m_min[0] * 9 / 5 + 32)}°F` : `${Math.round(daily.temperature_2m_min[0])}°C`;
+  elements.heroCopy.textContent = `${describeWeatherCode(daily.weather_code[0])} with ${hi} / ${lo} today. Next-hour precipitation signal is ${Number.isFinite(nextPrecipChance) ? `${nextPrecipChance}%` : "unavailable"}.`;
   elements.mapTitle.textContent = `${location.name} Regional Weather Field`;
   elements.mapCopy.textContent = `Interactive forecast map centered on ${placeName}. Click any point on the map to switch the briefing to that area.`;
   elements.locationInput.value = placeName;
   elements.temperature.textContent = formatNumber(current.temperature_2m);
   elements.currentCondition.textContent = describeWeatherCode(daily.weather_code[0]);
-  elements.conditionCopy.textContent = `${Math.round(daily.temperature_2m_max[0])}° high, ${Math.round(daily.temperature_2m_min[0])}° low today`;
-  elements.pressure.textContent = formatNumber(current.pressure_msl);
-  elements.wind.textContent = Math.round(current.wind_speed_10m);
+  elements.conditionCopy.textContent = `${imp ? `${Math.round(daily.temperature_2m_max[0] * 9 / 5 + 32)}°F` : `${Math.round(daily.temperature_2m_max[0])}°C`} high, ${imp ? `${Math.round(daily.temperature_2m_min[0] * 9 / 5 + 32)}°F` : `${Math.round(daily.temperature_2m_min[0])}°C`} low today`;
+  elements.pressure.textContent = imp ? (current.pressure_msl / 33.864).toFixed(2) : Math.round(current.pressure_msl);
+  elements.wind.textContent = imp ? Math.round(current.wind_speed_10m / 1.609) : Math.round(current.wind_speed_10m);
   elements.windCompass.textContent = degreesToCompass(current.wind_direction_10m);
-  elements.tempTrend.textContent = describeDelta(temperatureDelta, "°C", "Warming", "Cooling");
-  elements.pressureTrend.textContent = describeDelta(pressureDelta, "hPa", "Rising", "Falling");
-  elements.windDirection.textContent = `From ${Math.round(current.wind_direction_10m)}° with gusts to ${Math.round(current.wind_gusts_10m)} km/h`;
+  elements.tempTrend.textContent = `${temperatureDelta >= 0 ? "Warming" : "Cooling"} ${Math.abs(temperatureDelta).toFixed(1)}${imp ? "°F" : "°C"} in 3h`;
+  elements.pressureTrend.textContent = `${pressureDelta >= 0 ? "Rising" : "Falling"} ${Math.abs(pressureDelta).toFixed(1)}${imp ? " inHg" : " hPa"} in 3h`;
+  elements.windDirection.textContent = `From ${Math.round(current.wind_direction_10m)}° with gusts to ${formatSpeed(current.wind_gusts_10m)}`;
+  document.querySelectorAll(".metric-card .metric-unit").forEach((el) => {
+    const card = el.closest(".metric-card");
+    if (!card) return;
+    const label = card.querySelector("span:first-child")?.textContent;
+    if (label === "Temperature") el.textContent = imp ? "°F" : "°C";
+    else if (label === "Pressure") el.textContent = imp ? " inHg" : " hPa";
+    else if (label === "Wind") el.textContent = imp ? " mph" : " km/h";
+    else if (label?.includes("Precip")) el.textContent = imp ? " in" : " mm";
+  });
+  elements.humidity.textContent = Number.isFinite(current.relative_humidity_2m) ? Math.round(current.relative_humidity_2m) : "--";
+  elements.humidityTrend.textContent = Number.isFinite(current.relative_humidity_2m)
+    ? (current.relative_humidity_2m > 70 ? "High" : current.relative_humidity_2m > 40 ? "Moderate" : "Low")
+    : "Awaiting data";
   elements.watchLevel.textContent = formatNumber(nextPrecip);
   elements.watchCopy.textContent = Number.isFinite(nextPrecipChance)
     ? `${nextPrecipChance}% chance in the next hour`
@@ -1231,27 +1356,108 @@ function updateWeatherWarning(forecast) {
     label = "Weather Warning";
     title = stormToday ? "Thunderstorm risk in the forecast" : "Damaging gust potential";
     copy = stormToday
-      ? `Storm conditions appear in today's forecast. Peak gusts may reach ${Math.round(maxGust)} km/h.`
-      : `Forecast gusts may reach ${Math.round(maxGust)} km/h in the next 12 hours.`;
+      ? `Storm conditions appear in today's forecast. Peak gusts may reach ${formatSpeed(maxGust)}.`
+      : `Forecast gusts may reach ${formatSpeed(maxGust)} in the next 12 hours.`;
   } else if (heavyRainToday || precipTotal >= 10 || maxPrecipChance >= 75) {
     level = "watch";
     label = "Weather Watch";
     title = "Rain risk is elevated";
-    copy = `${precipTotal.toFixed(1)} mm is forecast over the next 12 hours, with peak probability near ${maxPrecipChance}%.`;
+    copy = `${formatPrecip(precipTotal)} is forecast over the next 12 hours, with peak probability near ${maxPrecipChance}%.`;
   } else if (maxGust >= 45 || pressureDrop >= 3 || precipTotal >= 3) {
     level = "advisory";
     label = "Weather Advisory";
     title = maxGust >= 45 ? "Gusty winds possible" : "Changing weather pattern";
     copy =
       maxGust >= 45
-        ? `Gusts may reach ${Math.round(maxGust)} km/h in the next 12 hours.`
-        : `Pressure may fall ${pressureDrop.toFixed(1)} hPa over 6 hours with ${precipTotal.toFixed(1)} mm possible.`;
+        ? `Gusts may reach ${formatSpeed(maxGust)} in the next 12 hours.`
+        : `Pressure may fall ${formatPressure(pressureDrop)} over 6 hours with ${formatPrecip(precipTotal)} possible.`;
   }
 
   elements.warningBar.className = `weather-warning ${level}`;
   elements.warningLabel.textContent = label;
   elements.warningTitle.textContent = title;
   elements.warningCopy.textContent = copy;
+}
+
+const NWS_SEVERITY_ORDER = { Extreme: 4, Severe: 3, Moderate: 2, Minor: 1, Unknown: 0 };
+
+const TORNADO_EVENTS = new Set(["Tornado Warning", "Tornado Watch", "Severe Thunderstorm Warning", "Severe Thunderstorm Watch"]);
+
+const ALERT_SEVERITY_COLORS = {
+  Extreme: { fill: "rgba(201, 106, 110, 0.15)", stroke: "rgba(201, 106, 110, 0.8)" },
+  Severe: { fill: "rgba(217, 144, 74, 0.15)", stroke: "rgba(217, 144, 74, 0.8)" },
+  Moderate: { fill: "rgba(201, 180, 88, 0.15)", stroke: "rgba(201, 180, 88, 0.8)" },
+  Minor: { fill: "rgba(88, 152, 201, 0.12)", stroke: "rgba(88, 152, 201, 0.6)" },
+  Unknown: { fill: "rgba(136, 136, 136, 0.1)", stroke: "rgba(136, 136, 136, 0.5)" },
+};
+
+function pointInPolygon(lat, lon, coords) {
+  let inside = false;
+  for (const ring of coords) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i][0], yi = ring[i][1];
+      const xj = ring[j][0], yj = ring[j][1];
+      if ((yi > lon) !== (yj > lon) && lat < ((xj - xi) * (lon - yi)) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+  }
+  return inside;
+}
+
+const SPC_CATEGORIES = {
+  2: { label: "TSTM", name: "General Thunderstorms", color: "#55BB55" },
+  3: { label: "MRGL", name: "Marginal", color: "#66A366" },
+  4: { label: "SLGT", name: "Slight", color: "#DDAA00" },
+  5: { label: "ENH", name: "Enhanced", color: "#FF9933" },
+  6: { label: "MDT", name: "Moderate", color: "#FF3333" },
+  7: { label: "HIGH", name: "High", color: "#FF0099" },
+};
+
+const SPC_TORNADO_PROB = {
+  2: { pct: "2%", color: "#79BA7A" },
+  4: { pct: "5%", color: "#55BB55" },
+  6: { pct: "10%", color: "#DDAA00" },
+  8: { pct: "15%", color: "#FF9933" },
+  10: { pct: "30%", color: "#FF3333" },
+  12: { pct: "45%", color: "#FF0099" },
+  14: { pct: "60%", color: "#CC0066" },
+};
+
+function updateNwsAlerts(alerts) {
+  latestAlerts = alerts;
+  const alertBadge = document.querySelector('.tab-button[data-tab="now"] .alert-badge');
+
+  if (!alerts?.length) {
+    elements.warningBar.className = "weather-warning clear";
+    elements.warningLabel.textContent = "Weather Status";
+    elements.warningTitle.textContent = "No active alerts";
+    elements.warningCopy.textContent = "No weather alerts are currently active for this area.";
+    if (alertBadge) alertBadge.remove();
+    return;
+  }
+
+  const sorted = [...alerts].sort((a, b) => (NWS_SEVERITY_ORDER[b.properties.severity] || 0) - (NWS_SEVERITY_ORDER[a.properties.severity] || 0));
+  const top = sorted[0].properties;
+  const severity = top.severity || "Unknown";
+  const level = severity === "Extreme" || severity === "Severe" ? "warning" : severity === "Moderate" ? "watch" : "advisory";
+
+  elements.warningBar.className = `weather-warning ${level}`;
+  const source = top.source === "ECCC" ? "ECCC" : "NWS";
+  elements.warningLabel.textContent = `${source} ${severity.toUpperCase()} — ${alerts.length} alert${alerts.length > 1 ? "s" : ""}`;
+  elements.warningTitle.textContent = top.event || top.headline || "Weather alert";
+  elements.warningCopy.textContent = (top.headline || top.description || "").slice(0, 300);
+
+  if (!alertBadge) {
+    const badge = document.createElement("span");
+    badge.className = "alert-badge";
+    badge.textContent = alerts.length > 9 ? "9+" : alerts.length;
+    document.querySelector('.tab-button[data-tab="now"]')?.appendChild(badge);
+  } else {
+    alertBadge.textContent = alerts.length > 9 ? "9+" : alerts.length;
+  }
+
+  showToast(`${severity}: ${top.event || "Weather alert"}`, severity === "Extreme" || severity === "Severe" ? "error" : "info", 5000);
 }
 
 function renderPatterns(forecast) {
@@ -1271,18 +1477,18 @@ function renderPatterns(forecast) {
       title: "Pressure Trend",
       copy:
         pressureLater < pressureNow - 1.5
-          ? `Pressure may fall ${(pressureNow - pressureLater).toFixed(1)} hPa in the next 6 hours.`
-          : `Pressure is fairly steady over the next 6 hours: ${(pressureLater - pressureNow).toFixed(1)} hPa.`,
+          ? `Pressure may fall ${formatPressure(pressureNow - pressureLater)} in the next 6 hours.`
+          : `Pressure is fairly steady over the next 6 hours: ${formatPressure(pressureLater - pressureNow)}.`,
     },
     {
       level: maxPrecipChance >= 60 || nextPrecipTotal >= 2 ? "medium" : "low",
       title: "Rain Window",
-      copy: `${nextPrecipTotal.toFixed(1)} mm forecast over 6 hours, with peak probability at ${maxPrecipChance}%.`,
+      copy: `${formatPrecip(nextPrecipTotal)} forecast over 6 hours, with peak probability at ${maxPrecipChance}%.`,
     },
     {
       level: windLater > windNow + 8 ? "medium" : "low",
       title: "Wind Change",
-      copy: `Wind changes from ${Math.round(windNow)} to ${Math.round(windLater)} km/h over the next 6 hours.`,
+      copy: `Wind changes from ${formatSpeed(windNow)} to ${formatSpeed(windLater)} over the next 6 hours.`,
     },
   ];
 
@@ -1357,8 +1563,8 @@ function renderStormToolkit(forecast) {
     ["Peak gust", formatHeatmapValue(risk.gusts, "gusts"), "Highest gust in the next 12 hours"],
     ["Rain chance", formatHeatmapValue(risk.rainChance, "precipProbability"), "Peak probability in the next 12 hours"],
     ["12h rain", formatHeatmapValue(risk.rainTotal, "precipitation"), "Total precipitation window"],
-    ["Pressure drop", `${formatNumber(risk.pressureDrop)} hPa`, "Six-hour pressure tendency"],
-    ["Wind shear proxy", `${formatNumber(risk.shear)} km/h`, "100 m minus 10 m wind speed"],
+    ["Pressure drop", `${formatPressure(risk.pressureDrop)}`, "Six-hour pressure tendency"],
+    ["Wind shear proxy", `${formatSpeed(risk.shear)}`, "100 m minus 10 m wind speed"],
     ["Visibility", formatHeatmapValue(hourlyValue(forecast, "visibility"), "visibility"), "Near-term surface visibility"],
   ]
     .map(([label, value, copy]) => `<article class="toolkit-card"><span>${label}</span><strong>${value}</strong><small>${copy}</small></article>`)
@@ -1370,6 +1576,58 @@ function renderStormToolkit(forecast) {
     risk.gusts >= 55 ? "Wind gusts may become hazardous." : "Gust signal remains below severe thresholds.",
   ];
   elements.stormSignals.innerHTML = signals.map((copy) => `<div class="pattern-item low"><span></span><div><strong>Signal</strong><p>${copy}</p></div></div>`).join("");
+}
+
+let latestSpcCat = null;
+let latestSpcTorn = null;
+
+function renderSpcOutlook() {
+  const grid = elements.tornadoGrid;
+  if (!grid) return;
+  const items = [];
+
+  if (latestSpcCat) {
+    const match = findRiskForLocation(latestSpcCat, mapState.center);
+    if (match) {
+      const cat = SPC_CATEGORIES[match.properties.dn] || { label: match.properties.label, name: match.properties.label2, color: "#888" };
+      items.push(`<article class="toolkit-card"><span>Day 1 Risk</span><strong style="color:${cat.color}">${cat.name}</strong><small>SPC categorical convective outlook</small></article>`);
+    }
+  }
+
+  if (latestSpcTorn) {
+    const match = findRiskForLocation(latestSpcTorn, mapState.center);
+    if (match) {
+      const prob = SPC_TORNADO_PROB[match.properties.dn] || { pct: match.properties.label, color: "#888" };
+      items.push(`<article class="toolkit-card"><span>Tornado Prob</span><strong style="color:${prob.color}">${prob.pct}</strong><small>Day 1 tornado probability</small></article>`);
+    }
+  }
+
+  if (latestAlerts?.length) {
+    const tornadoWarnings = latestAlerts.filter(a => TORNADO_EVENTS.has(a.properties.event));
+    if (tornadoWarnings.length) {
+      const worst = tornadoWarnings.sort((a, b) => (NWS_SEVERITY_ORDER[b.properties.severity] || 0) - (NWS_SEVERITY_ORDER[a.properties.severity] || 0))[0].properties;
+      items.push(`<article class="toolkit-card"><span>Active Alert</span><strong style="color:#c96a6e">${worst.event}</strong><small>${(worst.headline || worst.description || "").slice(0, 120)}</small></article>`);
+    }
+  }
+
+  if (!items.length) {
+    grid.innerHTML = `<div class="empty-signal">No tornado risk data available for this area.</div>`;
+    return;
+  }
+  grid.innerHTML = items.join("");
+}
+
+function findRiskForLocation(collection, center) {
+  if (!collection?.features?.length) return null;
+  for (const feature of collection.features) {
+    const coords = feature.geometry.type === "Polygon" ? [feature.geometry.coordinates] : feature.geometry.coordinates;
+    for (const polygon of coords) {
+      if (pointInPolygon(center.longitude, center.latitude, polygon)) {
+        return feature;
+      }
+    }
+  }
+  return null;
 }
 
 function renderAirQuality(airQuality) {
@@ -1401,7 +1659,7 @@ function renderConfidence(forecast) {
   const confidence = Math.max(0, Math.min(100, 100 - pressureChange * 5 - gustSpread * 0.5 - cloudRange * 0.15 - (rainWindow > 50 ? 8 : 0)));
   elements.confidenceGrid.innerHTML = [
     ["Confidence", `${Math.round(confidence)}%`, "Lower when pressure, cloud, rain, and gust signals vary sharply"],
-    ["Gust spread", `${formatNumber(gustSpread)} km/h`, "Change from now to the peak gust window"],
+    ["Gust spread", `${formatSpeed(gustSpread)}`, "Change from now to the peak gust window"],
     ["Cloud range", `${Math.round(cloudRange)}%`, "Cloud cover variability over 24 hours"],
     ["Rain peak", `${Math.round(rainWindow)}%`, "Peak precipitation probability over 24 hours"],
   ]
@@ -1423,7 +1681,7 @@ function renderContext(forecast) {
     ["UV max", Number.isFinite(uv) ? formatNumber(uv) : "--", "Daily maximum UV index"],
     ["Cloud now", formatHeatmapValue(hourlyValue(forecast, "cloud_cover"), "cloud"), "Current cloud cover"],
     ["VPD", `${formatNumber(hourlyValue(forecast, "vapour_pressure_deficit"))} kPa`, "Drying/evaporation stress"],
-    ["Soil temp", `${formatNumber(hourlyValue(forecast, "soil_temperature_0cm"))}°C`, "Surface soil temperature"],
+    ["Soil temp", formatTemp(hourlyValue(forecast, "soil_temperature_0cm")), "Surface soil temperature"],
   ]
     .map(([label, value, copy]) => `<article class="toolkit-card"><span>${label}</span><strong>${value}</strong><small>${copy}</small></article>`)
     .join("");
@@ -1443,14 +1701,14 @@ function renderDailyForecast(forecast) {
             <strong>${describeWeatherCode(daily.weather_code[index])}</strong>
           </div>
           <div class="forecast-temp">
-            <strong>${Math.round(daily.temperature_2m_max[index])}°</strong>
-            <small>${Math.round(daily.temperature_2m_min[index])}° low</small>
+            <strong>${isImperial() ? `${Math.round(daily.temperature_2m_max[index] * 9 / 5 + 32)}°` : `${Math.round(daily.temperature_2m_max[index])}°`}</strong>
+            <small>${isImperial() ? `${Math.round(daily.temperature_2m_min[index] * 9 / 5 + 32)}°` : `${Math.round(daily.temperature_2m_min[index])}°`} low</small>
           </div>
           <dl class="forecast-details">
-            <div><dt>Precip</dt><dd>${formatNumber(daily.precipitation_sum[index])} mm</dd></div>
+            <div><dt>Precip</dt><dd>${formatPrecip(daily.precipitation_sum[index])}</dd></div>
             <div><dt>Chance</dt><dd>${daily.precipitation_probability_max[index] ?? "--"}%</dd></div>
-            <div><dt>Wind</dt><dd>${Math.round(daily.wind_speed_10m_max[index])} km/h</dd></div>
-            <div><dt>Gusts</dt><dd>${Math.round(daily.wind_gusts_10m_max[index])} km/h</dd></div>
+            <div><dt>Wind</dt><dd>${formatSpeed(daily.wind_speed_10m_max[index])}</dd></div>
+            <div><dt>Gusts</dt><dd>${formatSpeed(daily.wind_gusts_10m_max[index])}</dd></div>
             <div><dt>Sunrise</dt><dd>${new Date(daily.sunrise[index]).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</dd></div>
             <div><dt>Sunset</dt><dd>${new Date(daily.sunset[index]).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</dd></div>
           </dl>
@@ -1472,15 +1730,15 @@ function renderWeeklyForecast(forecast) {
             <small>${describeWeatherCode(daily.weather_code[index])}</small>
           </div>
           <div class="weekly-temp">
-            <span>${Math.round(daily.temperature_2m_max[index])}°</span>
-            <small>${Math.round(daily.temperature_2m_min[index])}°</small>
+            <span>${isImperial() ? `${Math.round(daily.temperature_2m_max[index] * 9 / 5 + 32)}°` : `${Math.round(daily.temperature_2m_max[index])}°`}</span>
+            <small>${isImperial() ? `${Math.round(daily.temperature_2m_min[index] * 9 / 5 + 32)}°` : `${Math.round(daily.temperature_2m_min[index])}°`}</small>
           </div>
           <div class="weekly-bar" aria-hidden="true">
             <span class="${getPrecipBarClass(daily.precipitation_probability_max[index])}"></span>
           </div>
           <div class="weekly-meta">
             <span>${daily.precipitation_probability_max[index] ?? "--"}%</span>
-            <small>${formatNumber(daily.precipitation_sum[index])} mm</small>
+            <small>${formatPrecip(daily.precipitation_sum[index])}</small>
           </div>
         </div>
       `,
@@ -1500,9 +1758,9 @@ function renderHourlyForecast(forecast) {
       return `
         <article class="hourly-card">
           <span>${time}</span>
-          <strong>${Math.round(hourly.temperature_2m[index])}°</strong>
-          <small>${chance}% rain</small>
-          <small>${Math.round(hourly.wind_speed_10m[index])} km/h</small>
+          <strong>${isImperial() ? `${Math.round(hourly.temperature_2m[index] * 9 / 5 + 32)}°` : `${Math.round(hourly.temperature_2m[index])}°`}</strong>
+          <small class="rain-badge">${chance > 0 ? `${chance}%` : "—"}</small>
+          <small class="wind-value">${formatSpeed(hourly.wind_speed_10m[index])}</small>
         </article>
       `;
     })
@@ -1528,17 +1786,23 @@ function renderHeatmap(points = latestHeatmap, layer = activeHeatmapLayer) {
   const min = Math.min(...finiteValues);
   const max = Math.max(...finiteValues);
 
-  drawHeatmapOverlay(points, values, layer, min, max, width, height);
+  if (!mapState.drag) {
+    drawHeatmapOverlay(points, values, layer, min, max, width, height);
+  }
   drawMapPlaces(width, height);
-  renderMapReadout(layer, min, max);
-  renderHeatmapLegend(layer, min, max);
-  updateMapHourLabel();
+  drawMapAlertPolygons(width, height);
+  if (!mapState.drag) {
+    renderMapReadout(layer, min, max);
+    renderHeatmapLegend(layer, min, max);
+    updateMapHourLabel();
+  }
 }
 
 function renderHeatmapLoading(message = "Loading regional weather layer") {
   const { width, height } = prepareCanvas(heatmapCanvas, heatmapCtx);
   drawMapTiles(width, height);
-  drawMapOverlayText(width, message);
+  drawMapOverlayText(width, `${message}...`);
+  showToast(message, "info", 2000);
 }
 
 function updateMapHourLabel() {
@@ -1549,6 +1813,69 @@ function updateMapHourLabel() {
   }
   const time = latestHeatmap?.[0]?.hourly?.time?.[activeMapHourOffset];
   elements.mapHourLabel.textContent = time ? new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : `+${activeMapHourOffset}h`;
+}
+
+let alertPolygonsCache = [];
+
+function drawMapAlertPolygons(width, height) {
+  if (!width) {
+    const r = heatmapCanvas.getBoundingClientRect();
+    width = Math.max(320, Math.round(r.width));
+    height = Math.max(260, Math.round(r.height));
+  }
+  alertPolygonsCache = [];
+
+  if (!latestAlerts?.length) return;
+  const polyAlerts = latestAlerts.filter(a => a.geometry?.type === "Polygon" || a.geometry?.type === "MultiPolygon");
+  if (!polyAlerts.length) return;
+
+  for (const alert of polyAlerts) {
+    const rings = alert.geometry.type === "MultiPolygon" ? alert.geometry.coordinates[0] : [alert.geometry.coordinates[0]];
+    const ring = rings[0];
+    const severity = alert.properties.severity || "Unknown";
+    const colors = ALERT_SEVERITY_COLORS[severity] || ALERT_SEVERITY_COLORS.Unknown;
+    const screenPoints = ring.map(([lon, lat]) => projectToMapScreen(lat, lon, width, height));
+
+    alertPolygonsCache.push({
+      points: screenPoints,
+      coords: ring,
+      severity,
+      event: alert.properties.event,
+      headline: alert.properties.headline || "",
+      description: (alert.properties.description || "").slice(0, 300),
+      id: alert.properties.id || "",
+    });
+
+    heatmapCtx.beginPath();
+    heatmapCtx.moveTo(screenPoints[0].x, screenPoints[0].y);
+    for (let i = 1; i < screenPoints.length; i++) {
+      heatmapCtx.lineTo(screenPoints[i].x, screenPoints[i].y);
+    }
+    heatmapCtx.closePath();
+    heatmapCtx.fillStyle = colors.fill;
+    heatmapCtx.fill();
+    heatmapCtx.strokeStyle = colors.stroke;
+    heatmapCtx.lineWidth = severity === "Extreme" || severity === "Severe" ? 2.5 : 1.5;
+    heatmapCtx.setLineDash(severity === "Extreme" || severity === "Severe" ? [] : [6, 4]);
+    heatmapCtx.stroke();
+    heatmapCtx.setLineDash([]);
+  }
+}
+
+function isInsideAlertPolygon(px, py) {
+  for (const polygon of alertPolygonsCache) {
+    const { points } = polygon;
+    let inside = false;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+      const xi = points[i].x, yi = points[i].y;
+      const xj = points[j].x, yj = points[j].y;
+      if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+    if (inside) return polygon;
+  }
+  return null;
 }
 
 function drawMapTiles(width, height) {
@@ -1600,7 +1927,13 @@ function getMapTile(zoom, x, y) {
   const image = new Image();
   image.decoding = "async";
   image.src = `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`;
-  image.addEventListener("load", () => renderHeatmap(latestHeatmap, activeHeatmapLayer), { once: true });
+  image.addEventListener("load", () => {
+    if (tileLoadTimer) clearTimeout(tileLoadTimer);
+    tileLoadTimer = setTimeout(() => {
+      tileLoadTimer = null;
+      renderHeatmap(latestHeatmap, activeHeatmapLayer);
+    }, 80);
+  }, { once: true });
   image.addEventListener("error", () => tileCache.delete(key), { once: true });
   tileCache.set(key, image);
   return image;
@@ -1634,10 +1967,13 @@ function drawHeatmapOverlay(points, values, layer, min, max, width, height) {
   const smoothing = Math.max(width, height) / 18;
   const overlayWidth = Math.max(72, Math.round(width * HEATMAP_SCALE));
   const overlayHeight = Math.max(44, Math.round(height * HEATMAP_SCALE));
-  const overlay = document.createElement("canvas");
-  overlay.width = overlayWidth;
-  overlay.height = overlayHeight;
-  const overlayCtx = overlay.getContext("2d");
+
+  if (!overlayCanvas || overlayCanvas.width !== overlayWidth || overlayCanvas.height !== overlayHeight) {
+    overlayCanvas = document.createElement("canvas");
+    overlayCanvas.width = overlayWidth;
+    overlayCanvas.height = overlayHeight;
+  }
+  const overlayCtx = overlayCanvas.getContext("2d");
   const image = overlayCtx.createImageData(overlayWidth, overlayHeight);
   const data = image.data;
 
@@ -1659,9 +1995,8 @@ function drawHeatmapOverlay(points, values, layer, min, max, width, height) {
 
   heatmapCtx.save();
   heatmapCtx.imageSmoothingEnabled = true;
-  heatmapCtx.imageSmoothingQuality = "high";
   heatmapCtx.filter = "blur(6px)";
-  heatmapCtx.drawImage(overlay, -10, -10, width + 20, height + 20);
+  heatmapCtx.drawImage(overlayCanvas, -10, -10, width + 20, height + 20);
   heatmapCtx.restore();
 
   heatmapCtx.fillStyle = "rgba(5, 7, 12, 0.04)";
@@ -1864,13 +2199,13 @@ function getHeatmapTitle(layer) {
 
 function formatHeatmapValue(value, layer) {
   if (!Number.isFinite(value)) return "--";
-  if (layer === "precipitation") return `${value.toFixed(1)} mm`;
+  if (layer === "precipitation") return formatPrecip(value);
   if (layer === "precipProbability" || layer === "humidity" || layer === "cloud") return `${Math.round(value)}%`;
-  if (layer === "wind" || layer === "gusts") return `${Math.round(value)} km/h`;
-  if (layer === "pressure") return `${Math.round(value)} hPa`;
-  if (layer === "visibility") return `${Math.round(value / 1000)} km`;
+  if (layer === "wind" || layer === "gusts") return formatSpeed(value);
+  if (layer === "pressure") return formatPressure(value);
+  if (layer === "visibility") return isImperial() ? `${(value / 1609.34).toFixed(1)} mi` : `${Math.round(value / 1000)} km`;
   if (layer === "cape") return `${Math.round(value)} J/kg`;
-  return `${value.toFixed(1)}°C`;
+  return formatTemp(value);
 }
 
 function renderHeatmapLegend(layer, min, max) {
@@ -1923,15 +2258,15 @@ function renderForecastHistory(history = getForecastHistory()) {
     .map(
       (item) => `
         <div class="history-row">
-          <div>
-            <strong>${new Date(item.savedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</strong>
-            <small>${escapeHTML(item.location)}</small>
+          <div class="history-date">${new Date(item.savedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
+          <div class="history-location" title="${escapeHTML(item.location)}">${escapeHTML(item.location)}</div>
+          <div class="history-meta">
+            <span>Now <strong>${formatTemp(item.temperature)}</strong></span>
+            <span>Pressure <strong>${formatPressure(item.pressure)}</strong></span>
+            <span>Today <strong>${isImperial() ? `${Math.round(item.todayHigh * 9 / 5 + 32)}°F / ${Math.round(item.todayLow * 9 / 5 + 32)}°F` : `${Math.round(item.todayHigh)}°C / ${Math.round(item.todayLow)}°C`}</strong></span>
+            <span>Precip <strong>${formatPrecip(item.todayPrecip)}</strong></span>
+            <span>Cond <strong>${escapeHTML(item.condition)}</strong></span>
           </div>
-          <div><span>Now</span><strong>${formatNumber(item.temperature)}°C</strong></div>
-          <div><span>Pressure</span><strong>${formatNumber(item.pressure)} hPa</strong></div>
-          <div><span>Today</span><strong>${Math.round(item.todayHigh)}° / ${Math.round(item.todayLow)}°</strong></div>
-          <div><span>Precip</span><strong>${formatNumber(item.todayPrecip)} mm</strong></div>
-          <div><span>Condition</span><strong>${escapeHTML(item.condition)}</strong></div>
         </div>
       `,
     )
@@ -1978,9 +2313,9 @@ function renderWatchlist(items = getWatchlist()) {
       (item, index) => `
         <div class="watchlist-row">
           <div><strong>${escapeHTML([item.name, item.admin, item.country].filter(Boolean).join(", "))}</strong><small>${new Date(item.pinnedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</small></div>
-          <div><span>Temp</span><strong>${formatNumber(item.temperature)}°C</strong></div>
-          <div><span>Gust</span><strong>${Math.round(item.gusts || 0)} km/h</strong></div>
-          <div><span>Rain</span><strong>${formatNumber(item.rain)} mm</strong></div>
+          <div><span>Temp</span><strong>${formatTemp(item.temperature)}</strong></div>
+          <div><span>Gust</span><strong>${formatSpeed(item.gusts || 0)}</strong></div>
+          <div><span>Rain</span><strong>${formatPrecip(item.rain)}</strong></div>
           <div><span>Risk</span><strong>${escapeHTML(item.risk || "--")}</strong></div>
           <button type="button" data-watch-index="${index}">Load</button>
         </div>
@@ -2065,10 +2400,12 @@ function drawForecastChart(forecast) {
     chartCtx.stroke();
 
     const labelValue = tempMax - ((tempMax - tempMin) / 5) * i;
-    chartCtx.fillStyle = "#98a4b3";
-    chartCtx.font = "700 12px system-ui";
-    chartCtx.fillText(`${labelValue.toFixed(0)}°`, 14, y + 4);
+  chartCtx.textAlign = "right";
+  chartCtx.fillStyle = "#98a4b3";
+  chartCtx.font = "700 12px system-ui";
+  chartCtx.fillText(`${isImperial() ? `${(labelValue * 9 / 5 + 32).toFixed(0)}°` : `${labelValue.toFixed(0)}°`}`, chartLeft - 8, y + 4);
   }
+  chartCtx.textAlign = "start";
 
   precipitation.forEach((chance, offset) => {
     const barHeight = (chartHeight * chance) / 100;
@@ -2119,26 +2456,39 @@ function drawForecastChart(forecast) {
     drawChartHover(chartState.points[chartState.hoverIndex], chartTop, chartBottom);
   }
 
+  chartCtx.font = "700 13px system-ui";
+  const tempW = chartCtx.measureText("Temp").width;
+  const rainW = chartCtx.measureText("Rain").width;
+  const gap1 = 22, gap2 = 18, dotR = 5;
+  const totalW = tempW + gap1 + rainW + gap2 + dotR * 2;
+  let legX = chartRight - totalW;
+  if (legX < chartLeft) legX = chartLeft;
+  chartCtx.textAlign = "left";
   chartCtx.fillStyle = "#d5dde7";
-  chartCtx.font = "700 15px system-ui";
-  chartCtx.fillText("Temperature", chartLeft, 30);
+  chartCtx.fillText("Temp", legX, 29);
   chartCtx.fillStyle = "#81c5ab";
-  roundedRect(chartCtx, chartLeft + 105, 20, 28, 5, 3);
+  chartCtx.beginPath();
+  chartCtx.arc(legX + tempW + 6, 25, dotR, 0, Math.PI * 2);
   chartCtx.fill();
+  legX += tempW + gap1;
   chartCtx.fillStyle = "#d5dde7";
-  chartCtx.fillText("Rain chance", chartLeft + 154, 30);
+  chartCtx.fillText("Rain", legX, 29);
   chartCtx.fillStyle = "#72aee6";
-  roundedRect(chartCtx, chartLeft + 246, 20, 28, 5, 3);
+  chartCtx.beginPath();
+  chartCtx.arc(legX + rainW + 6, 25, dotR, 0, Math.PI * 2);
   chartCtx.fill();
 
+  chartCtx.textAlign = "center";
   chartCtx.fillStyle = "#98a4b3";
   chartCtx.font = "700 12px system-ui";
+  const labelStep = width < 400 ? 6 : 3;
   indexes.forEach((index, offset) => {
-    if (offset % 3 !== 0) return;
+    if (offset % labelStep !== 0) return;
     const x = chartLeft + offset * xStep;
     const label = new Date(hourly.time[index]).toLocaleTimeString([], { hour: "2-digit" });
-    chartCtx.fillText(label, x - 13, height - 22);
+    chartCtx.fillText(label, x, height - 22);
   });
+  chartCtx.textAlign = "start";
 }
 
 function roundedRect(context, x, y, width, height, radius) {
@@ -2224,10 +2574,10 @@ function showChartTooltip(point, pointerX, pointerY, rect) {
 
   elements.chartTooltip.innerHTML = `
     <strong>${escapeHTML(time)}</strong>
-    <span>Temperature: ${formatNumber(point.temperature)}°C</span>
+    <span>Temperature: ${formatTemp(point.temperature)}</span>
     <span>Precip chance: ${point.precipitationProbability ?? "--"}%</span>
-    <span>Precip amount: ${formatNumber(point.precipitationAmount)} mm</span>
-    <span>Wind: ${Math.round(point.wind)} km/h</span>
+    <span>Precip amount: ${formatPrecip(point.precipitationAmount)}</span>
+    <span>Wind: ${formatSpeed(point.wind)}</span>
   `;
 
   elements.chartTooltip.classList.add("visible");
@@ -2250,38 +2600,68 @@ function hideChartTooltip() {
 
 function updateMapTooltip(event) {
   if (!latestHeatmap?.length || mapState.drag || !(mapState.samples || []).length) return;
+  if (tooltipRaf) return;
+  tooltipRaf = requestAnimationFrame(() => {
+    tooltipRaf = null;
 
-  const rect = heatmapCanvas.getBoundingClientRect();
-  const pointerX = event.clientX - rect.left;
-  const pointerY = event.clientY - rect.top;
-  const location = screenToMapLocation(pointerX, pointerY, rect.width, rect.height);
-  const samples = mapState.samples || [];
-  const smoothing = Math.max(rect.width, rect.height) / 18;
-  const layerValue = interpolateSampleMetricAt(pointerX, pointerY, samples, smoothing, (sample) => sample.value);
-  const temperature = interpolateSampleMetricAt(pointerX, pointerY, samples, smoothing, (sample) => sample.hourly?.temperature_2m?.[activeMapHourOffset]);
-  const precipitation = interpolateSampleMetricAt(pointerX, pointerY, samples, smoothing, (sample) => sample.hourly?.precipitation?.[activeMapHourOffset]);
-  const wind = interpolateSampleMetricAt(pointerX, pointerY, samples, smoothing, (sample) => sample.hourly?.wind_speed_10m?.[activeMapHourOffset]);
+    const rect = heatmapCanvas.getBoundingClientRect();
+    const pointerX = event.clientX - rect.left;
+    const pointerY = event.clientY - rect.top;
+    const location = screenToMapLocation(pointerX, pointerY, rect.width, rect.height);
+    const samples = mapState.samples || [];
+    const smoothing = Math.max(rect.width, rect.height) / 18;
+    let layerValue = null, temperature = null, precipitation = null, wind = null;
 
-  elements.mapTooltip.innerHTML = `
-    <strong>${formatHeatmapValue(layerValue, activeHeatmapLayer)}</strong>
-    <span>${location.latitude.toFixed(3)}, ${location.longitude.toFixed(3)}</span>
-    <span>Temp: ${formatNumber(temperature)}°C</span>
-    <span>Rain: ${formatNumber(precipitation)} mm</span>
-    <span>Wind: ${Number.isFinite(wind) ? Math.round(wind) : "--"} km/h</span>
-  `;
-  elements.mapTooltip.classList.add("visible");
-  elements.mapHoverIndicator.classList.add("visible");
-  elements.mapHoverIndicator.style.left = `${pointerX}px`;
-  elements.mapHoverIndicator.style.top = `${pointerY}px`;
+    let weightedValue = 0, weightTotal = 0, weightedTemp = 0, weightedPrecip = 0, weightedWind = 0;
+    samples.forEach((sample) => {
+      const sv = sample.value;
+      if (!Number.isFinite(sv)) return;
+      const dx = sample.x - pointerX, dy = sample.y - pointerY;
+      const weight = 1 / (dx * dx + dy * dy + smoothing * smoothing);
+      weightedValue += sv * weight;
+      weightTotal += weight;
+      const t = sample.hourly?.temperature_2m?.[activeMapHourOffset];
+      if (Number.isFinite(t)) weightedTemp += t * weight;
+      const p = sample.hourly?.precipitation?.[activeMapHourOffset];
+      if (Number.isFinite(p)) weightedPrecip += p * weight;
+      const w = sample.hourly?.wind_speed_10m?.[activeMapHourOffset];
+      if (Number.isFinite(w)) weightedWind += w * weight;
+    });
 
-  const tooltipWidth = elements.mapTooltip.offsetWidth;
-  const tooltipHeight = elements.mapTooltip.offsetHeight;
-  const left = Math.min(rect.width - tooltipWidth - 10, pointerX + 14);
-  const top = Math.max(10, Math.min(rect.height - tooltipHeight - 10, pointerY - tooltipHeight - 10));
+    if (weightTotal) {
+      layerValue = weightedValue / weightTotal;
+      temperature = weightedTemp / weightTotal;
+      precipitation = weightedPrecip / weightTotal;
+      wind = weightedWind / weightTotal;
+    }
 
-  elements.mapTooltip.style.left = `${Math.max(10, left)}px`;
-  elements.mapTooltip.style.top = `${top}px`;
-  elements.mapTooltip.style.bottom = "auto";
+    const alertPoly = alertPolygonsCache.length ? isInsideAlertPolygon(pointerX, pointerY) : null;
+    let tooltipHTML =
+      `<strong>${formatHeatmapValue(layerValue, activeHeatmapLayer)}</strong>` +
+      `<span>${location.latitude.toFixed(3)}, ${location.longitude.toFixed(3)}</span>` +
+      `<span>Temp: ${formatTemp(temperature)}</span>` +
+      `<span>Rain: ${formatPrecip(precipitation)}</span>` +
+      `<span>Wind: ${formatSpeed(wind)}</span>`;
+
+    if (alertPoly) {
+      const props = alertPoly;
+      tooltipHTML += `<div class="tooltip-alert ${props.severity.toLowerCase()}"><strong>⚠ ${props.event}</strong><small>${(props.headline || props.description || "").slice(0, 180)}</small></div>`;
+    }
+
+    elements.mapTooltip.innerHTML = tooltipHTML;
+    elements.mapTooltip.classList.add("visible");
+    elements.mapHoverIndicator.classList.add("visible");
+    elements.mapHoverIndicator.style.left = `${pointerX}px`;
+    elements.mapHoverIndicator.style.top = `${pointerY}px`;
+
+    const tooltipWidth = elements.mapTooltip.offsetWidth;
+    const tooltipHeight = elements.mapTooltip.offsetHeight;
+    const left = Math.min(rect.width - tooltipWidth - 10, pointerX + 14);
+    const top = Math.max(10, Math.min(rect.height - tooltipHeight - 10, pointerY - tooltipHeight - 10));
+    elements.mapTooltip.style.left = `${Math.max(10, left)}px`;
+    elements.mapTooltip.style.top = `${top}px`;
+    elements.mapTooltip.style.bottom = "auto";
+  });
 }
 
 function hideMapTooltip() {
@@ -2321,6 +2701,17 @@ function queueMapRender() {
 
 function startMapDrag(event) {
   if (event.button !== 0) return;
+  activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (activePointers.size >= 2) {
+    if (mapState.drag) {
+      heatmapCanvas.classList.remove("dragging");
+      mapState.drag = null;
+    }
+    const pts = [...activePointers.values()];
+    pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    pinchStartZoom = mapState.zoom;
+    return;
+  }
   const rect = heatmapCanvas.getBoundingClientRect();
   const zoom = Math.round(mapState.zoom);
   mapState.drag = {
@@ -2341,6 +2732,21 @@ function startMapDrag(event) {
 }
 
 function moveMapDrag(event) {
+  if (activePointers.has(event.pointerId)) {
+    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  }
+  if (activePointers.size >= 2 && pinchStartDist > 0) {
+    const pts = [...activePointers.values()];
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    const targetZoom = clampMapZoom(Math.round(pinchStartZoom + Math.log2(dist / pinchStartDist)));
+    if (targetZoom !== mapState.zoom) {
+      mapState.zoom = targetZoom;
+      hideMapTooltip();
+      renderHeatmap(latestHeatmap, activeHeatmapLayer);
+      scheduleHeatmapRefresh();
+    }
+    return;
+  }
   if (!mapState.drag || mapState.drag.pointerId !== event.pointerId) {
     updateMapTooltip(event);
     return;
@@ -2362,6 +2768,10 @@ function moveMapDrag(event) {
 }
 
 function endMapDrag(event) {
+  activePointers.delete(event.pointerId);
+  if (activePointers.size < 2) {
+    pinchStartDist = 0;
+  }
   if (!mapState.drag || mapState.drag.pointerId !== event.pointerId) return;
   const drag = mapState.drag;
   mapState.drag = null;
@@ -2484,7 +2894,12 @@ async function loadWeather(query) {
     addLog(`Loading weather data for ${queryLabel}.`);
     activeLocation = typeof query === "string" ? await resolveLocation(query) : query;
     setLoadingState(`Loading live weather data for ${activeLocation.name}`);
-    updateSatelliteForLocation(activeLocation);
+    satelliteTabLoaded = false;
+    const currentTab = document.querySelector(".tab-button.active")?.dataset.tab;
+    if (currentTab === "satellite") {
+      satelliteTabLoaded = true;
+      updateSatelliteForLocation(activeLocation);
+    }
     updateSettingsUI();
     setActiveMapHourOffset(settings.mapHourOffset);
     setActiveHeatmapLayer(settings.mapLayer);
@@ -2505,7 +2920,10 @@ async function loadWeather(query) {
     latestAirQuality = null;
     latestHeatmap = null;
     latestHeatmapMeta = null;
+    latestSpcCat = null;
+    latestSpcTorn = null;
     elements.airGrid.innerHTML = `<div class="empty-signal">Loading air quality data.</div>`;
+    if (elements.tornadoGrid) elements.tornadoGrid.innerHTML = `<div class="empty-signal">Loading SPC outlook data.</div>`;
     renderHeatmapLoading();
     renderHourlyForecast(latestForecast);
     renderDailyForecast(latestForecast);
@@ -2514,9 +2932,11 @@ async function loadWeather(query) {
     saveForecastSnapshot(activeLocation, latestForecast);
     renderWatchlist();
     updateSettingsUI();
+    showToast(`Weather data loaded for ${activeLocation.name}`, "success", 2500);
     addLog(`Live Open-Meteo feed updated for ${activeLocation.name}.`);
     hydrateSupplementalWeather(activeLocation, requestId);
   } catch (error) {
+    showToast(error.message, "error", 4000);
     addLog(error.message);
     elements.warningBar.className = "weather-warning advisory";
     elements.warningLabel.textContent = "Weather Advisory";
@@ -2531,9 +2951,10 @@ async function loadWeather(query) {
 }
 
 async function hydrateSupplementalWeather(location, requestId) {
-  const [airResult, heatmapResult] = await Promise.allSettled([
+  const [airResult, heatmapResult, alertsResult] = await Promise.allSettled([
     fetchAirQuality(location),
     fetchHeatmap(),
+    fetchAlerts(location),
   ]);
 
   if (requestId !== weatherLoadId) return;
@@ -2555,6 +2976,22 @@ async function hydrateSupplementalWeather(location, requestId) {
     addLog(heatmapResult.reason?.message || "Regional heatmap request failed");
   }
   renderHeatmap(latestHeatmap);
+
+  if (alertsResult.status === "fulfilled") {
+    updateNwsAlerts(alertsResult.value);
+  } else {
+    updateNwsAlerts([]);
+    addLog(alertsResult.reason?.message || "Weather alerts request failed");
+  }
+
+  const [spcCatResult, spcTornResult] = await Promise.allSettled([
+    fetchSpcOutlook("1"),
+    fetchSpcOutlook("3"),
+  ]);
+  if (requestId !== weatherLoadId) return;
+  latestSpcCat = spcCatResult.status === "fulfilled" ? spcCatResult.value : null;
+  latestSpcTorn = spcTornResult.status === "fulfilled" ? spcTornResult.value : null;
+  renderSpcOutlook();
 }
 
 elements.locationForm.addEventListener("submit", (event) => {
@@ -2607,11 +3044,15 @@ elements.mapHourSlider.addEventListener("input", () => {
 window.addEventListener("resize", () => {
   hideChartTooltip();
   hideMapTooltip();
-  if (latestForecast) drawForecastChart(latestForecast);
-  if (latestHeatmap) {
-    renderHeatmap(latestHeatmap);
-    scheduleHeatmapRefresh(220);
-  }
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    resizeTimer = null;
+    if (latestForecast) drawForecastChart(latestForecast);
+    if (latestHeatmap) {
+      renderHeatmap(latestHeatmap);
+      scheduleHeatmapRefresh(300);
+    }
+  }, 200);
 });
 
 chartCanvas.addEventListener("pointermove", updateChartTooltip);
@@ -2646,6 +3087,14 @@ elements.settingsMapLayer.addEventListener("change", () => {
 });
 elements.settingsStartHour.addEventListener("change", () => {
   setActiveMapHourOffset(elements.settingsStartHour.value, { persist: true });
+});
+document.querySelectorAll('input[name="units"]').forEach((radio) => {
+  radio.addEventListener("change", () => {
+    if (!radio.checked) return;
+    saveAppSettings({ useImperial: radio.value === "imperial" });
+    if (activeLocation && latestForecast) updateCurrentConditions(activeLocation, latestForecast);
+    if (latestHeatmap) renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  });
 });
 elements.clearWatchlistButton.addEventListener("click", clearSavedWatchlist);
 elements.clearHistorySettingsButton.addEventListener("click", clearSavedHistory);
@@ -2683,6 +3132,78 @@ elements.importSettingsFile.addEventListener("change", (event) => {
   const [file] = event.target.files || [];
   importSettingsPreset(file);
 });
+
+elements.mapPlayButton?.addEventListener("click", toggleMapAnimation);
+
+document.addEventListener("keydown", (event) => {
+  const tag = event.target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+  if ((event.metaKey || event.ctrlKey) && event.key === "k") {
+    event.preventDefault();
+    elements.locationInput.focus();
+    elements.locationInput.select();
+    return;
+  }
+
+  if (event.key === "Escape") {
+    hideMapTooltip();
+    hideChartTooltip();
+    elements.locationSuggestions.classList.remove("visible");
+    return;
+  }
+
+  const tabIndex = parseInt(event.key, 10);
+  if (tabIndex >= 1 && tabIndex <= 9) {
+    const tabs = ["now", "hourly", "outlook", "storm", "satellite", "air", "trends", "pins", "history"];
+    selectTab(tabs[tabIndex - 1]);
+    return;
+  }
+
+  if (event.key === "0") {
+    selectTab("system");
+    return;
+  }
+});
+
+let satelliteTabLoaded = false;
+
+function selectTab(tabId) {
+  document.querySelectorAll(".tab-button").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.tab === tabId);
+    btn.setAttribute("aria-selected", btn.dataset.tab === tabId);
+  });
+  document.querySelectorAll(".data-section").forEach((section) => {
+    section.classList.toggle("active", section.dataset.section === tabId);
+  });
+  const panel = document.querySelector("#data-panel");
+  if (panel) {
+    panel.classList.remove("collapsed");
+    document.querySelector(".app-shell")?.classList.add("panel-expanded");
+  }
+
+  if (tabId === "satellite" && !satelliteTabLoaded && activeLocation) {
+    satelliteTabLoaded = true;
+    updateSatelliteForLocation(activeLocation);
+  }
+}
+
+document.querySelectorAll(".tab-button").forEach((btn) => {
+  btn.addEventListener("click", () => selectTab(btn.dataset.tab));
+});
+
+function togglePanel() {
+  const panel = document.querySelector("#data-panel");
+  if (!panel) return;
+  const wasCollapsed = panel.classList.toggle("collapsed");
+  document.querySelector(".app-shell")?.classList.toggle("panel-expanded", !wasCollapsed);
+}
+
+document.querySelector("#panel-collapse")?.addEventListener("click", togglePanel);
+document.querySelector("#panel-expand")?.addEventListener("click", togglePanel);
+
+selectTab("now");
+document.querySelector(".app-shell")?.classList.add("panel-expanded");
 
 const initialSettings = getAppSettings();
 setActiveHeatmapLayer(initialSettings.mapLayer);

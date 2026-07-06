@@ -1,40 +1,45 @@
 # Precip
 
-Precip is a weather operations dashboard built for weather enthusiasts and stormwatching. The UI is still static, but live data now goes through a small same-host cache proxy so the public site is less vulnerable to upstream rate limits.
-The app uses Open-Meteo for forecast and air-quality data, Open-Meteo geocoding for location search, OpenStreetMap/Nominatim for map tiles and click-to-select location lookup, and NOAA STAR for GOES sector imagery.
-
-The current app is global rather than single-city. Users choose a starting location on first visit, then the dashboard saves preferences in browser cookies.
+Precip is a full-screen map-centric weather dashboard for weather enthusiasts and stormwatchers. It uses a small same-host cache proxy to stay resilient against upstream rate limits, and pulls from Open-Meteo, NOAA, NWS, ECCC/GeoMet, and the SPC.
 
 ## Current Feature Set
 
 - First-visit setup flow in `welcome.html`
-- Exact-match location search with suggestions
+- Location search with suggestions (Open-Meteo + Nominatim)
 - Cookie-backed saved preferences
-  - default location
-  - default map layer
-  - default map hour
-  - pinned locations
-  - forecast history
+  - default location, map layer, map hour
+  - pinned locations, forecast history
+  - metric/imperial unit toggle
 - Import/export settings presets as JSON
 - Interactive dark-mode map with:
-  - zoom and pan
+  - zoom, pan, pinch-to-zoom
   - click-to-load any map point
-  - viewport-based heatmap sampling
+  - viewport-based heatmap sampling (overlay skipped during drag)
   - cursor hover readout with coordinates and interpolated weather values
-- NOAA GOES satellite panel with:
-  - nearest-sector auto selection from the active location
-  - manual sector override
-  - live animated imagery product selection
+  - NWS/ECCC alert polygon overlays with severity-colored boundaries and hover tooltips
+- Real-time weather alerts:
+  - NWS alerts for US locations
+  - ECCC/GeoMet alerts for Canadian locations
+  - severity-sorted weather warning bar with alert count badge on the Now tab
+  - toast notifications for new alerts
+- Storm Prediction Center outlooks:
+  - Day 1–3 categorical convective outlook
+  - Day 1–2 tornado probability
+  - auto-detects local risk via point-in-polygon
+- NOAA GOES satellite panel with nearest-sector auto selection and live imagery
+- 11-tab data panel (collapsible): Now, Hourly, Outlook, Storm, Satellite, Air, Trends, Pins, History, Settings, System
 - Current conditions, hourly forecast, daily forecast, weekly outlook
-- Stormwatch metrics, air quality, forecast confidence, and regional context
+- Stormwatch metrics, air quality, forecast confidence, regional context
+- Timeline animation: play/pause hourly weather through the map
+- Keyboard shortcuts: Cmd+K (search), Escape (tooltips), 1–9 tabs, 0 (System)
 
 ## Project Files
 
 - `index.html` - main dashboard
 - `welcome.html` - first-visit location setup page
-- `styles.css` - full application styling
-- `app.js` - client-side app logic and data fetching
-- `proxy_server.py` - same-host cache proxy for weather/geocoding/NOAA sector requests
+- `styles.css` - full application styling (Posthog-inspired dark theme)
+- `app.js` - client-side app logic, map rendering, data fetching
+- `proxy_server.py` - same-host cache proxy for weather/geocoding/NOAA/NWS/SPC/ECCC requests
 - `logo.svg` - site mark and favicon source
 - `deploy/deploy.sh` - copy files to nginx web root and reload nginx
 - `deploy/precip.kerrick.ca.conf` - nginx config for `precip.kerrick.ca`
@@ -42,35 +47,38 @@ The current app is global rather than single-city. Users choose a starting locat
 
 ## Runtime Model
 
-Precip is a mostly static site with a small read-only cache proxy. There is no account system and no write API.
+Precip is a mostly static site with a small read-only cache proxy. No account system, no write API.
 
-The browser talks to same-origin `/api/*` routes. That proxy fetches and caches:
+The browser talks to same-origin `/api/*` routes. The proxy fetches and caches:
 
-- `https://api.open-meteo.com`
-- `https://air-quality-api.open-meteo.com`
+- `https://api.open-meteo.com` (forecasts, air quality)
 - `https://geocoding-api.open-meteo.com`
-- `https://nominatim.openstreetmap.org`
-- `https://www.star.nesdis.noaa.gov`
+- `https://nominatim.openstreetmap.org` (reverse geocode, search fallback)
+- `https://www.star.nesdis.noaa.gov` (GOES sector info)
+- `https://api.weather.gov` (NWS alerts)
+- `https://api.weather.gc.ca` (Canadian weather alerts via GeoMet-OGC-API)
+- `https://mapservices.weather.noaa.gov` (SPC convective outlook contours)
 
-Map tiles and NOAA imagery still load directly in the browser from:
+Map tiles and NOAA imagery load directly in the browser from:
 
 - `https://tile.openstreetmap.org`
 - `https://cdn.star.nesdis.noaa.gov`
+
+Cache TTLs vary by endpoint (5 min for alerts, 10 min for forecasts and SPC, 15 min for heatmap, 24 h for geocoding).
 
 User state is stored in browser cookies. No app data is written to the server.
 
 ## Local Preview
 
-From the project directory:
-
 ```bash
-python3 -m http.server 8088
+python3 proxy_server.py           # cache proxy on port 7428
+python3 -m http.server 8080       # static files
+
+open http://127.0.0.1:8080/welcome.html
+open http://127.0.0.1:8080/index.html
 ```
 
-Then open:
-
-- `http://127.0.0.1:8088/welcome.html`
-- `http://127.0.0.1:8088/index.html`
+The proxy defaults to `127.0.0.1:7428` and can be overridden with `PRECIP_PROXY_HOST` and `PRECIP_PROXY_PORT`.
 
 ## Deployment
 
@@ -82,7 +90,6 @@ cd /home/bingle/Projects/precip
 ```
 
 That script:
-
 1. copies the static site bundle into `/var/www/precip`
 2. installs the proxy server into `/opt/precip`
 3. installs the nginx and systemd service configs
@@ -99,6 +106,19 @@ The deployed bundle must include:
 - `proxy_server.py`
 - `logo.svg`
 
+## API Endpoints (proxy)
+
+| Path | Upstream | Params |
+|---|---|---|
+| `/api/forecast` | Open-Meteo | `latitude`, `longitude`, `scope` (forecast/heatmap) |
+| `/api/air-quality` | Open-Meteo | `latitude`, `longitude` |
+| `/api/geocode` | Open-Meteo + Nominatim (merged) | `name`, `count` |
+| `/api/reverse-geocode` | Nominatim | `latitude`, `longitude` |
+| `/api/noaa-sector` | NOAA STAR | `sat`, `sector` |
+| `/api/alerts` | NWS API | `latitude`, `longitude` |
+| `/api/ca-alerts` | GeoMet-OGC-API | `latitude`, `longitude` |
+| `/api/spc-outlook` | SPC ArcGIS | `layer` |
+
 ## Security Model
 
 - Public read-only dashboard
@@ -106,5 +126,3 @@ The deployed bundle must include:
 - CSP restricts browser network access to same-origin `/api/*`, OpenStreetMap tiles, and NOAA imagery
 - No destructive server-side actions
 - Preference resets only clear browser cookies for the current visitor
-
-If a backend or hardware receiver is added later, keep it on a separate read-only API surface rather than mixing it into the public static site.

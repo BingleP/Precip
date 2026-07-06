@@ -20,6 +20,9 @@ CACHE_TTLS = {
     "/api/geocode": 86400,
     "/api/reverse-geocode": 86400,
     "/api/noaa-sector": 600,
+    "/api/alerts": 300,
+    "/api/spc-outlook": 600,
+    "/api/ca-alerts": 300,
 }
 
 ALLOWED_ENDPOINTS = {
@@ -28,6 +31,9 @@ ALLOWED_ENDPOINTS = {
     "/api/geocode",
     "/api/reverse-geocode",
     "/api/noaa-sector",
+    "/api/alerts",
+    "/api/spc-outlook",
+    "/api/ca-alerts",
     "/health",
 }
 
@@ -130,6 +136,17 @@ def build_upstream(path, query):
             "sector": sector,
         })
         return f"https://www.star.nesdis.noaa.gov/goes/sector.php?{url}", "text/html; charset=utf-8"
+
+    if path == "/api/alerts":
+        latitude = require(query, "latitude").strip()
+        longitude = require(query, "longitude").strip()
+        return f"https://api.weather.gov/alerts/active?point={latitude},{longitude}", "application/json"
+
+    if path == "/api/spc-outlook":
+        layer = query.get("layer", ["1"])[0].strip()
+        if layer not in ("1", "2", "3", "9", "10", "11", "17", "18", "19"):
+            raise ValueError("invalid layer")
+        return f"https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/SPC_wx_outlks/MapServer/{layer}/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson", "application/json"
 
     raise ValueError("unsupported endpoint")
 
@@ -279,6 +296,46 @@ def build_geocode_payload(name, count):
         "results": merged[:count],
         "generationtime_ms": 0,
     }).encode("utf-8")
+
+
+CA_RISK_MAP = {"red": "Extreme", "orange": "Severe", "yellow": "Moderate"}
+
+def build_ca_alerts_payload(latitude, longitude):
+    bbox_north = min(87.61, float(latitude) + 1)
+    bbox_south = max(37.3, float(latitude) - 1)
+    bbox_east = min(-48.11, float(longitude) + 1)
+    bbox_west = max(-145.27, float(longitude) - 1)
+    url = f"https://api.weather.gc.ca/collections/weather-alerts/items?f=json&bbox={bbox_west},{bbox_south},{bbox_east},{bbox_north}&limit=50"
+    data = fetch_json(url)
+    features = data.get("features") or []
+    normalized = []
+    for f in features:
+        p = f.get("properties") or {}
+        risk = (p.get("risk_colour_en") or "yellow").lower()
+        severity = CA_RISK_MAP.get(risk, "Moderate")
+        event = p.get("alert_name_en") or p.get("alert_short_name_en") or "Weather alert"
+        alert_type = (p.get("alert_type") or "").capitalize()
+        location_name = (p.get("feature_name_en") or "")
+        province = (p.get("province") or "")
+        headline = f"{alert_type}: {event}"
+        if location_name:
+            headline += f" for {location_name}"
+        if province:
+            headline += f", {province}"
+        description = (p.get("alert_text_en") or "").strip()
+        normalized.append({
+            "type": "Feature",
+            "geometry": f.get("geometry"),
+            "properties": {
+                "id": p.get("id") or f.get("id"),
+                "event": event,
+                "headline": headline,
+                "description": description[:2000] if description else "",
+                "severity": severity,
+                "source": "ECCC",
+            },
+        })
+    return json.dumps({"type": "FeatureCollection", "features": normalized}).encode("utf-8")
 
 
 def dew_point_celsius(temp_c, humidity):
@@ -564,6 +621,17 @@ class Handler(BaseHTTPRequestHandler):
                 name = require(query, "name").strip()
                 count = min(10, max(1, int(query.get("count", ["8"])[0])))
                 body = build_geocode_payload(name, count)
+                cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
+                self.send_response(200)
+                self.send_common_headers("application/json; charset=utf-8", len(body))
+                self.send_header("X-Precip-Cache", "MISS")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if parsed.path == "/api/ca-alerts":
+                latitude = require(query, "latitude").strip()
+                longitude = require(query, "longitude").strip()
+                body = build_ca_alerts_payload(latitude, longitude)
                 cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
                 self.send_response(200)
                 self.send_common_headers("application/json; charset=utf-8", len(body))
