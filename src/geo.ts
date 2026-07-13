@@ -85,13 +85,13 @@ export function getLocationCacheKey(location: { latitude: number; longitude: num
   return [getRoundedCoordinate(location.latitude), getRoundedCoordinate(location.longitude)].join(",");
 }
 
-export function pointInPolygon(lat: number, lon: number, coords: number[][][]): boolean {
+export function pointInPolygon(lon: number, lat: number, coords: number[][][]): boolean {
   let inside = false;
   for (const ring of coords) {
     for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
       const xi = ring[i][0], yi = ring[i][1];
       const xj = ring[j][0], yj = ring[j][1];
-      if ((yi > lon) !== (yj > lon) && lat < ((xj - xi) * (lon - yi)) / (yj - yi) + xi) {
+      if ((yi > lat) !== (yj > lat) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
         inside = !inside;
       }
     }

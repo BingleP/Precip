@@ -32,8 +32,8 @@ export function formatPressure(hpa: number | undefined | null): string {
 
 export function degreesToCompass(degrees: number | undefined | null): string {
   if (degrees == null || !Number.isFinite(degrees)) return "--";
-  const directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
-  return directions[Math.round(degrees / 45) % 8];
+  const directions = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  return directions[Math.round(degrees / 22.5) % 16];
 }
 
 export function describeWeatherCode(code: number | undefined): string {
@@ -67,8 +67,9 @@ export function findCurrentIndex(times: string[]): number {
   let smallestDiff = Infinity;
 
   times.forEach((time, index) => {
-    const diff = Math.abs(new Date(time).getTime() - now);
-    if (diff < smallestDiff) {
+    const timeMs = new Date(time).getTime();
+    const diff = Math.abs(timeMs - now);
+    if (diff < smallestDiff || (diff === smallestDiff && timeMs <= now)) {
       smallestDiff = diff;
       bestIndex = index;
     }

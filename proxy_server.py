@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import concurrent.futures
+import datetime
 import json
 import math
 import os
@@ -162,6 +163,11 @@ def fetch_upstream(url, content_type):
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=25) as response:
         body = response.read()
+        content_length = response.headers.get("Content-Length")
+        if content_length is not None:
+            expected = int(content_length)
+            if len(body) < expected:
+                raise ValueError(f"upstream truncated response: got {len(body)} of {expected} bytes")
         upstream_type = response.headers.get_content_type()
         return body, response.status, content_type if content_type.startswith("text/html") else f"{upstream_type}; charset=utf-8"
 
@@ -301,10 +307,13 @@ def build_geocode_payload(name, count):
 CA_RISK_MAP = {"red": "Extreme", "orange": "Severe", "yellow": "Moderate"}
 
 def build_ca_alerts_payload(latitude, longitude):
-    bbox_north = min(87.61, float(latitude) + 1)
-    bbox_south = max(37.3, float(latitude) - 1)
-    bbox_east = min(-48.11, float(longitude) + 1)
-    bbox_west = max(-145.27, float(longitude) - 1)
+    half_span = 1.0
+    raw_north = float(latitude) + half_span
+    raw_south = float(latitude) - half_span
+    bbox_north = min(83.1, max(raw_north, raw_south + 0.1))
+    bbox_south = max(41.7, min(raw_south, raw_north - 0.1))
+    bbox_east = min(-52.6, float(longitude) + half_span)
+    bbox_west = max(-141.0, float(longitude) - half_span)
     url = f"https://api.weather.gc.ca/collections/weather-alerts/items?f=json&bbox={bbox_west},{bbox_south},{bbox_east},{bbox_north}&limit=50"
     data = fetch_json(url)
     features = data.get("features") or []
@@ -377,6 +386,62 @@ def estimate_cape_jkg(temperature, dew_point, precipitation):
     return max(0, round(moisture_bonus + precipitation_bonus - instability_penalty))
 
 
+def estimate_apparent_temperature(temp_c, wind_kmh, humidity):
+    if temp_c is None:
+        return None
+    if temp_c <= 10 and wind_kmh is not None and wind_kmh > 4.8:
+        v = wind_kmh / 3.6
+        wind_chill = 13.12 + 0.6215 * temp_c - 11.37 * v ** 0.16 + 0.3965 * temp_c * v ** 0.16
+        return round(min(temp_c, wind_chill), 1)
+    if temp_c >= 27 and humidity is not None and humidity > 40:
+        hi = -8.784695 + 1.61139411 * temp_c + 2.338549 * humidity - 0.14611605 * temp_c * humidity - 0.012308094 * temp_c ** 2 - 0.016424828 * humidity ** 2 + 0.002211732 * temp_c ** 2 * humidity + 0.00072546 * temp_c * humidity ** 2 - 0.000003582 * temp_c ** 2 * humidity ** 2
+        return round(max(temp_c, hi), 1)
+    return round(temp_c, 1)
+
+
+def estimate_surface_pressure(pressure_msl, elevation_m=200):
+    if pressure_msl is None:
+        return None
+    return round(pressure_msl * (1 - 0.0000226 * elevation_m) ** 5.225, 1)
+
+
+def estimate_solar_hour_angle(dectime_hours, longitude, day_of_year):
+    equation_of_time = 229.18 * (0.000075 + 0.001868 * math.cos(2 * math.pi * (day_of_year - 1) / 365) - 0.032077 * math.sin(2 * math.pi * (day_of_year - 1) / 365) - 0.014615 * math.cos(4 * math.pi * (day_of_year - 1) / 365) - 0.04089 * math.sin(4 * math.pi * (day_of_year - 1) / 365))
+    solar_time = dectime_hours + longitude / 15 + equation_of_time / 60
+    return (solar_time - 12) * 15
+
+
+def estimate_sunrise_sunset(latitude, longitude, day_str):
+    try:
+        dt = datetime.datetime.strptime(day_str[:10], "%Y-%m-%d")
+        day_of_year = dt.timetuple().tm_yday
+        declination = 23.44 * math.sin(2 * math.pi * (day_of_year - 81) / 365)
+        lat_rad = math.radians(latitude)
+        dec_rad = math.radians(declination)
+        cos_ho = -math.tan(lat_rad) * math.tan(dec_rad)
+        cos_ho = max(-1, min(1, cos_ho))
+        half_day_degrees = math.degrees(math.acos(cos_ho))
+        sunrise_hour = 12 - half_day_degrees / 15
+        sunset_hour = 12 + half_day_degrees / 15
+        sunrise_utc = sunrise_hour - longitude / 15
+        sunset_utc = sunset_hour - longitude / 15
+        def fmt(h):
+            h = h % 24
+            return f"{day_str[:10]}T{int(h):02d}:{int((h % 1) * 60):02d}:00Z"
+        return fmt(sunrise_utc), fmt(sunset_utc)
+    except Exception:
+        return None, None
+
+
+def estimate_uv_index(solar_elevation, cloud_cover):
+    if solar_elevation is None or solar_elevation <= 0:
+        return 0
+    clear_uv = max(0, solar_elevation) * 0.1
+    if cloud_cover is not None:
+        clear_uv *= max(0.3, 1 - cloud_cover / 100 * 0.6)
+    return max(0, round(clear_uv, 1))
+
+
 def symbol_to_weather_code(symbol):
     symbol = (symbol or "").lower()
     if "thunder" in symbol:
@@ -402,7 +467,7 @@ def symbol_to_weather_code(symbol):
     return 2
 
 
-def aggregate_daily(hourly_times, hourly_temp, hourly_precip, hourly_precip_prob, hourly_wind, hourly_gusts, hourly_codes):
+def aggregate_daily(hourly_times, hourly_temp, hourly_precip, hourly_precip_prob, hourly_wind, hourly_gusts, hourly_codes, latitude=None, longitude=None, hourly_cloud=None):
     days = {}
     for index, time_text in enumerate(hourly_times):
         day = time_text[:10]
@@ -439,9 +504,20 @@ def aggregate_daily(hourly_times, hourly_temp, hourly_precip, hourly_precip_prob
         daily["precipitation_probability_max"].append(max(rain_prob) if rain_prob else 0)
         daily["wind_speed_10m_max"].append(max(winds) if winds else 0)
         daily["wind_gusts_10m_max"].append(max(gusts) if gusts else 0)
-        daily["sunrise"].append(f"{day}T06:00:00Z")
-        daily["sunset"].append(f"{day}T18:00:00Z")
-        daily["uv_index_max"].append(None)
+
+        sunrise, sunset = estimate_sunrise_sunset(latitude or 40, longitude or 0, day)
+        if sunrise and sunset:
+            daily["sunrise"].append(sunrise)
+            daily["sunset"].append(sunset)
+        else:
+            daily["sunrise"].append(f"{day}T06:00:00Z")
+            daily["sunset"].append(f"{day}T18:00:00Z")
+
+        noon_index = indexes[len(indexes) // 2]
+        noon_cloud = hourly_cloud[noon_index] if hourly_cloud and noon_index < len(hourly_cloud) else None
+        solar_elev = max(0, 90 - abs(float(latitude or 40) - 90 + 23.44 * math.cos(2 * math.pi * (datetime.datetime.strptime(day[:10], "%Y-%m-%d").timetuple().tm_yday - 81) / 365)))
+        daily["uv_index_max"].append(estimate_uv_index(solar_elev, noon_cloud))
+
     return daily
 
 
@@ -501,20 +577,23 @@ def build_met_no_forecast(latitude, longitude):
         wind_gust = instant.get("wind_speed_of_gust")
         cloud_cover = instant.get("cloud_area_fraction")
         dew_point = dew_point_celsius(temperature, humidity)
+        apparent = estimate_apparent_temperature(temperature, wind_speed, humidity)
+        pressure_msl = instant.get("air_pressure_at_sea_level")
+        surface_pressure = estimate_surface_pressure(pressure_msl)
         hourly["time"].append(item.get("time"))
         hourly["temperature_2m"].append(temperature)
         hourly["dew_point_2m"].append(dew_point)
-        hourly["apparent_temperature"].append(temperature)
+        hourly["apparent_temperature"].append(apparent)
         hourly["relative_humidity_2m"].append(humidity)
         hourly["precipitation_probability"].append(100 if precipitation and precipitation > 0 else 0)
         hourly["precipitation"].append(precipitation)
-        hourly["rain"].append(precipitation)
-        hourly["showers"].append(precipitation)
-        hourly["snowfall"].append(0)
-        hourly["snow_depth"].append(None)
+        hourly["rain"].append(precipitation if symbol_code and "snow" not in symbol_code else 0)
+        hourly["showers"].append(0)
+        hourly["snowfall"].append(precipitation if symbol_code and "snow" in symbol_code else 0)
+        hourly["snow_depth"].append(precipitation if symbol_code and "snow" in symbol_code else None)
         hourly["weather_code"].append(symbol_to_weather_code(symbol_code))
-        hourly["pressure_msl"].append(instant.get("air_pressure_at_sea_level"))
-        hourly["surface_pressure"].append(instant.get("air_pressure_at_sea_level"))
+        hourly["pressure_msl"].append(pressure_msl)
+        hourly["surface_pressure"].append(surface_pressure)
         hourly["cloud_cover"].append(cloud_cover)
         hourly["cloud_cover_low"].append(None)
         hourly["cloud_cover_mid"].append(None)
@@ -533,6 +612,9 @@ def build_met_no_forecast(latitude, longitude):
     current_instant = timeseries[0].get("data", {}).get("instant", {}).get("details", {})
     current_precip = timeseries[0].get("data", {}).get("next_1_hours", {}).get("details", {}).get("precipitation_amount", 0.0)
     current_symbol = timeseries[0].get("data", {}).get("next_1_hours", {}).get("summary", {}).get("symbol_code")
+    current_wind = current_instant.get("wind_speed")
+    current_humidity = current_instant.get("relative_humidity")
+    current_pressure_msl = current_instant.get("air_pressure_at_sea_level")
     forecast = {
         "latitude": float(latitude),
         "longitude": float(longitude),
@@ -540,13 +622,13 @@ def build_met_no_forecast(latitude, longitude):
         "current": {
             "time": timeseries[0].get("time"),
             "temperature_2m": current_instant.get("air_temperature"),
-            "relative_humidity_2m": current_instant.get("relative_humidity"),
-            "apparent_temperature": current_instant.get("air_temperature"),
-            "dew_point_2m": dew_point_celsius(current_instant.get("air_temperature"), current_instant.get("relative_humidity")),
+            "relative_humidity_2m": current_humidity,
+            "apparent_temperature": estimate_apparent_temperature(current_instant.get("air_temperature"), current_wind, current_humidity),
+            "dew_point_2m": dew_point_celsius(current_instant.get("air_temperature"), current_humidity),
             "precipitation": current_precip,
-            "pressure_msl": current_instant.get("air_pressure_at_sea_level"),
-            "surface_pressure": current_instant.get("air_pressure_at_sea_level"),
-            "wind_speed_10m": current_instant.get("wind_speed"),
+            "pressure_msl": current_pressure_msl,
+            "surface_pressure": estimate_surface_pressure(current_pressure_msl),
+            "wind_speed_10m": current_wind,
             "wind_direction_10m": current_instant.get("wind_from_direction"),
             "wind_gusts_10m": current_instant.get("wind_speed_of_gust"),
             "weather_code": symbol_to_weather_code(current_symbol),
@@ -561,6 +643,9 @@ def build_met_no_forecast(latitude, longitude):
             hourly["wind_speed_10m"],
             hourly["wind_gusts_10m"],
             hourly["weather_code"],
+            latitude=float(latitude),
+            longitude=float(longitude),
+            hourly_cloud=hourly["cloud_cover"],
         ),
     }
     return json.dumps(forecast).encode("utf-8")

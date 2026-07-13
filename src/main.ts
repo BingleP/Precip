@@ -89,6 +89,7 @@ let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 let mapAnimationTimer: ReturnType<typeof setInterval> | null = null;
 let mapAnimationPlaying = false;
 let tooltipRaf: number | null = null;
+const cachedMetricUnits = [...document.querySelectorAll(".metric-card .metric-unit")] as HTMLElement[];
 let satelliteOverlayDrag: { startX: number; startY: number; left: number; top: number } | null = null;
 let satelliteOverlayResizeDrag: { startX: number; startY: number; width: number; height: number } | null = null;
 
@@ -356,7 +357,7 @@ function updateCurrentConditions(location: Location, forecast: Forecast): void {
   if (elements.pressureTrend) elements.pressureTrend.textContent = `${pressureDelta >= 0 ? "Rising" : "Falling"} ${Math.abs(pressureDelta).toFixed(1)}${imp ? " inHg" : " hPa"} in 3h`;
   if (elements.windDirection) elements.windDirection.textContent = `From ${Math.round(current.wind_direction_10m)}° with gusts to ${formatSpeed(current.wind_gusts_10m)}`;
 
-  document.querySelectorAll(".metric-card .metric-unit").forEach((el) => {
+  cachedMetricUnits.forEach((el) => {
     const card = el.closest(".metric-card");
     if (!card) return;
     const label = card.querySelector("span:first-child")?.textContent;
@@ -1017,7 +1018,7 @@ function renderWatchlistUI(items = getWatchlist()): void {
 
 function pinCurrentLocation(): void {
   if (!activeLocation || !latestForecast) return;
-  const existing = getWatchlist().filter(
+  const remaining = getWatchlist().filter(
     (item) =>
       Math.abs(item.latitude - activeLocation!.latitude) > 0.01 ||
       Math.abs(item.longitude - activeLocation!.longitude) > 0.01,
@@ -1031,7 +1032,7 @@ function pinCurrentLocation(): void {
     rain: sumNext(latestForecast, "precipitation", 24),
     risk: risk.level,
   };
-  saveWatchlist([watchlistItem, ...existing]);
+  saveWatchlist([watchlistItem, ...remaining]);
   renderWatchlistUI();
   addLog(`${activeLocation.name} pinned to stormwatch.`, elements.eventLog);
 }
@@ -1091,12 +1092,14 @@ function saveForecastSnapshot(location: Location, forecast: Forecast): void {
 
 function clearSavedWatchlist(): void {
   removeCookieValue("precip.watchlist.v1");
+  try { window.localStorage.removeItem("precip.watchlist.v1"); } catch {}
   renderWatchlistUI([]);
   addLog("Pinned locations cleared.", elements.eventLog);
 }
 
 function clearSavedHistory(): void {
   removeCookieValue("precip.forecastHistory.v1");
+  try { window.localStorage.removeItem("precip.forecastHistory.v1"); } catch {}
   renderForecastHistoryUI([]);
   addLog("Forecast history cleared.", elements.eventLog);
 }
@@ -1519,11 +1522,15 @@ elements.satelliteSectorSelect?.addEventListener("change", () => {
   });
 });
 
+let satelliteCatalogRequestToken = 0;
+
 elements.satelliteProductSelect?.addEventListener("change", async () => {
   const sectorId = elements.satelliteSectorSelect?.value || "";
-    const sector = getNoaaSectorById(sectorId || getActiveSatelliteSectorId() || NOAA_SECTORS[0].id);
+  const sector = getNoaaSectorById(sectorId || getActiveSatelliteSectorId() || NOAA_SECTORS[0].id);
+  const requestToken = ++satelliteCatalogRequestToken;
   try {
     const catalog = await fetchNoaaSectorCatalog(sector);
+    if (requestToken !== satelliteCatalogRequestToken) return;
     const selectedProduct =
       catalog.products.find((product) => product.key === elements.satelliteProductSelect?.value) || catalog.products[0];
     renderSatelliteProductOptions(
@@ -1539,6 +1546,7 @@ elements.satelliteProductSelect?.addEventListener("change", async () => {
       satelliteEmpty: elements.satelliteEmpty,
     });
   } catch (error) {
+    if (requestToken !== satelliteCatalogRequestToken) return;
     if (elements.satelliteEmpty) {
       elements.satelliteEmpty.textContent = (error as Error).message;
       elements.satelliteEmpty.hidden = false;

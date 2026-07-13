@@ -12,8 +12,11 @@ export const tileCache = new Map<string, HTMLImageElement>();
 
 function tileCacheSet(key: string, image: HTMLImageElement): void {
   if (tileCache.size >= TILE_CACHE_MAX) {
-    const oldest = tileCache.keys().next();
-    if (!oldest.done) tileCache.delete(oldest.value);
+    const toDelete = Math.round(TILE_CACHE_MAX * 0.25);
+    const keys = [...tileCache.keys()];
+    for (let i = 0; i < toDelete && i < keys.length; i++) {
+      tileCache.delete(keys[i]);
+    }
   }
   tileCache.set(key, image);
 }
@@ -102,6 +105,9 @@ let tileLoadTimer: ReturnType<typeof setTimeout> | null = null;
 
 let offscreenCanvas: HTMLCanvasElement | null = null;
 let offscreenCtx: CanvasRenderingContext2D | null = null;
+let heatmapImageData: ImageData | null = null;
+let lastOverlayWidth = 0;
+let lastOverlayHeight = 0;
 
 export function getMapTile(
   zoom: number,
@@ -122,7 +128,7 @@ export function getMapTile(
       tileLoadTimer = setTimeout(() => {
         tileLoadTimer = null;
         onTileLoad();
-      }, 80);
+      }, 200);
     },
     { once: true },
   );
@@ -224,10 +230,17 @@ export function drawHeatmapOverlay(
     offscreenCanvas = document.createElement("canvas");
     offscreenCtx = offscreenCanvas.getContext("2d", { willReadFrequently: true })!;
   }
-  offscreenCanvas.width = overlayWidth;
-  offscreenCanvas.height = overlayHeight;
-  const image = offscreenCtx.createImageData(overlayWidth, overlayHeight);
-  const data = image.data;
+  if (overlayWidth !== lastOverlayWidth || overlayHeight !== lastOverlayHeight) {
+    offscreenCanvas.width = overlayWidth;
+    offscreenCanvas.height = overlayHeight;
+    heatmapImageData = null;
+    lastOverlayWidth = overlayWidth;
+    lastOverlayHeight = overlayHeight;
+  }
+  if (!heatmapImageData) {
+    heatmapImageData = offscreenCtx.createImageData(overlayWidth, overlayHeight);
+  }
+  const data = heatmapImageData.data;
 
   for (let y = 0; y < overlayHeight; y += 1) {
     for (let x = 0; x < overlayWidth; x += 1) {
@@ -243,7 +256,7 @@ export function drawHeatmapOverlay(
     }
   }
 
-  offscreenCtx.putImageData(image, 0, 0);
+  offscreenCtx.putImageData(heatmapImageData, 0, 0);
 
   ctx.save();
   ctx.imageSmoothingEnabled = true;

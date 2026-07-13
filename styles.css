@@ -2200,6 +2200,18 @@ a {
   box-shadow: var(--shadow);
 }
 
+.welcome-card .brand {
+  display: flex;
+  place-content: center;
+  text-decoration: none;
+}
+
+.welcome-card .brand .brand-mark {
+  height: 56px;
+  width: auto;
+  object-fit: contain;
+}
+
 
 .welcome-copy h1 {
   margin: 8px 0 0;

@@ -84,15 +84,33 @@ async function fetchJsonWithCache<T>(
       if (!response.ok) throw new Error(`${namespace} request failed`);
       const data = (await response.json()) as T;
       setCachedApiResponse(namespace, cacheKey, data);
+      requestCache.delete(requestKey);
       return { ...data, __precipCacheMeta: { stale: false, age: 0 } };
     } catch (error) {
       const staleCached = getCachedApiResponse<T>(namespace, cacheKey, ttlMs, { allowStale: true });
       if (staleCached) {
         return { ...staleCached.data, __precipCacheMeta: { stale: true, age: staleCached.age, fallback: true } };
       }
-      throw error;
-    } finally {
       requestCache.delete(requestKey);
+      if (rateLimitName && !isApiBackedOff(rateLimitName)) {
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          await new Promise((r) => setTimeout(r, 1000 * attempt));
+          if (isApiBackedOff(rateLimitName)) break;
+          try {
+            const retryResponse = await fetch(url);
+            if (retryResponse.ok) {
+              const retryData = (await retryResponse.json()) as T;
+              setCachedApiResponse(namespace, cacheKey, retryData);
+              return { ...retryData, __precipCacheMeta: { stale: false, age: 0 } };
+            }
+            if (retryResponse.status !== 429) break;
+            setApiBackoff(rateLimitName);
+          } catch {
+            continue;
+          }
+        }
+      }
+      throw error;
     }
   })();
 

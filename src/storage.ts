@@ -102,22 +102,22 @@ export function formatSavedLocation(location: Location | string | null): string 
 }
 
 export function getWatchlist(): Location[] {
-  const parsed = readCookieJSON<Location[]>(WATCHLIST_KEY);
+  const parsed = readStorageJSON<Location[]>(WATCHLIST_KEY);
   return Array.isArray(parsed) ? parsed : [];
 }
 
 export function saveWatchlist(items: Location[]): void {
   const next = items.slice(0, 8);
-  writeCookieJSON(WATCHLIST_KEY, next);
+  writeStorageJSON(WATCHLIST_KEY, next);
 }
 
 export function getForecastHistory(): ForecastSnapshot[] {
-  const parsed = readCookieJSON<ForecastSnapshot[]>(HISTORY_KEY);
+  const parsed = readStorageJSON<ForecastSnapshot[]>(HISTORY_KEY);
   return Array.isArray(parsed) ? parsed.slice(0, MAX_HISTORY_ITEMS) : [];
 }
 
 export function saveForecastHistory(history: ForecastSnapshot[]): void {
-  writeCookieJSON(HISTORY_KEY, history.slice(0, MAX_HISTORY_ITEMS));
+  writeStorageJSON(HISTORY_KEY, history.slice(0, MAX_HISTORY_ITEMS));
 }
 
 export function getCachedApiResponse<T>(
