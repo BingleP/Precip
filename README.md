@@ -35,13 +35,14 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
 
 ## Project Files
 
-- `index.html` - main dashboard
-- `welcome.html` - first-visit location setup page
-- `styles.css` - full application styling (Posthog-inspired dark theme)
-- `app.js` - client-side app logic, map rendering, data fetching
+- `src/` - TypeScript source files (Vite build)
+- `index.html` / `welcome.html` - Vite entry points (main dashboard + setup flow)
+- `styles.css` - full application styling
 - `proxy_server.py` - same-host cache proxy for weather/geocoding/NOAA/NWS/SPC/ECCC requests
-- `logo.svg` - site mark and favicon source
-- `deploy/deploy.sh` - copy files to nginx web root and reload nginx
+- `precip.png` - site mark in the tab bar
+- `tab.png` - browser tab icon
+- `vite.config.ts` - Vite build configuration
+- `deploy/deploy.sh` - copy dist/ to nginx web root and reload nginx
 - `deploy/precip.kerrick.ca.conf` - nginx config for `precip.kerrick.ca`
 - `deploy/precip-proxy.service` - systemd unit for the cache proxy
 
@@ -72,10 +73,9 @@ User state is stored in browser cookies. No app data is written to the server.
 
 ```bash
 python3 proxy_server.py           # cache proxy on port 7428
-python3 -m http.server 8080       # static files
+npm run dev                       # Vite dev server + proxy
 
-open http://127.0.0.1:8080/welcome.html
-open http://127.0.0.1:8080/index.html
+open http://localhost:5173
 ```
 
 The proxy defaults to `127.0.0.1:7428` and can be overridden with `PRECIP_PROXY_HOST` and `PRECIP_PROXY_PORT`.
@@ -99,12 +99,7 @@ That script:
 
 The deployed bundle must include:
 
-- `index.html`
-- `welcome.html`
-- `styles.css`
-- `app.js`
-- `proxy_server.py`
-- `logo.svg`
+- `dist/` - Vite build output (copied to web root)
 
 ## API Endpoints (proxy)
 
