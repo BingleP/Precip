@@ -1,5 +1,5 @@
-import type { HeatmapViewport, HeatmapSample, HeatmapResult, HeatmapLayer } from "./types";
-import { HEATMAP_VIEW_PADDING, HEATMAP_MIN_COLUMNS, HEATMAP_MAX_COLUMNS, HEATMAP_MIN_ROWS, HEATMAP_MAX_ROWS, MAP_DEFAULT_ZOOM, MAP_TILE_SIZE } from "./config";
+import type { HeatmapViewport, HeatmapSample, HeatmapResult } from "./types";
+import { HEATMAP_VIEW_PADDING, HEATMAP_MIN_COLUMNS, HEATMAP_MAX_COLUMNS, HEATMAP_MIN_ROWS, HEATMAP_MAX_ROWS, MAP_DEFAULT_ZOOM } from "./config";
 import { latLonToWorld, worldToLatLon } from "./geo";
 import { buildApiUrl, getCachedHeatmap, setCachedHeatmap } from "./api";
 
@@ -85,9 +85,14 @@ export async function fetchHeatmap(
   if (cached) return cached;
 
   const points = buildHeatmapPoints(viewport);
+  const lats = points.map((p) => p.latitude.toFixed(2)).join(",");
+  const lons = points.map((p) => p.longitude.toFixed(2)).join(",");
+  if (lats.length > 800 || lons.length > 800) {
+    throw new Error("Heatmap grid too large for URL request");
+  }
   const url = buildApiUrl("/forecast");
-  url.searchParams.set("latitude", points.map((p) => p.latitude.toFixed(4)).join(","));
-  url.searchParams.set("longitude", points.map((p) => p.longitude.toFixed(4)).join(","));
+  url.searchParams.set("latitude", lats);
+  url.searchParams.set("longitude", lons);
   url.searchParams.set("scope", "heatmap");
 
   const response = await fetch(url);

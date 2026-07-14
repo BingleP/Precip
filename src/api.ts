@@ -1,5 +1,5 @@
 import type { Forecast, AirQuality, NwsAlert, SpcCollection, NoaaCatalog, NoaaSector, Location, CacheMeta } from "./types";
-import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, HEATMAP_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES } from "./config";
+import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES } from "./config";
 import { getCachedApiResponse, setCachedApiResponse } from "./storage";
 import { worldToLatLon } from "./geo";
 
@@ -20,7 +20,6 @@ export function buildApiUrl(path: string): URL {
 
 const apiBackoffUntil = new Map<string, number>();
 const forecastRequestCache = new Map<string, Promise<Forecast>>();
-const heatmapRequestCache = new Map<string, Promise<unknown>>();
 const airQualityRequestCache = new Map<string, Promise<AirQuality>>();
 export const satelliteCatalogCache = new Map<string, { savedAt: number; data: NoaaCatalog }>();
 export const heatmapCache = new Map<string, { savedAt: number; data: unknown }>();

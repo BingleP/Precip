@@ -1,10 +1,9 @@
-import type { HeatmapSample, MapState, MapDrag } from "./types";
+import type { HeatmapSample, MapState } from "./types";
 import { MAP_TILE_SIZE, MAP_MIN_ZOOM, MAP_MAX_ZOOM, MAP_DEFAULT_ZOOM, HEATMAP_SCALE, INITIAL_MAP_CENTER } from "./config";
-import { latLonToWorld, worldToLatLon, projectToMapScreen, screenToMapLocation, setMapCenterFromWorld, clampMapZoom } from "./geo";
-import { getHeatmapValue, normalizeValue, formatHeatmapValue, getHeatmapTitle } from "./weather";
-import { getAlertPolygonsCache } from "./alerts";
-import { prepareCanvas, escapeHTML } from "./ui";
-import type { AlertPolygon } from "./types";
+import { latLonToWorld, projectToMapScreen, screenToMapLocation, setMapCenterFromWorld, clampMapZoom } from "./geo";
+import { normalizeValue, formatHeatmapValue, getHeatmapTitle } from "./weather";
+import { isInsideAlertPolygon } from "./alerts";
+import { escapeHTML } from "./ui";
 
 const TILE_CACHE_MAX = 500;
 
@@ -137,7 +136,7 @@ export function getMapTile(
   return image;
 }
 
-export function drawMapOverlayText(ctx: CanvasRenderingContext2D, width: number, text: string): void {
+export function drawMapOverlayText(ctx: CanvasRenderingContext2D, _width: number, text: string): void {
   ctx.fillStyle = "#f3f5f8";
   ctx.font = "900 15px system-ui";
   ctx.fillText(text, 34, 28);
@@ -494,29 +493,13 @@ export function updateMapHourLabel(
     : `+${offset}h`;
 }
 
-function isInsideAlertPolygon(px: number, py: number): AlertPolygon | null {
-  const cache = getAlertPolygonsCache();
-  for (const polygon of cache) {
-    const { points } = polygon;
-    let inside = false;
-    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
-      const xi = points[i].x, yi = points[i].y;
-      const xj = points[j].x, yj = points[j].y;
-      if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
-        inside = !inside;
-      }
-    }
-    if (inside) return polygon;
-  }
-  return null;
-}
-
 export function startMapDrag(
   event: PointerEvent,
   mapState: MapState,
   activePointers: Map<number, { x: number; y: number }>,
   canvas: HTMLCanvasElement,
   onDragStart: () => void,
+  pinchState?: { startDist: number; startZoom: number },
 ): void {
   if (event.button !== 0) return;
   activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -525,6 +508,11 @@ export function startMapDrag(
     if (mapState.drag) {
       canvas.classList.remove("dragging");
       mapState.drag = null;
+    }
+    if (pinchState) {
+      const pts = [...activePointers.values()];
+      pinchState.startDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      pinchState.startZoom = Math.round(mapState.zoom);
     }
     return;
   }
@@ -552,32 +540,31 @@ export function moveMapDrag(
   event: PointerEvent,
   mapState: MapState,
   activePointers: Map<number, { x: number; y: number }>,
-  pinchStartDist: number,
-  pinchStartZoom: number,
+  pinchState: { startDist: number; startZoom: number },
   onZoomChange: () => void,
   onRender: () => void,
   onScheduleRefresh: () => void,
   onTooltipUpdate: (event: PointerEvent) => void,
-): { pinchStartDist: number; pinchStartZoom: number } {
+): void {
   if (activePointers.has(event.pointerId)) {
     activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   }
 
-  if (activePointers.size >= 2 && pinchStartDist > 0) {
+  if (activePointers.size >= 2 && pinchState.startDist > 0) {
     const pts = [...activePointers.values()];
     const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-    const targetZoom = clampMapZoom(Math.round(pinchStartZoom + Math.log2(dist / pinchStartDist)), MAP_MIN_ZOOM, MAP_MAX_ZOOM);
+    const targetZoom = clampMapZoom(Math.round(pinchState.startZoom + Math.log2(dist / pinchState.startDist)), MAP_MIN_ZOOM, MAP_MAX_ZOOM);
     if (targetZoom !== mapState.zoom) {
       mapState.zoom = targetZoom;
       queueMapRender(mapState, onZoomChange);
       onScheduleRefresh();
     }
-    return { pinchStartDist, pinchStartZoom };
+    return;
   }
 
   if (!mapState.drag || mapState.drag.pointerId !== event.pointerId) {
     onTooltipUpdate(event);
-    return { pinchStartDist, pinchStartZoom };
+    return;
   }
 
   const dx = event.clientX - mapState.drag.startX;
@@ -591,20 +578,19 @@ export function moveMapDrag(
     mapState.drag.zoom,
   );
   queueMapRender(mapState, onRender);
-  return { pinchStartDist, pinchStartZoom };
 }
 
 export function endMapDrag(
   event: PointerEvent,
   mapState: MapState,
   activePointers: Map<number, { x: number; y: number }>,
-  _pinchStartDist: number,
+  pinchState: { startDist: number; startZoom: number },
   onScheduleRefresh: () => void,
   onMapClick: (latitude: number, longitude: number) => void,
 ): void {
   activePointers.delete(event.pointerId);
   if (activePointers.size < 2) {
-    // pinchStartDist = 0 would be handled by caller
+    pinchState.startDist = 0;
   }
 
   if (!mapState.drag || mapState.drag.pointerId !== event.pointerId) return;
@@ -633,4 +619,9 @@ export function resetMapView(
   if (!loc) return;
   mapState.center = { latitude: loc.latitude, longitude: loc.longitude };
   mapState.zoom = defaultZoom;
+}
+
+export function cleanupMapModule(): void {
+  if (tileLoadTimer) clearTimeout(tileLoadTimer);
+  tileCache.clear();
 }

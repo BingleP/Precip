@@ -1,4 +1,4 @@
-import type { Forecast, HourlyData, StormRisk, AppSettings } from "./types";
+import type { Forecast, HourlyData, StormRisk } from "./types";
 import { WEATHER_CODES } from "./config";
 import { getAppSettings } from "./storage";
 

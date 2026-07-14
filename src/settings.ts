@@ -1,4 +1,4 @@
-import type { Location, AppSettings, ForecastSnapshot, WatchlistItem } from "./types";
+import type { Location, AppSettings, ForecastSnapshot } from "./types";
 import { addLog, formatLocationLabel } from "./ui";
 
 export function buildSettingsPreset(
@@ -54,10 +54,7 @@ function isLocationLike(value: unknown): value is Location {
 export async function importSettingsPreset(
   file: File | undefined,
   eventLogEl?: HTMLElement | null,
-  getForecastHistory?: () => ForecastSnapshot[],
-  getWatchlist?: () => Location[],
   getPreferredLocation?: () => Location | null,
-  getAppSettings?: () => AppSettings,
   saveAppSettings?: (partial: Partial<AppSettings>) => AppSettings,
   savePreferredLocation?: (location: Location) => void,
   removeCookieValue?: (name: string) => void,
@@ -66,7 +63,6 @@ export async function importSettingsPreset(
   setActiveHeatmapLayer?: (layer: string, options?: { persist?: boolean }) => void,
   setActiveMapHourOffset?: (offset: number, options?: { persist?: boolean }) => void,
   updateSettingsUI?: () => void,
-  formatSavedLocation?: (location: Location | string | null) => string,
   elements?: Record<string, HTMLElement | null>,
 ): Promise<void> {
   if (!file) return;

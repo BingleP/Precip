@@ -1,8 +1,8 @@
-import type { Location, NoaaSector, NoaaCatalog, NoaaProduct } from "./types";
-import { NOAA_SECTORS, NOAA_AUTO_SECTOR_IDS, SATELLITE_CACHE_TTL_MS } from "./config";
+import type { Location, NoaaSector, NoaaProduct } from "./types";
+import { NOAA_SECTORS, NOAA_AUTO_SECTOR_IDS } from "./config";
 import { fetchNoaaSectorCatalog } from "./api";
 import { haversineDistance } from "./geo";
-import { addLog } from "./ui";
+import { addLog, normalizeSearchText } from "./ui";
 
 let activeSatelliteSectorId = "";
 let activeSatelliteProductKey = "";
@@ -49,13 +49,6 @@ export function getNearestNoaaSector(location: Location, sectors: NoaaSector[] =
 }
 
 function locationMatchesAdmin(location: Location, names: string[]): boolean {
-  const normalizeSearchText = (value: string) =>
-    String(value ?? "")
-      .toLowerCase()
-      .normalize("NFKD")
-      .replaceAll(/[^\w\s,]/g, " ")
-      .replaceAll(/\s+/g, " ")
-      .trim();
   const admin = normalizeSearchText(location.admin || "");
   return names.some((name) => admin.includes(normalizeSearchText(name)));
 }

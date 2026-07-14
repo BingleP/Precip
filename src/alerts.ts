@@ -1,4 +1,4 @@
-import type { NwsAlert, AlertPolygon, Location, Forecast, StormRisk, SpcCollection } from "./types";
+import type { NwsAlert, AlertPolygon, SpcCollection } from "./types";
 import { NWS_SEVERITY_ORDER, TORNADO_EVENTS, ALERT_SEVERITY_COLORS, SPC_CATEGORIES, SPC_TORNADO_PROB } from "./config";
 import { pointInPolygon, projectToMapScreen } from "./geo";
 
@@ -41,7 +41,7 @@ export function setAlertPolygonsCache(cache: AlertPolygon[]): void {
 
 export function updateNwsAlerts(
   alerts: NwsAlert[],
-  elements: Record<string, HTMLElement | null>,
+  _elements: Record<string, HTMLElement | null>,
   showToastFn: (message: string, type?: string, duration?: number) => void,
   updateWarningBar: (level: string, label: string, title: string, copy: string) => void,
 ): void {

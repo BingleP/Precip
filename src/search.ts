@@ -1,7 +1,7 @@
 import type { Location, GeocodingResult } from "./types";
 import { LOCATION_SUGGESTION_LIMIT } from "./config";
 import { buildApiUrl } from "./api";
-import { escapeHTML, normalizeSearchText, formatLocationLabel, addLog } from "./ui";
+import { escapeHTML, normalizeSearchText, formatLocationLabel } from "./ui";
 
 export async function geocodeLocationCandidates(
   query: string,
@@ -98,7 +98,7 @@ export function rankLocationCandidates(candidates: Location[], query: string): L
 
 export async function resolveLocation(
   query: string,
-  eventLogEl?: HTMLElement | null,
+  _eventLogEl?: HTMLElement | null,
 ): Promise<Location> {
   if (!query) throw new Error("Location is required");
   const candidates = rankLocationCandidates(await geocodeLocationCandidates(query), query);
@@ -110,11 +110,10 @@ export async function resolveLocation(
 
 let activeLocationSuggestions: Location[] = [];
 let searchRequestToken = 0;
-let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function clearLocationSuggestions(
   suggestionsEl: HTMLElement | null | undefined,
-  searchNoteEl?: HTMLElement | null | undefined,
+  _searchNoteEl?: HTMLElement | null | undefined,
 ): void {
   activeLocationSuggestions = [];
   if (suggestionsEl) {
@@ -175,7 +174,7 @@ export function renderLocationSuggestions(
 
 export async function searchLocationSuggestions(
   query: string,
-  eventLogEl?: HTMLElement | null,
+  _eventLogEl?: HTMLElement | null,
   searchNoteEl?: HTMLElement | null,
   suggestionsEl?: HTMLElement | null,
   inputEl?: HTMLInputElement | null,
@@ -205,7 +204,7 @@ export async function searchLocationSuggestions(
           inputEl: inputEl || null,
           searchNoteEl: searchNoteEl || null,
           suggestionsEl: suggestionsEl || null,
-          onLoad: (loc) => {
+          onLoad: (_loc) => {
             // Will be handled by the caller
           },
         });

@@ -4,521 +4,30 @@ import datetime
 import json
 import math
 import os
-import threading
-import time
+import sys
+import traceback
+import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from proxy_cache import CACHE_TTLS, cache_get, cache_set, cache_stats, rounded, rounded_list
+from proxy_upstream import (
+    ALLOWED_ENDPOINTS, require, fetch_upstream, fetch_json,
+    build_upstream, build_geocode_payload, build_ca_alerts_payload,
+    aggregate_daily, symbol_to_weather_code,
+)
+from proxy_estimators import (
+    dew_point_celsius, estimate_visibility_meters, estimate_gust_kmh,
+    estimate_cape_jkg, estimate_apparent_temperature,
+    estimate_surface_pressure, estimate_solar_hour_angle,
+    estimate_sunrise_sunset, estimate_uv_index,
+)
 
 
 HOST = os.environ.get("PRECIP_PROXY_HOST", "127.0.0.1")
 PORT = int(os.environ.get("PRECIP_PROXY_PORT", "7428"))
 USER_AGENT = "PrecipProxy/1.0 (+https://precip.kerrick.ca)"
-
-CACHE_TTLS = {
-    "/api/forecast": 600,
-    "/api/air-quality": 1200,
-    "/api/geocode": 86400,
-    "/api/reverse-geocode": 86400,
-    "/api/noaa-sector": 600,
-    "/api/alerts": 300,
-    "/api/spc-outlook": 600,
-    "/api/ca-alerts": 300,
-}
-
-ALLOWED_ENDPOINTS = {
-    "/api/forecast",
-    "/api/air-quality",
-    "/api/geocode",
-    "/api/reverse-geocode",
-    "/api/noaa-sector",
-    "/api/alerts",
-    "/api/spc-outlook",
-    "/api/ca-alerts",
-    "/health",
-}
-
-cache = {}
-cache_lock = threading.Lock()
-PLACE_CLASSES = {"place", "boundary"}
-
-
-def cache_get(key, allow_stale=False):
-    with cache_lock:
-        entry = cache.get(key)
-        if not entry:
-            return None
-        if not allow_stale and entry["expires_at"] < time.time():
-            return None
-        return entry
-
-
-def cache_set(key, value, ttl, content_type):
-    with cache_lock:
-        cache[key] = {
-            "body": value,
-            "content_type": content_type,
-            "expires_at": time.time() + ttl,
-        }
-
-
-def rounded(value, digits=4):
-    return f"{float(value):.{digits}f}"
-
-
-def rounded_list(value, digits=4):
-    return ",".join(rounded(item, digits) for item in str(value).split(","))
-
-
-def build_upstream(path, query):
-    if path == "/api/forecast":
-        scope = query.get("scope", ["forecast"])[0]
-        digits = 4 if scope == "heatmap" else 2
-        latitude = rounded_list(require(query, "latitude"), digits)
-        longitude = rounded_list(require(query, "longitude"), digits)
-        params = {
-            "latitude": latitude,
-            "longitude": longitude,
-            "timezone": "auto",
-        }
-        if scope == "heatmap":
-            params["hourly"] = "temperature_2m,dew_point_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,wind_speed_10m,wind_gusts_10m,pressure_msl,cloud_cover,visibility,cape"
-            params["forecast_hours"] = "24"
-        else:
-            params["current"] = "temperature_2m,relative_humidity_2m,apparent_temperature,dew_point_2m,precipitation,pressure_msl,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m,weather_code,cloud_cover"
-            params["hourly"] = "temperature_2m,dew_point_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,rain,showers,snowfall,snow_depth,weather_code,pressure_msl,surface_pressure,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,visibility,wind_speed_10m,wind_speed_100m,wind_direction_10m,wind_direction_100m,wind_gusts_10m,cape,vapour_pressure_deficit,soil_temperature_0cm,soil_moisture_0_to_1cm"
-            params["daily"] = "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,sunrise,sunset,uv_index_max"
-            params["forecast_days"] = "7"
-        url = urllib.parse.urlencode(params)
-        return f"https://api.open-meteo.com/v1/forecast?{url}", "application/json"
-
-    if path == "/api/air-quality":
-        latitude = rounded(require(query, "latitude"), 2)
-        longitude = rounded(require(query, "longitude"), 2)
-        url = urllib.parse.urlencode({
-            "latitude": latitude,
-            "longitude": longitude,
-            "timezone": "auto",
-            "hourly": "pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,ozone,uv_index,us_aqi",
-            "forecast_days": "2",
-        })
-        return f"https://air-quality-api.open-meteo.com/v1/air-quality?{url}", "application/json"
-
-    if path == "/api/geocode":
-        name = require(query, "name").strip()
-        count = min(10, max(1, int(query.get("count", ["8"])[0])))
-        url = urllib.parse.urlencode({
-            "name": name,
-            "count": str(count),
-            "language": "en",
-            "format": "json",
-        })
-        return f"https://geocoding-api.open-meteo.com/v1/search?{url}", "application/json"
-
-    if path == "/api/reverse-geocode":
-        latitude = rounded(require(query, "latitude"))
-        longitude = rounded(require(query, "longitude"))
-        url = urllib.parse.urlencode({
-            "lat": latitude,
-            "lon": longitude,
-            "format": "jsonv2",
-        })
-        return f"https://nominatim.openstreetmap.org/reverse?{url}", "application/json"
-
-    if path == "/api/noaa-sector":
-        sat = require(query, "sat").strip()
-        sector = require(query, "sector").strip()
-        if sat not in {"G18", "G19"}:
-            raise ValueError("invalid satellite")
-        if not sector.replace("-", "").isalnum():
-            raise ValueError("invalid sector")
-        url = urllib.parse.urlencode({
-            "sat": sat,
-            "sector": sector,
-        })
-        return f"https://www.star.nesdis.noaa.gov/goes/sector.php?{url}", "text/html; charset=utf-8"
-
-    if path == "/api/alerts":
-        latitude = require(query, "latitude").strip()
-        longitude = require(query, "longitude").strip()
-        return f"https://api.weather.gov/alerts/active?point={latitude},{longitude}", "application/json"
-
-    if path == "/api/spc-outlook":
-        layer = query.get("layer", ["1"])[0].strip()
-        if layer not in ("1", "2", "3", "9", "10", "11", "17", "18", "19"):
-            raise ValueError("invalid layer")
-        return f"https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/SPC_wx_outlks/MapServer/{layer}/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson", "application/json"
-
-    raise ValueError("unsupported endpoint")
-
-
-def require(query, name):
-    values = query.get(name)
-    if not values or not values[0]:
-        raise ValueError(f"missing {name}")
-    return values[0]
-
-
-def fetch_upstream(url, content_type):
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=25) as response:
-        body = response.read()
-        content_length = response.headers.get("Content-Length")
-        if content_length is not None:
-            expected = int(content_length)
-            if len(body) < expected:
-                raise ValueError(f"upstream truncated response: got {len(body)} of {expected} bytes")
-        upstream_type = response.headers.get_content_type()
-        return body, response.status, content_type if content_type.startswith("text/html") else f"{upstream_type}; charset=utf-8"
-
-
-def fetch_json(url):
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=25) as response:
-        return json.load(response)
-
-
-def normalize_text(value):
-    return " ".join(str(value or "").strip().lower().split())
-
-
-def build_open_meteo_geocode_url(name, count):
-    return "https://geocoding-api.open-meteo.com/v1/search?" + urllib.parse.urlencode({
-        "name": name,
-        "count": str(count),
-        "language": "en",
-        "format": "json",
-    })
-
-
-def build_nominatim_search_url(name, count):
-    return "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode({
-        "q": name,
-        "format": "jsonv2",
-        "addressdetails": "1",
-        "limit": str(count * 2),
-    })
-
-
-def convert_open_meteo_result(result):
-    return {
-        "id": result.get("id"),
-        "name": result.get("name"),
-        "latitude": result.get("latitude"),
-        "longitude": result.get("longitude"),
-        "country_code": result.get("country_code"),
-        "country": result.get("country"),
-        "admin1": result.get("admin1"),
-        "timezone": result.get("timezone"),
-        "population": result.get("population") or 0,
-    }
-
-
-def convert_nominatim_result(result):
-    address = result.get("address") or {}
-    osm_class = result.get("category") or result.get("class")
-    if osm_class not in PLACE_CLASSES:
-        return None
-
-    name = (
-        address.get("city")
-        or address.get("town")
-        or address.get("village")
-        or address.get("municipality")
-        or address.get("hamlet")
-        or address.get("county")
-        or result.get("name")
-        or (result.get("display_name") or "").split(",")[0].strip()
-    )
-    if not name:
-        return None
-
-    return {
-        "id": f"osm-{result.get('osm_type', 'x')}-{result.get('osm_id', '0')}",
-        "name": name,
-        "latitude": float(result.get("lat")),
-        "longitude": float(result.get("lon")),
-        "country_code": (address.get("country_code") or "").upper() or None,
-        "country": address.get("country"),
-        "admin1": address.get("state") or address.get("province") or address.get("region") or address.get("county"),
-        "timezone": "auto",
-        "population": 0,
-    }
-
-
-def geocode_dedupe_key(result):
-    return "|".join([
-        normalize_text(result.get("name")),
-        normalize_text(result.get("admin1")),
-        normalize_text(result.get("country")),
-    ])
-
-
-def build_geocode_payload(name, count):
-    open_meteo_url = build_open_meteo_geocode_url(name, count)
-    nominatim_url = build_nominatim_search_url(name, count)
-    sources = []
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [
-            executor.submit(fetch_json, open_meteo_url),
-            executor.submit(fetch_json, nominatim_url),
-        ]
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                sources.append(future.result())
-            except Exception:
-                continue
-
-    merged = []
-    seen = set()
-
-    for payload in sources:
-        if isinstance(payload, dict):
-            raw_results = payload.get("results") or []
-            converted = [convert_open_meteo_result(item) for item in raw_results]
-        else:
-            converted = [convert_nominatim_result(item) for item in payload]
-
-        for item in converted:
-            if not item or not item.get("name"):
-                continue
-            key = geocode_dedupe_key(item)
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(item)
-
-    normalized_query = normalize_text(name)
-    merged.sort(key=lambda item: (
-        0 if normalize_text(item.get("name")) == normalized_query else 1,
-        0 if normalize_text(item.get("admin1")) == normalized_query else 1,
-        -(item.get("population") or 0),
-        normalize_text(item.get("country")),
-        normalize_text(item.get("admin1")),
-    ))
-
-    return json.dumps({
-        "results": merged[:count],
-        "generationtime_ms": 0,
-    }).encode("utf-8")
-
-
-CA_RISK_MAP = {"red": "Extreme", "orange": "Severe", "yellow": "Moderate"}
-
-def build_ca_alerts_payload(latitude, longitude):
-    half_span = 1.0
-    raw_north = float(latitude) + half_span
-    raw_south = float(latitude) - half_span
-    bbox_north = min(83.1, max(raw_north, raw_south + 0.1))
-    bbox_south = max(41.7, min(raw_south, raw_north - 0.1))
-    bbox_east = min(-52.6, float(longitude) + half_span)
-    bbox_west = max(-141.0, float(longitude) - half_span)
-    url = f"https://api.weather.gc.ca/collections/weather-alerts/items?f=json&bbox={bbox_west},{bbox_south},{bbox_east},{bbox_north}&limit=50"
-    data = fetch_json(url)
-    features = data.get("features") or []
-    normalized = []
-    for f in features:
-        p = f.get("properties") or {}
-        risk = (p.get("risk_colour_en") or "yellow").lower()
-        severity = CA_RISK_MAP.get(risk, "Moderate")
-        event = p.get("alert_name_en") or p.get("alert_short_name_en") or "Weather alert"
-        alert_type = (p.get("alert_type") or "").capitalize()
-        location_name = (p.get("feature_name_en") or "")
-        province = (p.get("province") or "")
-        headline = f"{alert_type}: {event}"
-        if location_name:
-            headline += f" for {location_name}"
-        if province:
-            headline += f", {province}"
-        description = (p.get("alert_text_en") or "").strip()
-        normalized.append({
-            "type": "Feature",
-            "geometry": f.get("geometry"),
-            "properties": {
-                "id": p.get("id") or f.get("id"),
-                "event": event,
-                "headline": headline,
-                "description": description[:2000] if description else "",
-                "severity": severity,
-                "source": "ECCC",
-            },
-        })
-    return json.dumps({"type": "FeatureCollection", "features": normalized}).encode("utf-8")
-
-
-def dew_point_celsius(temp_c, humidity):
-    if temp_c is None or humidity is None or humidity <= 0:
-        return None
-    a = 17.27
-    b = 237.7
-    alpha = ((a * temp_c) / (b + temp_c)) + math.log(humidity / 100.0)
-    return round((b * alpha) / (a - alpha), 1)
-
-
-def estimate_visibility_meters(humidity, cloud_cover, precipitation):
-    if humidity is None and cloud_cover is None and precipitation is None:
-        return None
-
-    visibility = 24000
-    if humidity is not None:
-        visibility -= max(0, humidity - 55) * 110
-    if cloud_cover is not None:
-        visibility -= max(0, cloud_cover - 40) * 55
-    if precipitation is not None:
-        visibility -= precipitation * 3200
-    return max(800, min(24000, round(visibility)))
-
-
-def estimate_gust_kmh(wind_speed):
-    if wind_speed is None:
-        return None
-    return round(max(wind_speed, wind_speed * 1.35), 1)
-
-
-def estimate_cape_jkg(temperature, dew_point, precipitation):
-    if temperature is None or dew_point is None:
-        return 0
-    spread = max(0.0, temperature - dew_point)
-    moisture_bonus = max(0.0, dew_point - 8.0) * 28
-    instability_penalty = spread * 22
-    precipitation_bonus = max(0.0, precipitation or 0.0) * 35
-    return max(0, round(moisture_bonus + precipitation_bonus - instability_penalty))
-
-
-def estimate_apparent_temperature(temp_c, wind_kmh, humidity):
-    if temp_c is None:
-        return None
-    if temp_c <= 10 and wind_kmh is not None and wind_kmh > 4.8:
-        v = wind_kmh / 3.6
-        wind_chill = 13.12 + 0.6215 * temp_c - 11.37 * v ** 0.16 + 0.3965 * temp_c * v ** 0.16
-        return round(min(temp_c, wind_chill), 1)
-    if temp_c >= 27 and humidity is not None and humidity > 40:
-        hi = -8.784695 + 1.61139411 * temp_c + 2.338549 * humidity - 0.14611605 * temp_c * humidity - 0.012308094 * temp_c ** 2 - 0.016424828 * humidity ** 2 + 0.002211732 * temp_c ** 2 * humidity + 0.00072546 * temp_c * humidity ** 2 - 0.000003582 * temp_c ** 2 * humidity ** 2
-        return round(max(temp_c, hi), 1)
-    return round(temp_c, 1)
-
-
-def estimate_surface_pressure(pressure_msl, elevation_m=200):
-    if pressure_msl is None:
-        return None
-    return round(pressure_msl * (1 - 0.0000226 * elevation_m) ** 5.225, 1)
-
-
-def estimate_solar_hour_angle(dectime_hours, longitude, day_of_year):
-    equation_of_time = 229.18 * (0.000075 + 0.001868 * math.cos(2 * math.pi * (day_of_year - 1) / 365) - 0.032077 * math.sin(2 * math.pi * (day_of_year - 1) / 365) - 0.014615 * math.cos(4 * math.pi * (day_of_year - 1) / 365) - 0.04089 * math.sin(4 * math.pi * (day_of_year - 1) / 365))
-    solar_time = dectime_hours + longitude / 15 + equation_of_time / 60
-    return (solar_time - 12) * 15
-
-
-def estimate_sunrise_sunset(latitude, longitude, day_str):
-    try:
-        dt = datetime.datetime.strptime(day_str[:10], "%Y-%m-%d")
-        day_of_year = dt.timetuple().tm_yday
-        declination = 23.44 * math.sin(2 * math.pi * (day_of_year - 81) / 365)
-        lat_rad = math.radians(latitude)
-        dec_rad = math.radians(declination)
-        cos_ho = -math.tan(lat_rad) * math.tan(dec_rad)
-        cos_ho = max(-1, min(1, cos_ho))
-        half_day_degrees = math.degrees(math.acos(cos_ho))
-        sunrise_hour = 12 - half_day_degrees / 15
-        sunset_hour = 12 + half_day_degrees / 15
-        sunrise_utc = sunrise_hour - longitude / 15
-        sunset_utc = sunset_hour - longitude / 15
-        def fmt(h):
-            h = h % 24
-            return f"{day_str[:10]}T{int(h):02d}:{int((h % 1) * 60):02d}:00Z"
-        return fmt(sunrise_utc), fmt(sunset_utc)
-    except Exception:
-        return None, None
-
-
-def estimate_uv_index(solar_elevation, cloud_cover):
-    if solar_elevation is None or solar_elevation <= 0:
-        return 0
-    clear_uv = max(0, solar_elevation) * 0.1
-    if cloud_cover is not None:
-        clear_uv *= max(0.3, 1 - cloud_cover / 100 * 0.6)
-    return max(0, round(clear_uv, 1))
-
-
-def symbol_to_weather_code(symbol):
-    symbol = (symbol or "").lower()
-    if "thunder" in symbol:
-        return 95
-    if "snow" in symbol or "sleet" in symbol:
-        return 71
-    if "heavyrain" in symbol:
-        return 65
-    if "rainshowers" in symbol or "showers" in symbol:
-        return 80
-    if "rain" in symbol:
-        return 63
-    if "fog" in symbol:
-        return 45
-    if "cloudy" in symbol:
-        return 3
-    if "partlycloudy" in symbol:
-        return 2
-    if "fair" in symbol:
-        return 1
-    if "clearsky" in symbol:
-        return 0
-    return 2
-
-
-def aggregate_daily(hourly_times, hourly_temp, hourly_precip, hourly_precip_prob, hourly_wind, hourly_gusts, hourly_codes, latitude=None, longitude=None, hourly_cloud=None):
-    days = {}
-    for index, time_text in enumerate(hourly_times):
-        day = time_text[:10]
-        days.setdefault(day, []).append(index)
-
-    ordered_days = list(days.keys())[:7]
-    daily = {
-        "time": [],
-        "weather_code": [],
-        "temperature_2m_max": [],
-        "temperature_2m_min": [],
-        "precipitation_sum": [],
-        "precipitation_probability_max": [],
-        "wind_speed_10m_max": [],
-        "wind_gusts_10m_max": [],
-        "sunrise": [],
-        "sunset": [],
-        "uv_index_max": [],
-    }
-
-    for day in ordered_days:
-        indexes = days[day]
-        temps = [hourly_temp[i] for i in indexes if hourly_temp[i] is not None]
-        rain = [hourly_precip[i] or 0 for i in indexes]
-        rain_prob = [hourly_precip_prob[i] or 0 for i in indexes]
-        winds = [hourly_wind[i] or 0 for i in indexes]
-        gusts = [hourly_gusts[i] or 0 for i in indexes]
-        codes = [hourly_codes[i] for i in indexes if hourly_codes[i] is not None]
-        daily["time"].append(day)
-        daily["weather_code"].append(max(codes, key=codes.count) if codes else 2)
-        daily["temperature_2m_max"].append(max(temps) if temps else None)
-        daily["temperature_2m_min"].append(min(temps) if temps else None)
-        daily["precipitation_sum"].append(round(sum(rain), 1))
-        daily["precipitation_probability_max"].append(max(rain_prob) if rain_prob else 0)
-        daily["wind_speed_10m_max"].append(max(winds) if winds else 0)
-        daily["wind_gusts_10m_max"].append(max(gusts) if gusts else 0)
-
-        sunrise, sunset = estimate_sunrise_sunset(latitude or 40, longitude or 0, day)
-        if sunrise and sunset:
-            daily["sunrise"].append(sunrise)
-            daily["sunset"].append(sunset)
-        else:
-            daily["sunrise"].append(f"{day}T06:00:00Z")
-            daily["sunset"].append(f"{day}T18:00:00Z")
-
-        noon_index = indexes[len(indexes) // 2]
-        noon_cloud = hourly_cloud[noon_index] if hourly_cloud and noon_index < len(hourly_cloud) else None
-        solar_elev = max(0, 90 - abs(float(latitude or 40) - 90 + 23.44 * math.cos(2 * math.pi * (datetime.datetime.strptime(day[:10], "%Y-%m-%d").timetuple().tm_yday - 81) / 365)))
-        daily["uv_index_max"].append(estimate_uv_index(solar_elev, noon_cloud))
-
-    return daily
 
 
 def build_met_no_forecast(latitude, longitude):
@@ -683,7 +192,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/health":
-            body = json.dumps({"ok": True}).encode("utf-8")
+            body = json.dumps({"ok": True, "cache": cache_stats()}).encode("utf-8")
             self.send_response(200)
             self.send_common_headers("application/json; charset=utf-8", len(body))
             self.end_headers()
@@ -713,6 +222,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+
             if parsed.path == "/api/ca-alerts":
                 latitude = require(query, "latitude").strip()
                 longitude = require(query, "longitude").strip()
@@ -724,6 +234,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+
             upstream_url, expected_type = build_upstream(parsed.path, query)
             body, status, content_type = fetch_upstream(upstream_url, expected_type)
         except urllib.error.HTTPError as error:
@@ -745,8 +256,9 @@ class Handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(fallback_body)
                     return
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f"MET Norway fallback failed: {exc}", file=sys.stderr)
+                    traceback.print_exc(file=sys.stderr)
             if error.code == 429 and parsed.path == "/api/forecast" and query.get("scope", ["heatmap"])[0] == "heatmap":
                 try:
                     fallback_body = build_met_no_heatmap_batch(require(query, "latitude"), require(query, "longitude"))
@@ -757,16 +269,29 @@ class Handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(fallback_body)
                     return
-                except Exception:
-                    pass
-            payload = json.dumps({"error": f"upstream {error.code}"}).encode("utf-8")
+                except Exception as exc:
+                    print(f"MET Norway heatmap fallback failed: {exc}", file=sys.stderr)
+                    traceback.print_exc(file=sys.stderr)
+            payload = json.dumps({
+                "error": f"upstream {error.code}",
+                "code": error.code,
+                "type": "upstream_error",
+                "retry_after": error.headers.get("Retry-After") if hasattr(error, "headers") else None,
+            }).encode("utf-8")
             self.send_response(error.code)
             self.send_common_headers("application/json; charset=utf-8", len(payload))
             self.end_headers()
             self.wfile.write(payload)
             return
         except Exception as error:
-            self.write_error(400, str(error))
+            print(f"Unexpected proxy error for {parsed.path}: {error}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            if isinstance(error, urllib.error.URLError):
+                self.write_error(502, str(error), "upstream_unreachable")
+            elif isinstance(error, ValueError):
+                self.write_error(400, str(error), "bad_request")
+            else:
+                self.write_error(500, str(error), "internal")
             return
 
         cache_set(cache_key, body, CACHE_TTLS[parsed.path], content_type)
@@ -779,8 +304,12 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         return
 
-    def write_error(self, status, message):
-        payload = json.dumps({"error": message}).encode("utf-8")
+    def write_error(self, status, message, error_type="internal"):
+        payload = json.dumps({
+            "error": message,
+            "code": status,
+            "type": error_type,
+        }).encode("utf-8")
         self.send_response(status)
         self.send_common_headers("application/json; charset=utf-8", len(payload))
         self.end_headers()

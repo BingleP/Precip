@@ -1,13 +1,12 @@
+import { escapeHTML, normalizeSearchText } from "./ui";
+import { buildApiUrl } from "./api";
+
 const form = document.querySelector("#welcome-form") as HTMLFormElement;
 const input = document.querySelector("#welcome-location-input") as HTMLInputElement;
 const note = document.querySelector("#welcome-note") as HTMLElement;
 const searchNote = document.querySelector("#welcome-search-note") as HTMLElement;
 const suggestions = document.querySelector("#welcome-suggestions") as HTMLElement;
 const cookieName = "precip.preferredLocation.v1";
-
-const apiBaseUrl = ["127.0.0.1", "localhost"].includes(window.location.hostname)
-  ? "http://127.0.0.1:7428"
-  : window.location.origin;
 
 interface GeocodingResult {
   name: string;
@@ -35,40 +34,17 @@ let activeSelection: LocationItem | null = null;
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 let searchToken = 0;
 
-function buildApiUrl(path: string): URL {
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return new URL(`/api${normalizedPath}`, apiBaseUrl);
-}
-
-function escapeHTML(value: unknown): string {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
 function formatLabel(item: LocationItem): string {
   return [item.name, item.admin, item.country].filter(Boolean).join(", ");
 }
 
-function normalize(value: string): string {
-  return String(value ?? "")
-    .toLowerCase()
-    .normalize("NFKD")
-    .replaceAll(/[^\w\s,]/g, " ")
-    .replaceAll(/\s+/g, " ")
-    .trim();
-}
-
 function matchesQuery(item: LocationItem, query: string): boolean {
-  const normalized = normalize(query);
+  const normalized = normalizeSearchText(query);
   const variants = [
     item.name,
     [item.name, item.admin].filter(Boolean).join(", "),
     formatLabel(item),
-  ].map(normalize);
+  ].map(normalizeSearchText);
   return variants.some((variant) => variant === normalized);
 }
 

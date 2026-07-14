@@ -1,4 +1,4 @@
-import type { ChartPoint, ChartState } from "./types";
+import type { ChartState } from "./types";
 
 export const chartState: ChartState = {
   hoverIndex: null,
