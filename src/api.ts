@@ -1,5 +1,5 @@
 import type { Forecast, AirQuality, NwsAlert, SpcCollection, NoaaCatalog, NoaaSector, Location, CacheMeta, NoaaProduct } from "./types";
-import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES, SLIDER_PRODUCT_NAMES } from "./config";
+import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, ALERT_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES, SLIDER_PRODUCT_NAMES } from "./config";
 import { getCachedApiResponse, setCachedApiResponse } from "./storage";
 import { worldToLatLon } from "./geo";
 
@@ -23,6 +23,7 @@ const forecastRequestCache = new Map<string, Promise<Forecast>>();
 const airQualityRequestCache = new Map<string, Promise<AirQuality>>();
 export const satelliteCatalogCache = new Map<string, { savedAt: number; data: NoaaCatalog }>();
 export const heatmapCache = new Map<string, { savedAt: number; data: unknown }>();
+const alertCache = new Map<string, { savedAt: number; data: NwsAlert[] }>();
 
 export function setApiBackoff(name: string): void {
   apiBackoffUntil.set(name, Date.now() + API_RATE_LIMIT_BACKOFF_MS);
@@ -149,6 +150,11 @@ export async function fetchAirQuality(location: Location): Promise<AirQuality> {
 export async function fetchAlerts(location: Location): Promise<NwsAlert[]> {
   const isCanada = location.countryCode === "CA";
   const endpoint = isCanada ? "/ca-alerts" : "/alerts";
+  const cacheKey = `${location.latitude.toFixed(2)},${location.longitude.toFixed(2)}:${endpoint}`;
+  const cached = alertCache.get(cacheKey);
+  if (cached && Date.now() - cached.savedAt < ALERT_CACHE_TTL_MS) {
+    return cached.data;
+  }
   try {
     const url = buildApiUrl(endpoint);
     url.searchParams.set("latitude", location.latitude.toFixed(4));
@@ -156,7 +162,9 @@ export async function fetchAlerts(location: Location): Promise<NwsAlert[]> {
     const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) return [];
     const body = await response.json();
-    return body.features || [];
+    const alerts = body.features || [];
+    alertCache.set(cacheKey, { savedAt: Date.now(), data: alerts });
+    return alerts;
   } catch {
     return [];
   }
@@ -269,6 +277,7 @@ export async function fetchSliderCatalog(satellite: string, sector: string): Pro
     if (!href) continue;
     const name = href.replace(/\/$/, "");
     if (!name || name === ".." || name.startsWith(".")) continue;
+    if (name === "geocolor") continue;
     if (seen.has(name)) continue;
     seen.add(name);
 

@@ -13,7 +13,7 @@ USER_AGENT = "PrecipProxy/1.0 (+https://precip.kerrick.ca)"
 PLACE_CLASSES = {"place", "boundary"}
 CA_RISK_MAP = {"red": "Extreme", "orange": "Severe", "yellow": "Moderate"}
 
-SLIDER_BASE = "https://rammb-slider.cira.colostate.edu"
+SLIDER_BASE = "https://slider.cira.colostate.edu"
 
 ALLOWED_ENDPOINTS = {
     "/api/forecast",

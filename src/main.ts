@@ -8,10 +8,11 @@ if (!document.cookie.split("; ").find((row) => row.startsWith("precip.preferredL
 import type { Location } from "./types";
 import { MAP_DEFAULT_ZOOM, NOAA_SECTORS, SLIDER_SATELLITES, SLIDER_BASE, } from "./config";
 import { getAppSettings, saveAppSettings, getPreferredLocation, savePreferredLocation, getWatchlist, getForecastHistory, saveForecastHistory, saveWatchlist, removeCookieValue, } from "./storage";
-import { fetchNoaaSectorCatalog, fetchSliderCatalog, } from "./api";
+import { fetchNoaaSectorCatalog, fetchSliderCatalog, fetchAlerts } from "./api";
 import { resolveLocation, searchLocationSuggestions, } from "./search";
 import { zoomMap, startMapDrag, moveMapDrag, endMapDrag, resetMapView, updateMapTooltip, hideMapTooltip, } from "./map";
-import { updateSatelliteForLocation, loadSatelliteSector, getNoaaSectorById, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, renderSatelliteProductOptions, renderSatelliteImage, updateSliderForLocation, loadSliderSector, getActiveSource, setActiveSource, loadSliderImageWithFallback, } from "./satellite";
+import { updateSatelliteForLocation, loadSatelliteSector, getNoaaSectorById, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, renderSatelliteProductOptions, renderSatelliteImage, updateSliderForLocation, loadSliderSector, setActiveSource, loadSliderImageWithFallback, resolveSliderSatellite, resolveSliderSector } from "./satellite";
+import { setMapCenterAlerts } from "./alerts";
 import { selectTab, togglePanel, formatLocationLabel, normalizeSearchText, } from "./ui";
 import { exportSettingsPreset, importSettingsPreset, } from "./settings";
 import {
@@ -45,6 +46,24 @@ let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 let tooltipRaf: number | null = null;
 let satelliteOverlayDrag: { startX: number; startY: number; left: number; top: number } | null = null;
 let satelliteOverlayResizeDrag: { startX: number; startY: number; width: number; height: number } | null = null;
+let mapCenterAlertTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function fetchMapCenterAlerts(): Promise<void> {
+  const center = mapState.center;
+  if (!center || !center.latitude || !center.longitude) return;
+  try {
+    const alerts = await fetchAlerts({ latitude: center.latitude, longitude: center.longitude } as Location);
+    setMapCenterAlerts(alerts);
+    renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  } catch {
+    setMapCenterAlerts(null);
+  }
+}
+
+function scheduleMapCenterAlertFetch(debounceMs = 600): void {
+  if (mapCenterAlertTimer) clearTimeout(mapCenterAlertTimer);
+  mapCenterAlertTimer = setTimeout(fetchMapCenterAlerts, debounceMs);
+}
 
 // Initialize satellite controls
 if (elements.satelliteSectorSelect) {
@@ -68,27 +87,12 @@ function toggleSatelliteOverlay(show?: boolean): void {
     overlay.hidden = false;
     if (activeLocation && !isSatelliteTabLoaded()) {
       setSatelliteTabLoaded(true);
-      const source = getActiveSource();
+      const source = elements.satelliteSourceSelect?.value || "noaa";
+      const satElements = getSatelliteElements();
       if (source === "slider") {
-        updateSliderForLocation(activeLocation, {
-          satelliteStatus: elements.satelliteStatus,
-          satelliteCopy: elements.satelliteCopy,
-          satelliteEmpty: elements.satelliteEmpty,
-          satelliteImage: elements.satelliteImage,
-          satelliteProductSelect: elements.satelliteProductSelect,
-          satelliteSectorSelect: elements.satelliteSectorSelect,
-          satelliteLink: elements.satelliteLink,
-        });
+        updateSliderForLocation(activeLocation, satElements);
       } else {
-        updateSatelliteForLocation(activeLocation, {
-          satelliteStatus: elements.satelliteStatus,
-          satelliteCopy: elements.satelliteCopy,
-          satelliteEmpty: elements.satelliteEmpty,
-          satelliteImage: elements.satelliteImage,
-          satelliteProductSelect: elements.satelliteProductSelect,
-          satelliteSectorSelect: elements.satelliteSectorSelect,
-          satelliteLink: elements.satelliteLink,
-        });
+        updateSatelliteForLocation(activeLocation, satElements);
       }
     }
     const isNarrow = window.matchMedia("(max-width: 768px)").matches;
@@ -196,7 +200,7 @@ if (heatmapCanvas) {
         renderHeatmap(latestHeatmap, activeHeatmapLayer);
       },
       () => renderHeatmap(latestHeatmap, activeHeatmapLayer),
-      () => scheduleHeatmapRefresh(),
+      () => { scheduleHeatmapRefresh(); scheduleMapCenterAlertFetch(); },
       (e) => {
         if (!mapState.drag) {
           if (tooltipRaf !== null) cancelAnimationFrame(tooltipRaf);
@@ -215,7 +219,7 @@ if (heatmapCanvas) {
   heatmapCanvas.addEventListener("pointerup", (event) => {
     endMapDrag(
       event, mapState, activePointers, pinchState,
-      () => scheduleHeatmapRefresh(),
+      () => { scheduleHeatmapRefresh(); scheduleMapCenterAlertFetch(); },
       (lat, lon) => selectMapLocation(lat, lon),
     );
   });
@@ -255,20 +259,21 @@ elements.mapZoomIn?.addEventListener("click", () => {
   zoomMap(1, mapState, () => {
     hideMapTooltip({ mapTooltip: elements.mapTooltip, mapHoverIndicator: elements.mapHoverIndicator });
     renderHeatmap(latestHeatmap, activeHeatmapLayer);
-  }, () => scheduleHeatmapRefresh());
+  }, () => { scheduleHeatmapRefresh(); scheduleMapCenterAlertFetch(); });
 });
 
 elements.mapZoomOut?.addEventListener("click", () => {
   zoomMap(-1, mapState, () => {
     hideMapTooltip({ mapTooltip: elements.mapTooltip, mapHoverIndicator: elements.mapHoverIndicator });
     renderHeatmap(latestHeatmap, activeHeatmapLayer);
-  }, () => scheduleHeatmapRefresh());
+  }, () => { scheduleHeatmapRefresh(); scheduleMapCenterAlertFetch(); });
 });
 
 elements.mapReset?.addEventListener("click", () => {
   resetMapView(mapState, MAP_DEFAULT_ZOOM, activeLocation);
   renderHeatmap(latestHeatmap, activeHeatmapLayer);
   scheduleHeatmapRefresh(0);
+  scheduleMapCenterAlertFetch();
 });
 
 heatmapButtons.forEach((button) => {
@@ -312,6 +317,7 @@ function getSatelliteElements() {
     satelliteImage: elements.satelliteImage,
     satelliteProductSelect: elements.satelliteProductSelect,
     satelliteSectorSelect: elements.satelliteSectorSelect,
+    satelliteSatelliteSelect: elements.satelliteSatelliteSelect,
     satelliteLink: elements.satelliteLink,
   };
 }
@@ -326,6 +332,12 @@ elements.satelliteSourceSelect?.addEventListener("change", () => {
     if (source === "noaa") {
       elements.satelliteSectorSelect.innerHTML = NOAA_SECTORS
         .map((sector) => `<option value="${sector.id}">${sector.name} (${sector.sat})</option>`)
+        .join("");
+    } else if (activeLocation) {
+      const sat = resolveSliderSatellite(activeLocation);
+      if (elements.satelliteSatelliteSelect) elements.satelliteSatelliteSelect.value = sat.id;
+      elements.satelliteSectorSelect.innerHTML = sat.sectors
+        .map((sector) => `<option value="${sector.id}">${sector.name}</option>`)
         .join("");
     } else {
       const satId = elements.satelliteSatelliteSelect?.value || SLIDER_SATELLITES[0].id;
@@ -359,9 +371,9 @@ elements.satelliteSourceSelect?.addEventListener("change", () => {
 });
 
 elements.satelliteSatelliteSelect?.addEventListener("change", () => {
+  const satId = elements.satelliteSatelliteSelect?.value || SLIDER_SATELLITES[0].id;
+  const sat = SLIDER_SATELLITES.find((s) => s.id === satId) || SLIDER_SATELLITES[0];
   if (elements.satelliteSectorSelect) {
-    const satId = elements.satelliteSatelliteSelect?.value || SLIDER_SATELLITES[0].id;
-    const sat = SLIDER_SATELLITES.find((s) => s.id === satId) || SLIDER_SATELLITES[0];
     elements.satelliteSectorSelect.innerHTML = sat.sectors
       .map((sector) => `<option value="${sector.id}">${sector.name}</option>`)
       .join("");
@@ -372,12 +384,13 @@ elements.satelliteSatelliteSelect?.addEventListener("change", () => {
   setSatelliteTabLoaded(false);
   if (activeLocation) {
     setSatelliteTabLoaded(true);
-    updateSliderForLocation(activeLocation, getSatelliteElements());
+    const sector = resolveSliderSector(sat, activeLocation);
+    loadSliderSector(sat.id, sector.id, { autoSelected: false, elements: getSatelliteElements() });
   }
 });
 
 elements.satelliteSectorSelect?.addEventListener("change", () => {
-  const source = getActiveSource();
+  const source = elements.satelliteSourceSelect?.value || "noaa";
   if (source === "slider") {
     const satId = elements.satelliteSatelliteSelect?.value || SLIDER_SATELLITES[0].id;
     loadSliderSector(satId, elements.satelliteSectorSelect?.value || "", {
@@ -395,7 +408,7 @@ elements.satelliteSectorSelect?.addEventListener("change", () => {
 let satelliteCatalogRequestToken = 0;
 
 elements.satelliteProductSelect?.addEventListener("change", async () => {
-  const source = getActiveSource();
+  const source = elements.satelliteSourceSelect?.value || "noaa";
   const requestToken = ++satelliteCatalogRequestToken;
 
   if (source === "slider") {
@@ -481,6 +494,16 @@ document.querySelector("#satellite-toggle")?.addEventListener("click", () => {
 // Satellite overlay close button
 elements.satelliteOverlayClose?.addEventListener("click", () => {
   toggleSatelliteOverlay(false);
+});
+
+// Satellite options toggle (collapse/expand advanced controls)
+document.querySelector("#satellite-options-toggle")?.addEventListener("click", (event) => {
+  const btn = event.currentTarget as HTMLElement;
+  const advanced = document.querySelector("#satellite-controls-advanced") as HTMLElement | null;
+  if (!advanced) return;
+  const expanded = btn.getAttribute("aria-expanded") === "true";
+  btn.setAttribute("aria-expanded", String(!expanded));
+  advanced.hidden = expanded;
 });
 
 // Satellite overlay drag to reposition
@@ -680,3 +703,4 @@ if (preferredLocation) {
   }
   loadWeather(preferredLocation);
 }
+scheduleMapCenterAlertFetch(800);

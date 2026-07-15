@@ -20,6 +20,7 @@ export const MAX_HISTORY_ITEMS = 12;
 export const MAP_HOURS_TO_SHOW = 24;
 export const LOCATION_SUGGESTION_LIMIT = 8;
 export const SATELLITE_CACHE_TTL_MS = 10 * 60 * 1000;
+export const ALERT_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export const INITIAL_MAP_CENTER: Location = {
   name: "Center of US",
@@ -140,7 +141,7 @@ export const WEATHER_CODES: Record<number, string> = {
   99: "Severe storm",
 };
 
-export const SLIDER_BASE = "https://rammb-slider.cira.colostate.edu";
+export const SLIDER_BASE = "https://slider.cira.colostate.edu";
 
 export const SLIDER_SATELLITES: SliderSatellite[] = [
   {

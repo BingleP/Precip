@@ -67,7 +67,7 @@ Map tiles and satellite imagery load directly in the browser from:
 
 - `https://tile.openstreetmap.org`
 - `https://cdn.star.nesdis.noaa.gov` (NOAA GOES animated GIFs)
-- `https://rammb-slider.cira.colostate.edu` (SLIDER global satellite tiles and JSON catalogs)
+- `https://slider.cira.colostate.edu` (SLIDER global satellite tiles and JSON catalogs)
 
 Cache TTLs vary by endpoint (5 min for alerts, 10 min for forecasts and SPC, 15 min for heatmap, 24 h for geocoding).
 
@@ -108,7 +108,7 @@ The deployed bundle must include:
 When deploying, the nginx CSP must allow the SLIDER tile origin:
 
 ```
-img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov https://rammb-slider.cira.colostate.edu;
+img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov https://slider.cira.colostate.edu;
 ```
 
 ## API Endpoints (proxy)

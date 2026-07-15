@@ -13,6 +13,13 @@ export function updateWarningBar(level: string, label: string, title: string, co
   if (elements.warningCopy) elements.warningCopy.textContent = copy;
 }
 
+export function setWarningBarStandby(): void {
+  if (elements.warningBar) elements.warningBar.className = "weather-warning advisory";
+  if (elements.warningLabel) elements.warningLabel.textContent = "Weather Status";
+  if (elements.warningTitle) elements.warningTitle.textContent = "Checking for active alerts";
+  if (elements.warningCopy) elements.warningCopy.innerHTML = "<span class=\"spinner\"></span> Loading weather alerts...";
+}
+
 export function updateCurrentConditions(location: Location, forecast: Forecast): void {
   const current = forecast.current;
   const hourly = forecast.hourly;

@@ -3,6 +3,7 @@ import { NWS_SEVERITY_ORDER, TORNADO_EVENTS, ALERT_SEVERITY_COLORS, SPC_CATEGORI
 import { pointInPolygon, projectToMapScreen } from "./geo";
 
 let latestAlerts: NwsAlert[] | null = null;
+let mapCenterAlerts: NwsAlert[] | null = null;
 let latestSpcCat: SpcCollection | null = null;
 let latestSpcTorn: SpcCollection | null = null;
 let alertPolygonsCache: AlertPolygon[] = [];
@@ -13,6 +14,14 @@ export function getLatestAlerts(): NwsAlert[] | null {
 
 export function setLatestAlerts(alerts: NwsAlert[] | null): void {
   latestAlerts = alerts;
+}
+
+export function getMapCenterAlerts(): NwsAlert[] | null {
+  return mapCenterAlerts;
+}
+
+export function setMapCenterAlerts(alerts: NwsAlert[] | null): void {
+  mapCenterAlerts = alerts;
 }
 
 export function getLatestSpcCat(): SpcCollection | null {
@@ -88,11 +97,13 @@ export function drawMapAlertPolygons(
   centerLat: number,
   centerLon: number,
   zoom: number,
+  alertsOverride?: NwsAlert[] | null,
 ): AlertPolygon[] {
   const cache: AlertPolygon[] = [];
-  if (!latestAlerts?.length) return cache;
+  const alerts = (alertsOverride && alertsOverride.length) ? alertsOverride : latestAlerts;
+  if (!alerts?.length) return cache;
 
-  const polyAlerts = latestAlerts.filter(
+  const polyAlerts = alerts.filter(
     (a) => a.geometry?.type === "Polygon" || a.geometry?.type === "MultiPolygon",
   );
   if (!polyAlerts.length) return cache;

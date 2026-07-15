@@ -18,7 +18,7 @@ import {
   renderMapReadout, renderHeatmapLegend, updateMapHourLabel,
   hideMapTooltip,
 } from "../map";
-import { drawMapAlertPolygons, setAlertPolygonsCache } from "../alerts";
+import { drawMapAlertPolygons, getMapCenterAlerts, setAlertPolygonsCache } from "../alerts";
 import {
   latestHeatmap, latestHeatmapMeta, activeHeatmapLayer, activeMapHourOffset,
   setLatestHeatmap, setLatestHeatmapMeta,
@@ -272,7 +272,7 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
   }
   drawMapPlaces(ctx, width, height, activeLocation, mapState);
 
-  const alertPolygons = drawMapAlertPolygons(ctx, width, height, mapState.center.latitude, mapState.center.longitude, Math.round(mapState.zoom));
+  const alertPolygons = drawMapAlertPolygons(ctx, width, height, mapState.center.latitude, mapState.center.longitude, Math.round(mapState.zoom), getMapCenterAlerts());
   setAlertPolygonsCache(alertPolygons);
 
   if (!mapState.drag) {

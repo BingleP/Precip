@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Precip Weather Operations</title>
     <link rel="icon" href="/assets/tab-CSFEXn2q.png?v=2" type="image/png" />
-    <script type="module" crossorigin src="/assets/main-DSEi-1ZK.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/ui-C8tZbTQ7.js">
-    <link rel="stylesheet" crossorigin href="/assets/ui-B1g9jDC8.css">
+    <script type="module" crossorigin src="/assets/main-C6SpEyZE.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/ui-E1k5gKeX.js">
+    <link rel="stylesheet" crossorigin href="/assets/ui-B0f1H3X7.css">
   </head>
   <body>
     <div class="app-shell">
@@ -106,28 +106,35 @@
               <span class="section-kicker" id="satellite-kicker">NOAA Satellite</span>
               <strong id="satellite-headline">GOES Sector Animation</strong>
             </div>
-            <div class="satellite-overlay-toolbar">
-              <label class="satellite-overlay-select">
-                <span>Source</span>
-                <select class="settings-select" id="satellite-source-select">
-                  <option value="noaa">NOAA STAR</option>
-                  <option value="slider">SLIDER Global</option>
-                </select>
-              </label>
-              <label class="satellite-overlay-select" id="satellite-satellite-wrapper" hidden>
-                <span>Satellite</span>
-                <select class="settings-select" id="satellite-satellite-select"></select>
-              </label>
-              <label class="satellite-overlay-select">
-                <span>Sector</span>
-                <select class="settings-select" id="satellite-sector-select"></select>
-              </label>
-              <label class="satellite-overlay-select">
-                <span>Animation</span>
-                <select class="settings-select" id="satellite-product-select"></select>
-              </label>
-              <a class="ghost-button satellite-link" id="satellite-link" href="https://www.star.nesdis.noaa.gov/GOES/" target="_blank" rel="noreferrer">NOAA</a>
-              <button class="satellite-overlay-close" id="satellite-overlay-close" type="button" aria-label="Close satellite view">&times;</button>
+            <button class="satellite-overlay-close" id="satellite-overlay-close" type="button" aria-label="Close satellite view">&times;</button>
+            <div class="satellite-controls-row">
+              <div class="satellite-controls-primary">
+                <label class="satellite-overlay-select">
+                  <span>Source</span>
+                  <select class="settings-select" id="satellite-source-select">
+                    <option value="noaa">NOAA STAR</option>
+                    <option value="slider">SLIDER Global</option>
+                  </select>
+                </label>
+                <button class="ghost-button satellite-options-toggle" id="satellite-options-toggle" type="button" aria-expanded="true" aria-label="Toggle satellite options">
+                  Options <span class="satellite-chevron">&#9660;</span>
+                </button>
+              </div>
+              <div class="satellite-controls-advanced" id="satellite-controls-advanced">
+                <label class="satellite-overlay-select" id="satellite-satellite-wrapper" hidden>
+                  <span>Satellite</span>
+                  <select class="settings-select" id="satellite-satellite-select"></select>
+                </label>
+                <label class="satellite-overlay-select">
+                  <span>Sector</span>
+                  <select class="settings-select" id="satellite-sector-select"></select>
+                </label>
+                <label class="satellite-overlay-select">
+                  <span>Animation</span>
+                  <select class="settings-select" id="satellite-product-select"></select>
+                </label>
+                <a class="ghost-button satellite-link" id="satellite-link" href="https://www.star.nesdis.noaa.gov/GOES/" target="_blank" rel="noreferrer">NOAA</a>
+              </div>
             </div>
           </div>
           <div class="satellite-overlay-body">

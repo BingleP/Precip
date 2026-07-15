@@ -4,9 +4,9 @@ import { getAppSettings } from "../storage";
 import { fetchForecast, fetchAirQuality, fetchAlerts, fetchSpcOutlook } from "../api";
 import { fetchHeatmap } from "../heatmap";
 import { resolveLocation, reverseGeocodeLocation } from "../search";
-import { updateNwsAlerts, setLatestAlerts, setLatestSpcCat, setLatestSpcTorn, renderSpcOutlook } from "../alerts";
+import { updateNwsAlerts, setLatestSpcCat, setLatestSpcTorn, renderSpcOutlook, setMapCenterAlerts } from "../alerts";
 import { updateSatelliteForLocation, setSatelliteTabLoaded } from "../satellite";
-import { updateCurrentConditions, updateWeatherWarning } from "../panels/now";
+import { updateCurrentConditions, updateWeatherWarning, setWarningBarStandby, updateWarningBar } from "../panels/now";
 import { renderPatterns, renderStormToolkit, renderConfidence, renderContext } from "../panels/trends";
 import { renderDailyForecast, renderWeeklyForecast, renderHourlyForecast } from "../panels/forecast";
 import { drawForecastChart } from "../panels/chart";
@@ -18,7 +18,7 @@ import {
 } from "../panels/data";
 import { addLog, showToast } from "../ui";
 import {
-  latestHeatmap, latestAirQuality,
+  latestHeatmap, latestAirQuality, latestForecast,
   weatherLoadId, heatmapCanvas,
   setActiveLocation, setLatestForecast, setLatestHeatmap, setLatestHeatmapMeta, setLatestAirQuality,
   setWeatherLoadId,
@@ -56,7 +56,7 @@ export async function loadWeather(query: Location | string): Promise<void> {
     if (requestId !== weatherLoadId) return;
     updateCurrentConditions(resolved, forecast);
     applyForecastCacheStatus(forecast);
-    updateWeatherWarning(forecast);
+    setWarningBarStandby();
     renderPatterns(forecast);
     renderStormToolkit(forecast);
     renderConfidence(forecast);
@@ -66,8 +66,7 @@ export async function loadWeather(query: Location | string): Promise<void> {
     setLatestAirQuality(null);
     setLatestHeatmap(null);
     setLatestHeatmapMeta(null);
-    setLatestAlerts(null);
-    document.querySelector('.tab-button[data-tab="now"] .alert-badge')?.remove();
+    setMapCenterAlerts(null);
     setLatestSpcCat(null);
     setLatestSpcTorn(null);
     if (elements.airGrid) elements.airGrid.innerHTML = `<div class="empty-signal">Loading air quality data.</div>`;
@@ -119,13 +118,16 @@ export async function hydrateSupplementalWeather(location: Location, requestId: 
 
   if (alertsResult.status === "fulfilled") {
     if (alertsResult.value.length) {
-      updateNwsAlerts(alertsResult.value, elements as unknown as Record<string, HTMLElement | null>, showToast, (_level, _label, _title, _copy) => {});
+      updateNwsAlerts(alertsResult.value, elements as unknown as Record<string, HTMLElement | null>, showToast, updateWarningBar);
+      if (latestHeatmap) renderHeatmap(latestHeatmap);
     } else {
       const alertBadge = document.querySelector('.tab-button[data-tab="now"] .alert-badge');
       if (alertBadge) alertBadge.remove();
+      if (latestForecast) updateWeatherWarning(latestForecast);
     }
   } else {
     addLog((alertsResult.reason as Error)?.message || "Weather alerts request failed", elements.eventLog);
+    if (latestForecast) updateWeatherWarning(latestForecast);
   }
 
   const [spcCatResult, spcTornResult] = await Promise.allSettled([

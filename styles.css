@@ -1760,11 +1760,12 @@ a {
 }
 
 .satellite-overlay-header {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 8px;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 8px 52px 8px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   cursor: grab;
@@ -1780,6 +1781,7 @@ a {
   display: grid;
   gap: 1px;
   flex-shrink: 0;
+  margin-right: auto;
 }
 
 .satellite-overlay-title .section-kicker {
@@ -1792,13 +1794,50 @@ a {
   white-space: nowrap;
 }
 
-.satellite-overlay-toolbar {
+.satellite-controls-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.satellite-controls-primary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.satellite-options-toggle {
+  flex-shrink: 0;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  min-height: 28px;
+}
+
+.satellite-options-toggle[aria-expanded="false"] .satellite-chevron {
+  transform: rotate(-90deg);
+}
+
+.satellite-chevron {
+  display: inline-block;
+  font-size: 7px;
+  transition: transform 0.15s ease;
+  line-height: 1;
+}
+
+.satellite-controls-advanced {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 6px;
-  flex: 1;
-  min-width: 0;
+}
+
+.satellite-controls-advanced[hidden] {
+  display: none;
 }
 
 .satellite-overlay-select {
@@ -1842,9 +1881,12 @@ a {
 }
 
 .satellite-overlay-close {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -1855,12 +1897,13 @@ a {
   cursor: pointer;
   display: grid;
   place-items: center;
-  transition: color 0.12s, border-color 0.12s;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
 }
 
 .satellite-overlay-close:hover {
   color: var(--text);
   border-color: var(--border);
+  background: var(--surface);
 }
 
 .satellite-overlay-body {
@@ -1927,11 +1970,24 @@ a {
 
   .satellite-overlay-header {
     flex-wrap: wrap;
-    padding: 6px 8px;
+    padding: 6px 48px 6px 8px;
+    gap: 6px;
   }
 
-  .satellite-overlay-toolbar {
-    flex-wrap: wrap;
+  .satellite-controls-row {
+    gap: 4px;
+  }
+
+  .satellite-controls-primary {
+    gap: 4px;
+  }
+
+  .satellite-options-toggle {
+    min-height: 32px;
+    font-size: 10px;
+  }
+
+  .satellite-controls-advanced {
     gap: 4px;
   }
 
@@ -1947,9 +2003,11 @@ a {
   }
 
   .satellite-overlay-close {
-    width: 44px;
-    height: 44px;
-    font-size: 22px;
+    top: 4px;
+    right: 4px;
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
   }
 
   .satellite-overlay-resize {

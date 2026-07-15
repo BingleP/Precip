@@ -187,6 +187,7 @@ interface SatelliteElements {
   satelliteProductSelect: HTMLSelectElement | null;
   satelliteLink: HTMLAnchorElement | null;
   satelliteSectorSelect?: HTMLSelectElement | null;
+  satelliteSatelliteSelect?: HTMLSelectElement | null;
 }
 
 export async function loadSatelliteSector(
@@ -258,32 +259,62 @@ export function setActiveSource(source: SatelliteSource): void {
   activeSource = source;
 }
 
-export function getSliderTileUrl(satellite: string, sector: string, product: string, timestamp?: string): string {
-  if (timestamp) {
-    const date = timestamp.slice(0, 8);
-    return `${SLIDER_BASE}/data/imagery/${date}/${satellite}---${sector}/${product}/${timestamp}/00/000_000.png`;
-  }
-  const now = new Date();
-  const utcMin = now.getUTCMinutes();
-  const utcHr = now.getUTCHours();
-  const utcDate = now.getUTCDate();
-  const utcMonth = now.getUTCMonth();
-  const utcYear = now.getUTCFullYear();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const date = `${utcYear}${pad(utcMonth + 1)}${pad(utcDate)}`;
-  const latencyMs = 25;
-  const totalMinutes = utcHr * 60 + utcMin - latencyMs;
-  const hr = Math.floor(totalMinutes / 60) % 24;
-  const min = Math.floor(totalMinutes % 60 / 10) * 10;
-  const ts = `${date}${pad(hr)}${pad(min)}00`;
-  return `${SLIDER_BASE}/data/imagery/${date}/${satellite}---${sector}/${product}/${ts}/00/000_000.png`;
+interface SliderTileConfig {
+  seconds: string;
+  cadenceMinutes: number;
 }
 
-export function tryNextSliderTimestamp(currentTs: string): string | null {
-  const ts = parseInt(currentTs, 10);
-  const prev = ts - 1000;
-  if (prev < parseInt(`${currentTs.slice(0, 8)}000000`, 10)) return null;
-  return String(prev);
+const SLIDER_TILE_CONFIGS: Record<string, SliderTileConfig> = {
+  "goes-19": { seconds: "17", cadenceMinutes: 5 },
+  "goes-18": { seconds: "17", cadenceMinutes: 5 },
+  "himawari": { seconds: "00", cadenceMinutes: 10 },
+  "meteosat-0deg": { seconds: "00", cadenceMinutes: 15 },
+  "meteosat-9": { seconds: "00", cadenceMinutes: 15 },
+  "gk2a": { seconds: "00", cadenceMinutes: 10 },
+  "jpss": { seconds: "21", cadenceMinutes: 10 },
+};
+
+function getSliderTileConfig(satellite: string): SliderTileConfig {
+  return SLIDER_TILE_CONFIGS[satellite] ?? { seconds: "17", cadenceMinutes: 10 };
+}
+
+export function getSliderTileUrl(satellite: string, sector: string, product: string, timestamp?: string): string {
+  const config = getSliderTileConfig(satellite);
+  if (timestamp) {
+    const datePath = `${timestamp.slice(0, 4)}/${timestamp.slice(4, 6)}/${timestamp.slice(6, 8)}`;
+    return `${SLIDER_BASE}/data/imagery/${datePath}/${satellite}---${sector}/${product}/${timestamp}/00/000_000.png`;
+  }
+  const now = new Date();
+  now.setUTCMinutes(now.getUTCMinutes() - 30);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const y = now.getUTCFullYear();
+  const m = pad(now.getUTCMonth() + 1);
+  const d = pad(now.getUTCDate());
+  const h = pad(now.getUTCHours());
+  const min = pad(Math.floor(now.getUTCMinutes() / config.cadenceMinutes) * config.cadenceMinutes);
+  const ts = `${y}${m}${d}${h}${min}${config.seconds}`;
+  return `${SLIDER_BASE}/data/imagery/${y}/${m}/${d}/${satellite}---${sector}/${product}/${ts}/00/000_000.png`;
+}
+
+export function tryNextSliderTimestamp(currentTs: string, satellite?: string): string | null {
+  const config = satellite ? getSliderTileConfig(satellite) : { seconds: currentTs.slice(12) || "17", cadenceMinutes: 5 };
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const y = parseInt(currentTs.slice(0, 4), 10);
+  const m = parseInt(currentTs.slice(4, 6), 10) - 1;
+  const d = parseInt(currentTs.slice(6, 8), 10);
+  const h = parseInt(currentTs.slice(8, 10), 10);
+  const min = parseInt(currentTs.slice(10, 12), 10);
+  const s = parseInt(currentTs.slice(12, 14), 10) || 0;
+  const date = new Date(Date.UTC(y, m, d, h, min, s));
+  date.setUTCMinutes(date.getUTCMinutes() - config.cadenceMinutes);
+  const y2 = date.getUTCFullYear();
+  const m2 = pad(date.getUTCMonth() + 1);
+  const d2 = pad(date.getUTCDate());
+  const h2 = pad(date.getUTCHours());
+  const min2 = pad(date.getUTCMinutes());
+  const ts2 = `${y2}${m2}${d2}${h2}${min2}${config.seconds}`;
+  if (ts2 < `${currentTs.slice(0, 8)}000000`) return null;
+  return ts2;
 }
 
 export function resolveSliderSatellite(location: Location): SliderSatellite {
@@ -325,7 +356,7 @@ export function loadSliderImageWithFallback(
   timestamp?: string,
 ): void {
   const url = getSliderTileUrl(satellite, sector, productKey, timestamp);
-  const nextTs = timestamp ? tryNextSliderTimestamp(timestamp) : null;
+  const nextTs = timestamp ? tryNextSliderTimestamp(timestamp, satellite) : null;
 
   imgEl.onload = () => {
     imgEl.hidden = false;
@@ -356,6 +387,7 @@ export async function loadSliderSector(
   const requestToken = ++satelliteRequestToken;
   activeSatelliteSectorId = `${satellite}:${sector}`;
   if (elements.satelliteSectorSelect) elements.satelliteSectorSelect.value = sector;
+  if (elements.satelliteSatelliteSelect) elements.satelliteSatelliteSelect.value = satellite;
 
   setSatelliteLoadingState(`Loading SLIDER ${satellite} ${sector} imagery.`, elements, "SLIDER");
 
@@ -367,7 +399,6 @@ export async function loadSliderSector(
       catalog.products.find((product) => product.key === preferredProductKey) ||
       catalog.products.find((product) => product.key === activeSatelliteProductKey) ||
       catalog.products.find((product) => product.key === "cira_geocolor") ||
-      catalog.products.find((product) => product.key === "geocolor") ||
       catalog.products[0];
 
     renderSatelliteProductOptions(catalog.products, selectedProduct.key, elements.satelliteProductSelect);
