@@ -14,5 +14,9 @@
   "devDependencies": {
     "typescript": "^5.8.0",
     "vite": "^6.3.0"
-  }
+  },
+  "trustedDependencies": [
+    "@esbuild/darwin-arm64",
+    "fsevents"
+  ]
 }

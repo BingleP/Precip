@@ -76,8 +76,9 @@ User state is stored in browser cookies. No app data is written to the server.
 ## Local Preview
 
 ```bash
+bun install                       # install dependencies (first time)
 python3 proxy_server.py           # cache proxy on port 7428
-npm run dev                       # Vite dev server + proxy
+bun run dev                       # Vite dev server + proxy
 
 open http://localhost:5173
 ```

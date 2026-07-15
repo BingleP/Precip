@@ -21,9 +21,7 @@ import {
   mapState, activePointers, pinchState,
   elements, chartCanvas, heatmapCanvas, heatmapButtons,
 } from "./state";
-import {
-  updateCurrentConditions,
-} from "./panels/now";
+import { updateCurrentConditions } from "./panels/now";
 import {
   drawForecastChart, hideChartTooltip, updateChartTooltip,
 } from "./panels/chart";
@@ -57,6 +55,7 @@ async function fetchMapCenterAlerts(): Promise<void> {
     renderHeatmap(latestHeatmap, activeHeatmapLayer);
   } catch {
     setMapCenterAlerts(null);
+    renderHeatmap(latestHeatmap, activeHeatmapLayer);
   }
 }
 
