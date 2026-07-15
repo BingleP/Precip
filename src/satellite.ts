@@ -1,8 +1,10 @@
-import type { Location, NoaaSector, NoaaProduct } from "./types";
-import { NOAA_SECTORS, NOAA_AUTO_SECTOR_IDS } from "./config";
-import { fetchNoaaSectorCatalog } from "./api";
+import type { Location, NoaaSector, NoaaProduct, SliderSatellite, SliderSector, SatelliteSource } from "./types";
+import { NOAA_SECTORS, NOAA_AUTO_SECTOR_IDS, SLIDER_SATELLITES, SLIDER_BASE } from "./config";
+import { fetchNoaaSectorCatalog, fetchSliderCatalog } from "./api";
 import { haversineDistance } from "./geo";
 import { addLog, normalizeSearchText } from "./ui";
+
+let activeSource: SatelliteSource = "noaa";
 
 let activeSatelliteSectorId = "";
 let activeSatelliteProductKey = "";
@@ -110,10 +112,11 @@ export function setSatelliteLoadingState(
     satelliteImage: HTMLImageElement | null;
     satelliteProductSelect: HTMLSelectElement | null;
   },
+  sourceLabel = "NOAA",
 ): void {
   const { satelliteStatus, satelliteCopy, satelliteEmpty, satelliteImage, satelliteProductSelect } = elements;
   if (satelliteStatus) {
-    satelliteStatus.textContent = "Loading NOAA";
+    satelliteStatus.textContent = `Loading ${sourceLabel}`;
     satelliteStatus.className = "status-pill standby";
   }
   if (satelliteCopy) satelliteCopy.textContent = message;
@@ -200,7 +203,7 @@ export async function loadSatelliteSector(
   activeSatelliteSectorId = sector.id;
   if (elements.satelliteSectorSelect) elements.satelliteSectorSelect.value = sector.id;
 
-  setSatelliteLoadingState(`Loading NOAA ${sector.name} sector imagery.`, elements);
+  setSatelliteLoadingState(`Loading NOAA ${sector.name} sector imagery.`, elements, "NOAA");
 
   try {
     const catalog = await fetchNoaaSectorCatalog(sector);
@@ -243,4 +246,196 @@ export function updateSatelliteForLocation(
   if (!location) return;
   const autoSector = resolveAutoNoaaSector(location);
   loadSatelliteSector(autoSector.id, { preferredProductKey: activeSatelliteProductKey, autoSelected: true, elements });
+}
+
+// ── SLIDER functions ──
+
+export function getActiveSource(): SatelliteSource {
+  return activeSource;
+}
+
+export function setActiveSource(source: SatelliteSource): void {
+  activeSource = source;
+}
+
+export function getSliderTileUrl(satellite: string, sector: string, product: string, timestamp?: string): string {
+  if (timestamp) {
+    const date = timestamp.slice(0, 8);
+    return `${SLIDER_BASE}/data/imagery/${date}/${satellite}---${sector}/${product}/${timestamp}/00/000_000.png`;
+  }
+  const now = new Date();
+  const utcMin = now.getUTCMinutes();
+  const utcHr = now.getUTCHours();
+  const utcDate = now.getUTCDate();
+  const utcMonth = now.getUTCMonth();
+  const utcYear = now.getUTCFullYear();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const date = `${utcYear}${pad(utcMonth + 1)}${pad(utcDate)}`;
+  const latencyMs = 25;
+  const totalMinutes = utcHr * 60 + utcMin - latencyMs;
+  const hr = Math.floor(totalMinutes / 60) % 24;
+  const min = Math.floor(totalMinutes % 60 / 10) * 10;
+  const ts = `${date}${pad(hr)}${pad(min)}00`;
+  return `${SLIDER_BASE}/data/imagery/${date}/${satellite}---${sector}/${product}/${ts}/00/000_000.png`;
+}
+
+export function tryNextSliderTimestamp(currentTs: string): string | null {
+  const ts = parseInt(currentTs, 10);
+  const prev = ts - 1000;
+  if (prev < parseInt(`${currentTs.slice(0, 8)}000000`, 10)) return null;
+  return String(prev);
+}
+
+export function resolveSliderSatellite(location: Location): SliderSatellite {
+  const country = String(location.country || "").toUpperCase();
+  const latitude = Number(location.latitude);
+  const longitude = Number(location.longitude);
+
+  if (["US", "USA", "UNITED STATES", "CA", "CANADA", "MX", "MEXICO"].includes(country)) {
+    if (longitude < -125) return SLIDER_SATELLITES.find((s) => s.id === "goes-18")!;
+    return SLIDER_SATELLITES.find((s) => s.id === "goes-19")!;
+  }
+
+  if (longitude < -130) return SLIDER_SATELLITES.find((s) => s.id === "goes-18")!;
+  if (longitude < -35) return SLIDER_SATELLITES.find((s) => s.id === "goes-19")!;
+  if (longitude < 35) return SLIDER_SATELLITES.find((s) => s.id === "meteosat-0deg")!;
+  if (longitude < 90) return SLIDER_SATELLITES.find((s) => s.id === "meteosat-9")!;
+  if (longitude < 135) return SLIDER_SATELLITES.find((s) => s.id === "himawari")!;
+  if (latitude > 30) return SLIDER_SATELLITES.find((s) => s.id === "gk2a")!;
+  return SLIDER_SATELLITES.find((s) => s.id === "himawari")!;
+}
+
+export function resolveSliderSector(satellite: SliderSatellite, location: Location): SliderSector {
+  return satellite.sectors.reduce(
+    (best, sector) => {
+      const distance = haversineDistance(location.latitude, location.longitude, sector.latitude, sector.longitude);
+      return distance < best.distance ? { sector, distance } : best;
+    },
+    { sector: satellite.sectors[0], distance: Number.POSITIVE_INFINITY },
+  ).sector;
+}
+
+export function loadSliderImageWithFallback(
+  satellite: string,
+  sector: string,
+  productKey: string,
+  imgEl: HTMLImageElement,
+  onLoad: () => void,
+  onError: () => void,
+  timestamp?: string,
+): void {
+  const url = getSliderTileUrl(satellite, sector, productKey, timestamp);
+  const nextTs = timestamp ? tryNextSliderTimestamp(timestamp) : null;
+
+  imgEl.onload = () => {
+    imgEl.hidden = false;
+    onLoad();
+  };
+
+  imgEl.onerror = () => {
+    if (nextTs) {
+      loadSliderImageWithFallback(satellite, sector, productKey, imgEl, onLoad, onError, nextTs);
+    } else {
+      onError();
+    }
+  };
+
+  imgEl.src = url;
+}
+
+export async function loadSliderSector(
+  satellite: string,
+  sector: string,
+  options: {
+    preferredProductKey?: string;
+    autoSelected?: boolean;
+    elements: SatelliteElements;
+  },
+): Promise<void> {
+  const { preferredProductKey = "", autoSelected = false, elements } = options;
+  const requestToken = ++satelliteRequestToken;
+  activeSatelliteSectorId = `${satellite}:${sector}`;
+  if (elements.satelliteSectorSelect) elements.satelliteSectorSelect.value = sector;
+
+  setSatelliteLoadingState(`Loading SLIDER ${satellite} ${sector} imagery.`, elements, "SLIDER");
+
+  try {
+    const catalog = await fetchSliderCatalog(satellite, sector);
+    if (requestToken !== satelliteRequestToken) return;
+
+    const selectedProduct =
+      catalog.products.find((product) => product.key === preferredProductKey) ||
+      catalog.products.find((product) => product.key === activeSatelliteProductKey) ||
+      catalog.products.find((product) => product.key === "cira_geocolor") ||
+      catalog.products.find((product) => product.key === "geocolor") ||
+      catalog.products[0];
+
+    renderSatelliteProductOptions(catalog.products, selectedProduct.key, elements.satelliteProductSelect);
+
+    if (elements.satelliteStatus) {
+      elements.satelliteStatus.textContent = `${satellite} ${sector}`;
+      elements.satelliteStatus.className = "status-pill";
+    }
+    if (elements.satelliteCopy) {
+      elements.satelliteCopy.textContent = `${selectedProduct.title} from SLIDER (CIRA/CSU) for ${satellite} ${sector}.`;
+    }
+    if (elements.satelliteLink) {
+      elements.satelliteLink.href = `${SLIDER_BASE}/?sat=${satellite}&sector=${sector}&product=${selectedProduct.key}&z=0&im=1`;
+    }
+    if (elements.satelliteImage) {
+      elements.satelliteImage.hidden = false;
+      loadSliderImageWithFallback(
+        satellite, sector, selectedProduct.key,
+        elements.satelliteImage,
+        () => {
+          if (elements.satelliteEmpty) elements.satelliteEmpty.hidden = true;
+        },
+        () => {
+          if (elements.satelliteStatus) {
+            elements.satelliteStatus.textContent = "SLIDER unavailable";
+            elements.satelliteStatus.className = "status-pill standby";
+          }
+          if (elements.satelliteEmpty) {
+            elements.satelliteEmpty.textContent = "No SLIDER image available for this sector/product.";
+            elements.satelliteEmpty.hidden = false;
+          }
+          if (elements.satelliteImage) elements.satelliteImage.hidden = true;
+        },
+      );
+    }
+    if (elements.satelliteEmpty) {
+      elements.satelliteEmpty.hidden = true;
+    }
+    activeSatelliteProductKey = selectedProduct.key;
+
+    if (autoSelected) {
+      addLog(`SLIDER auto-selected: ${satellite} ${sector}.`);
+    }
+  } catch (error) {
+    if (requestToken !== satelliteRequestToken) return;
+    if (elements.satelliteStatus) {
+      elements.satelliteStatus.textContent = "SLIDER unavailable";
+      elements.satelliteStatus.className = "status-pill standby";
+    }
+    if (elements.satelliteCopy) elements.satelliteCopy.textContent = (error as Error).message;
+    if (elements.satelliteEmpty) {
+      elements.satelliteEmpty.textContent = (error as Error).message;
+      elements.satelliteEmpty.hidden = false;
+    }
+    if (elements.satelliteImage) elements.satelliteImage.hidden = true;
+    if (elements.satelliteProductSelect) {
+      elements.satelliteProductSelect.innerHTML = `<option value="">No products available</option>`;
+    }
+    addLog((error as Error).message);
+  }
+}
+
+export function updateSliderForLocation(
+  location: Location,
+  elements: SatelliteElements,
+): void {
+  if (!location) return;
+  const sat = resolveSliderSatellite(location);
+  const sector = resolveSliderSector(sat, location);
+  loadSliderSector(sat.id, sector.id, { preferredProductKey: activeSatelliteProductKey, autoSelected: true, elements });
 }

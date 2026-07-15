@@ -130,6 +130,9 @@ export interface Elements {
   satelliteOverlayHeader: HTMLElement | null;
   satelliteOverlayClose: HTMLButtonElement | null;
   satelliteOverlayResize: HTMLElement | null;
+  satelliteSourceSelect: HTMLSelectElement | null;
+  satelliteSatelliteSelect: HTMLSelectElement | null;
+  satelliteSatelliteWrapper: HTMLElement | null;
 }
 
 export const elements: Elements = {
@@ -215,6 +218,9 @@ export const elements: Elements = {
   satelliteOverlayHeader: document.querySelector("#satellite-overlay-header") as HTMLElement | null,
   satelliteOverlayClose: document.querySelector("#satellite-overlay-close") as HTMLButtonElement | null,
   satelliteOverlayResize: document.querySelector("#satellite-overlay-resize") as HTMLElement | null,
+  satelliteSourceSelect: document.querySelector("#satellite-source-select") as HTMLSelectElement | null,
+  satelliteSatelliteSelect: document.querySelector("#satellite-satellite-select") as HTMLSelectElement | null,
+  satelliteSatelliteWrapper: document.querySelector("#satellite-satellite-wrapper") as HTMLElement | null,
 };
 
 export const chartCanvas = document.querySelector("#weather-chart") as HTMLCanvasElement;

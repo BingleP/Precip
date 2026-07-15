@@ -1,5 +1,5 @@
-import type { Forecast, AirQuality, NwsAlert, SpcCollection, NoaaCatalog, NoaaSector, Location, CacheMeta } from "./types";
-import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES } from "./config";
+import type { Forecast, AirQuality, NwsAlert, SpcCollection, NoaaCatalog, NoaaSector, Location, CacheMeta, NoaaProduct } from "./types";
+import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES, SLIDER_BASE, SLIDER_PRODUCT_NAMES } from "./config";
 import { getCachedApiResponse, setCachedApiResponse } from "./storage";
 import { worldToLatLon } from "./geo";
 
@@ -249,4 +249,31 @@ export function setCachedHeatmap(cacheKey: string, data: unknown): void {
     const oldestKey = heatmapCache.keys().next().value;
     if (oldestKey) heatmapCache.delete(oldestKey);
   }
+}
+
+export async function fetchSliderCatalog(satellite: string, sector: string): Promise<NoaaCatalog> {
+  const url = `${SLIDER_BASE}/data/json/${satellite}/${sector}/`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`SLIDER catalog unavailable for ${satellite}/${sector}`);
+
+  const html = await response.text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  const products: NoaaProduct[] = [];
+  const seen = new Set<string>();
+
+  for (const link of doc.querySelectorAll("a")) {
+    const href = link.getAttribute("href");
+    if (!href) continue;
+    const name = href.replace(/\/$/, "");
+    if (!name || name === ".." || name.startsWith(".")) continue;
+    if (seen.has(name)) continue;
+    seen.add(name);
+
+    const title = SLIDER_PRODUCT_NAMES[name] || name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    products.push({ key: name, title, url: "" });
+  }
+
+  if (!products.length) throw new Error("No SLIDER products found");
+  return { products };
 }

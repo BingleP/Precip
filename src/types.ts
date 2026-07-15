@@ -140,6 +140,21 @@ export interface NoaaSector {
   longitude: number;
 }
 
+export interface SliderSatellite {
+  id: string;
+  name: string;
+  sectors: SliderSector[];
+}
+
+export interface SliderSector {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+}
+
+export type SatelliteSource = "noaa" | "slider";
+
 export interface NoaaProduct {
   key: string;
   title: string;

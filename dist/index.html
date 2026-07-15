@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Precip Weather Operations</title>
     <link rel="icon" href="/assets/tab-CSFEXn2q.png?v=2" type="image/png" />
-    <script type="module" crossorigin src="/assets/main-DlMvC8i3.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/ui-CMiHSRoA.js">
+    <script type="module" crossorigin src="/assets/main-LGS_VhxZ.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/ui-zUBo6JgD.js">
     <link rel="stylesheet" crossorigin href="/assets/ui-D7f29Or3.css">
   </head>
   <body>
@@ -107,6 +107,17 @@
               <strong>GOES Sector Animation</strong>
             </div>
             <div class="satellite-overlay-toolbar">
+              <label class="satellite-overlay-select">
+                <span>Source</span>
+                <select class="settings-select" id="satellite-source-select">
+                  <option value="noaa">NOAA STAR</option>
+                  <option value="slider">SLIDER Global</option>
+                </select>
+              </label>
+              <label class="satellite-overlay-select" id="satellite-satellite-wrapper" hidden>
+                <span>Satellite</span>
+                <select class="settings-select" id="satellite-satellite-select"></select>
+              </label>
               <label class="satellite-overlay-select">
                 <span>Sector</span>
                 <select class="settings-select" id="satellite-sector-select"></select>

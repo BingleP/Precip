@@ -6,12 +6,12 @@ if (!document.cookie.split("; ").find((row) => row.startsWith("precip.preferredL
 }
 
 import type { Location } from "./types";
-import { MAP_DEFAULT_ZOOM, NOAA_SECTORS, } from "./config";
+import { MAP_DEFAULT_ZOOM, NOAA_SECTORS, SLIDER_SATELLITES, SLIDER_BASE, } from "./config";
 import { getAppSettings, saveAppSettings, getPreferredLocation, savePreferredLocation, getWatchlist, getForecastHistory, saveForecastHistory, saveWatchlist, removeCookieValue, } from "./storage";
-import { fetchNoaaSectorCatalog, } from "./api";
+import { fetchNoaaSectorCatalog, fetchSliderCatalog, } from "./api";
 import { resolveLocation, searchLocationSuggestions, } from "./search";
 import { zoomMap, startMapDrag, moveMapDrag, endMapDrag, resetMapView, updateMapTooltip, hideMapTooltip, } from "./map";
-import { updateSatelliteForLocation, loadSatelliteSector, getNoaaSectorById, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, renderSatelliteProductOptions, renderSatelliteImage, } from "./satellite";
+import { updateSatelliteForLocation, loadSatelliteSector, getNoaaSectorById, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, renderSatelliteProductOptions, renderSatelliteImage, updateSliderForLocation, loadSliderSector, getActiveSource, setActiveSource, loadSliderImageWithFallback, } from "./satellite";
 import { selectTab, togglePanel, formatLocationLabel, normalizeSearchText, } from "./ui";
 import { exportSettingsPreset, importSettingsPreset, } from "./settings";
 import {
@@ -46,10 +46,15 @@ let tooltipRaf: number | null = null;
 let satelliteOverlayDrag: { startX: number; startY: number; left: number; top: number } | null = null;
 let satelliteOverlayResizeDrag: { startX: number; startY: number; width: number; height: number } | null = null;
 
-// Initialize satellite sector select
+// Initialize satellite controls
 if (elements.satelliteSectorSelect) {
   elements.satelliteSectorSelect.innerHTML = NOAA_SECTORS
     .map((sector) => `<option value="${sector.id}">${sector.name} (${sector.sat})</option>`)
+    .join("");
+}
+if (elements.satelliteSatelliteSelect) {
+  elements.satelliteSatelliteSelect.innerHTML = SLIDER_SATELLITES
+    .map((sat) => `<option value="${sat.id}">${sat.name}</option>`)
     .join("");
 }
 
@@ -63,15 +68,28 @@ function toggleSatelliteOverlay(show?: boolean): void {
     overlay.hidden = false;
     if (activeLocation && !isSatelliteTabLoaded()) {
       setSatelliteTabLoaded(true);
-      updateSatelliteForLocation(activeLocation, {
-        satelliteStatus: elements.satelliteStatus,
-        satelliteCopy: elements.satelliteCopy,
-        satelliteEmpty: elements.satelliteEmpty,
-        satelliteImage: elements.satelliteImage,
-        satelliteProductSelect: elements.satelliteProductSelect,
-        satelliteSectorSelect: elements.satelliteSectorSelect,
-        satelliteLink: elements.satelliteLink,
-      });
+      const source = getActiveSource();
+      if (source === "slider") {
+        updateSliderForLocation(activeLocation, {
+          satelliteStatus: elements.satelliteStatus,
+          satelliteCopy: elements.satelliteCopy,
+          satelliteEmpty: elements.satelliteEmpty,
+          satelliteImage: elements.satelliteImage,
+          satelliteProductSelect: elements.satelliteProductSelect,
+          satelliteSectorSelect: elements.satelliteSectorSelect,
+          satelliteLink: elements.satelliteLink,
+        });
+      } else {
+        updateSatelliteForLocation(activeLocation, {
+          satelliteStatus: elements.satelliteStatus,
+          satelliteCopy: elements.satelliteCopy,
+          satelliteEmpty: elements.satelliteEmpty,
+          satelliteImage: elements.satelliteImage,
+          satelliteProductSelect: elements.satelliteProductSelect,
+          satelliteSectorSelect: elements.satelliteSectorSelect,
+          satelliteLink: elements.satelliteLink,
+        });
+      }
     }
     const isNarrow = window.matchMedia("(max-width: 768px)").matches;
     if (isNarrow) {
@@ -286,63 +304,166 @@ elements.satelliteImage?.addEventListener("load", () => {
   if (elements.satelliteEmpty) elements.satelliteEmpty.hidden = true;
 });
 
-elements.satelliteImage?.addEventListener("error", () => {
-  if (elements.satelliteStatus) {
-    elements.satelliteStatus.textContent = "NOAA unavailable";
-    elements.satelliteStatus.className = "status-pill standby";
+function getSatelliteElements() {
+  return {
+    satelliteStatus: elements.satelliteStatus,
+    satelliteCopy: elements.satelliteCopy,
+    satelliteEmpty: elements.satelliteEmpty,
+    satelliteImage: elements.satelliteImage,
+    satelliteProductSelect: elements.satelliteProductSelect,
+    satelliteSectorSelect: elements.satelliteSectorSelect,
+    satelliteLink: elements.satelliteLink,
+  };
+}
+
+elements.satelliteSourceSelect?.addEventListener("change", () => {
+  const source = elements.satelliteSourceSelect?.value as "noaa" | "slider";
+  setActiveSource(source);
+  if (elements.satelliteSatelliteWrapper) {
+    elements.satelliteSatelliteWrapper.hidden = source !== "slider";
   }
-  if (elements.satelliteEmpty) {
-    elements.satelliteEmpty.textContent = "NOAA animation could not be loaded for this sector.";
-    elements.satelliteEmpty.hidden = false;
+  if (elements.satelliteSectorSelect) {
+    if (source === "noaa") {
+      elements.satelliteSectorSelect.innerHTML = NOAA_SECTORS
+        .map((sector) => `<option value="${sector.id}">${sector.name} (${sector.sat})</option>`)
+        .join("");
+    } else {
+      const satId = elements.satelliteSatelliteSelect?.value || SLIDER_SATELLITES[0].id;
+      const sat = SLIDER_SATELLITES.find((s) => s.id === satId) || SLIDER_SATELLITES[0];
+      elements.satelliteSectorSelect.innerHTML = sat.sectors
+        .map((sector) => `<option value="${sector.id}">${sector.name}</option>`)
+        .join("");
+    }
   }
-  if (elements.satelliteImage) elements.satelliteImage.hidden = true;
+  if (elements.satelliteProductSelect) {
+    elements.satelliteProductSelect.innerHTML = `<option value="">Select a location first</option>`;
+  }
+  if (elements.satelliteLink) {
+    elements.satelliteLink.textContent = source === "slider" ? "SLIDER" : "NOAA";
+  }
+  setSatelliteTabLoaded(false);
+  if (activeLocation) {
+    setSatelliteTabLoaded(true);
+    if (source === "slider") {
+      updateSliderForLocation(activeLocation, getSatelliteElements());
+    } else {
+      updateSatelliteForLocation(activeLocation, getSatelliteElements());
+    }
+  }
+});
+
+elements.satelliteSatelliteSelect?.addEventListener("change", () => {
+  if (elements.satelliteSectorSelect) {
+    const satId = elements.satelliteSatelliteSelect?.value || SLIDER_SATELLITES[0].id;
+    const sat = SLIDER_SATELLITES.find((s) => s.id === satId) || SLIDER_SATELLITES[0];
+    elements.satelliteSectorSelect.innerHTML = sat.sectors
+      .map((sector) => `<option value="${sector.id}">${sector.name}</option>`)
+      .join("");
+  }
+  if (elements.satelliteProductSelect) {
+    elements.satelliteProductSelect.innerHTML = `<option value="">Select a location first</option>`;
+  }
+  setSatelliteTabLoaded(false);
+  if (activeLocation) {
+    setSatelliteTabLoaded(true);
+    updateSliderForLocation(activeLocation, getSatelliteElements());
+  }
 });
 
 elements.satelliteSectorSelect?.addEventListener("change", () => {
-  loadSatelliteSector(elements.satelliteSectorSelect?.value || "", {
-    preferredProductKey: "geocolor",
-    elements: {
-      satelliteStatus: elements.satelliteStatus,
-      satelliteCopy: elements.satelliteCopy,
-      satelliteEmpty: elements.satelliteEmpty,
-      satelliteImage: elements.satelliteImage,
-      satelliteProductSelect: elements.satelliteProductSelect,
-      satelliteSectorSelect: elements.satelliteSectorSelect,
-      satelliteLink: elements.satelliteLink,
-    },
-  });
+  const source = getActiveSource();
+  if (source === "slider") {
+    const satId = elements.satelliteSatelliteSelect?.value || SLIDER_SATELLITES[0].id;
+    loadSliderSector(satId, elements.satelliteSectorSelect?.value || "", {
+      preferredProductKey: "cira_geocolor",
+      elements: getSatelliteElements(),
+    });
+  } else {
+    loadSatelliteSector(elements.satelliteSectorSelect?.value || "", {
+      preferredProductKey: "geocolor",
+      elements: getSatelliteElements(),
+    });
+  }
 });
 
 let satelliteCatalogRequestToken = 0;
 
 elements.satelliteProductSelect?.addEventListener("change", async () => {
-  const sectorId = elements.satelliteSectorSelect?.value || "";
-  const sector = getNoaaSectorById(sectorId || getActiveSatelliteSectorId() || NOAA_SECTORS[0].id);
+  const source = getActiveSource();
   const requestToken = ++satelliteCatalogRequestToken;
-  try {
-    const catalog = await fetchNoaaSectorCatalog(sector);
-    if (requestToken !== satelliteCatalogRequestToken) return;
-    const selectedProduct =
-      catalog.products.find((product) => product.key === elements.satelliteProductSelect?.value) || catalog.products[0];
-    renderSatelliteProductOptions(
-      catalog.products,
-      selectedProduct.key,
-      elements.satelliteProductSelect,
-    );
-    renderSatelliteImage(sector, selectedProduct, {
-      satelliteStatus: elements.satelliteStatus,
-      satelliteCopy: elements.satelliteCopy,
-      satelliteLink: elements.satelliteLink,
-      satelliteImage: elements.satelliteImage,
-      satelliteEmpty: elements.satelliteEmpty,
-    });
-  } catch (error) {
-    if (requestToken !== satelliteCatalogRequestToken) return;
-    if (elements.satelliteEmpty) {
-      elements.satelliteEmpty.textContent = (error as Error).message;
-      elements.satelliteEmpty.hidden = false;
+
+  if (source === "slider") {
+    const satId = elements.satelliteSatelliteSelect?.value || SLIDER_SATELLITES[0].id;
+    const sectorId = elements.satelliteSectorSelect?.value || SLIDER_SATELLITES[0].sectors[0].id;
+    try {
+      const catalog = await fetchSliderCatalog(satId, sectorId);
+      if (requestToken !== satelliteCatalogRequestToken) return;
+      const selectedProduct =
+        catalog.products.find((product) => product.key === elements.satelliteProductSelect?.value) || catalog.products[0];
+      renderSatelliteProductOptions(catalog.products, selectedProduct.key, elements.satelliteProductSelect);
+      if (elements.satelliteStatus) {
+        elements.satelliteStatus.textContent = `${satId} ${sectorId}`;
+        elements.satelliteStatus.className = "status-pill";
+      }
+      if (elements.satelliteImage) {
+        elements.satelliteImage.hidden = false;
+        loadSliderImageWithFallback(
+          satId, sectorId, selectedProduct.key,
+          elements.satelliteImage,
+          () => { if (elements.satelliteEmpty) elements.satelliteEmpty.hidden = true; },
+          () => {
+            if (elements.satelliteStatus) {
+              elements.satelliteStatus.textContent = "SLIDER unavailable";
+              elements.satelliteStatus.className = "status-pill standby";
+            }
+            if (elements.satelliteEmpty) {
+              elements.satelliteEmpty.textContent = "No SLIDER image available.";
+              elements.satelliteEmpty.hidden = false;
+            }
+            if (elements.satelliteImage) elements.satelliteImage.hidden = true;
+          },
+        );
+      }
+      if (elements.satelliteLink) {
+        elements.satelliteLink.href = `${SLIDER_BASE}/?sat=${satId}&sector=${sectorId}&product=${selectedProduct.key}&z=0&im=1`;
+      }
+      if (elements.satelliteEmpty) elements.satelliteEmpty.hidden = true;
+    } catch (error) {
+      if (requestToken !== satelliteCatalogRequestToken) return;
+      if (elements.satelliteEmpty) {
+        elements.satelliteEmpty.textContent = (error as Error).message;
+        elements.satelliteEmpty.hidden = false;
+      }
+      if (elements.satelliteImage) elements.satelliteImage.hidden = true;
     }
-    if (elements.satelliteImage) elements.satelliteImage.hidden = true;
+  } else {
+    const sectorId = elements.satelliteSectorSelect?.value || "";
+    const sector = getNoaaSectorById(sectorId || getActiveSatelliteSectorId() || NOAA_SECTORS[0].id);
+    try {
+      const catalog = await fetchNoaaSectorCatalog(sector);
+      if (requestToken !== satelliteCatalogRequestToken) return;
+      const selectedProduct =
+        catalog.products.find((product) => product.key === elements.satelliteProductSelect?.value) || catalog.products[0];
+      renderSatelliteProductOptions(
+        catalog.products,
+        selectedProduct.key,
+        elements.satelliteProductSelect,
+      );
+      renderSatelliteImage(sector, selectedProduct, {
+        satelliteStatus: elements.satelliteStatus,
+        satelliteCopy: elements.satelliteCopy,
+        satelliteLink: elements.satelliteLink,
+        satelliteImage: elements.satelliteImage,
+        satelliteEmpty: elements.satelliteEmpty,
+      });
+    } catch (error) {
+      if (requestToken !== satelliteCatalogRequestToken) return;
+      if (elements.satelliteEmpty) {
+        elements.satelliteEmpty.textContent = (error as Error).message;
+        elements.satelliteEmpty.hidden = false;
+      }
+      if (elements.satelliteImage) elements.satelliteImage.hidden = true;
+    }
   }
 });
 
@@ -362,6 +483,8 @@ let satDragRaf: number | null = null;
 elements.satelliteOverlayHeader?.addEventListener("pointerdown", (event) => {
   const overlay = elements.satelliteOverlay;
   if (!overlay || overlay.hidden) return;
+  const target = event.target as HTMLElement;
+  if (target.closest("select, button, a")) return;
   event.preventDefault();
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   satelliteOverlayDrag = {
@@ -534,6 +657,9 @@ setActiveMapHourOffset(initialSettings.mapHourOffset);
 if (elements.satelliteSectorSelect) elements.satelliteSectorSelect.value = NOAA_SECTORS[0].id;
 if (elements.satelliteProductSelect) {
   elements.satelliteProductSelect.innerHTML = `<option value="">Select a location first</option>`;
+}
+if (elements.satelliteSatelliteWrapper) {
+  elements.satelliteSatelliteWrapper.hidden = true;
 }
 renderForecastHistoryUI();
 renderWatchlistUI();

@@ -106,6 +106,17 @@
             </div>
             <div class="satellite-overlay-toolbar">
               <label class="satellite-overlay-select">
+                <span>Source</span>
+                <select class="settings-select" id="satellite-source-select">
+                  <option value="noaa">NOAA STAR</option>
+                  <option value="slider">SLIDER Global</option>
+                </select>
+              </label>
+              <label class="satellite-overlay-select" id="satellite-satellite-wrapper" hidden>
+                <span>Satellite</span>
+                <select class="settings-select" id="satellite-satellite-select"></select>
+              </label>
+              <label class="satellite-overlay-select">
                 <span>Sector</span>
                 <select class="settings-select" id="satellite-sector-select"></select>
               </label>

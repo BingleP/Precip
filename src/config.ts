@@ -1,4 +1,4 @@
-import type { NoaaSector, Location } from "./types";
+import type { NoaaSector, Location, SliderSatellite } from "./types";
 
 export const HOURS_TO_SHOW = 24;
 export const HEATMAP_MIN_COLUMNS = 5;
@@ -138,4 +138,102 @@ export const WEATHER_CODES: Record<number, string> = {
   95: "Thunderstorm",
   96: "Thunderstorm hail",
   99: "Severe storm",
+};
+
+export const SLIDER_BASE = "https://rammb-slider.cira.colostate.edu";
+
+export const SLIDER_SATELLITES: SliderSatellite[] = [
+  {
+    id: "goes-19",
+    name: "GOES-19 (East)",
+    sectors: [
+      { id: "full_disk", name: "Full Disk", latitude: 0, longitude: -75.2 },
+      { id: "conus", name: "CONUS", latitude: 39.8, longitude: -98.6 },
+      { id: "mesoscale_01", name: "Mesoscale 1", latitude: 35, longitude: -90 },
+      { id: "mesoscale_02", name: "Mesoscale 2", latitude: 30, longitude: -80 },
+    ],
+  },
+  {
+    id: "goes-18",
+    name: "GOES-18 (West)",
+    sectors: [
+      { id: "full_disk", name: "Full Disk", latitude: 0, longitude: -137.2 },
+      { id: "conus", name: "CONUS", latitude: 39.8, longitude: -98.6 },
+      { id: "mesoscale_01", name: "Mesoscale 1", latitude: 35, longitude: -120 },
+      { id: "mesoscale_02", name: "Mesoscale 2", latitude: 30, longitude: -130 },
+    ],
+  },
+  {
+    id: "himawari",
+    name: "Himawari-9",
+    sectors: [
+      { id: "full_disk", name: "Full Disk", latitude: 0, longitude: 140.7 },
+      { id: "japan", name: "Japan", latitude: 36, longitude: 138 },
+      { id: "mesoscale_01", name: "Mesoscale 1", latitude: 25, longitude: 130 },
+    ],
+  },
+  {
+    id: "meteosat-0deg",
+    name: "Meteosat-11 (0°)",
+    sectors: [
+      { id: "full_disk", name: "Full Disk", latitude: 0, longitude: 0 },
+    ],
+  },
+  {
+    id: "meteosat-9",
+    name: "Meteosat-9 (45.5°E)",
+    sectors: [
+      { id: "full_disk", name: "Full Disk", latitude: 0, longitude: 45.5 },
+    ],
+  },
+  {
+    id: "gk2a",
+    name: "GK-2A",
+    sectors: [
+      { id: "full_disk", name: "Full Disk", latitude: 0, longitude: 128.2 },
+    ],
+  },
+  {
+    id: "jpss",
+    name: "JPSS (Polar)",
+    sectors: [
+      { id: "northern_hemisphere", name: "Northern Hemisphere", latitude: 60, longitude: 0 },
+      { id: "southern_hemisphere", name: "Southern Hemisphere", latitude: -60, longitude: 0 },
+    ],
+  },
+];
+
+export const SLIDER_PRODUCT_NAMES: Record<string, string> = {
+  cira_geocolor: "GeoColor",
+  geocolor: "GeoColor (NOAA)",
+  band_01: "Band 1 (Blue Vis)",
+  band_02: "Band 2 (Red Vis)",
+  band_03: "Band 3 (Veggie Near-IR)",
+  band_04: "Band 4 (Cirrus Near-IR)",
+  band_05: "Band 5 (Snow/Cloud Near-IR)",
+  band_06: "Band 6 (Cloud/Ash Near-IR)",
+  band_07: "Band 7 (Shortwave IR)",
+  band_08: "Band 8 (Upper WV)",
+  band_09: "Band 9 (Mid WV)",
+  band_10: "Band 10 (Low WV)",
+  band_11: "Band 11 (Cloud Top Phase)",
+  band_12: "Band 12 (Cloud Top Phase)",
+  band_13: "Band 13 (Clean LW IR)",
+  band_14: "Band 14 (LW IR)",
+  band_15: "Band 15 (Dirty LW IR)",
+  band_16: "Band 16 (CO2 LW IR)",
+  natural_color: "Natural Color",
+  rgb_air_mass: "Air Mass RGB",
+  day_cloud_type_rgb: "Day Cloud Type RGB",
+  day_cloud_phase_microphysics_rgb: "Day Cloud Phase RGB",
+  cira_natural_fire_color: "Fire Color",
+  cira_geosst: "Sea Surface Temp",
+  cira_geofire: "Fire Detection",
+  cira_geodust: "Dust Detection",
+  fire_temperature: "Fire Temperature",
+  dust_fire_rgb: "Dust/Fire RGB",
+  night_microphysics_rgb: "Night Microphysics",
+  cira_glm_l2_group_counts: "GLM Lightning",
+  cira_glm_l2_group_energy: "GLM Lightning Energy",
+  "split_window_difference_10_3-12_3": "Split Window Diff",
 };

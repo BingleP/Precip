@@ -26,7 +26,10 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
   - Day 1–3 categorical convective outlook
   - Day 1–2 tornado probability
   - auto-detects local risk via point-in-polygon
-- NOAA GOES satellite panel with nearest-sector auto selection and live imagery
+- Satellite imagery with dual source support:
+  - NOAA GOES (North America) with nearest-sector auto selection and live animated GIFs
+  - RAMMB/CIRA SLIDER (global coverage) with tile-based imagery, timestamp fallback, and automatic 404 retry
+  - Switchable source selector in the satellite overlay header
 - 11-tab data panel (collapsible): Now, Hourly, Outlook, Storm, Satellite, Air, Trends, Pins, History, Settings, System
 - Current conditions, hourly forecast, daily forecast, weekly outlook
 - Stormwatch metrics, air quality, forecast confidence, regional context
@@ -60,10 +63,11 @@ The browser talks to same-origin `/api/*` routes. The proxy fetches and caches:
 - `https://api.weather.gc.ca` (Canadian weather alerts via GeoMet-OGC-API)
 - `https://mapservices.weather.noaa.gov` (SPC convective outlook contours)
 
-Map tiles and NOAA imagery load directly in the browser from:
+Map tiles and satellite imagery load directly in the browser from:
 
 - `https://tile.openstreetmap.org`
-- `https://cdn.star.nesdis.noaa.gov`
+- `https://cdn.star.nesdis.noaa.gov` (NOAA GOES animated GIFs)
+- `https://rammb-slider.cira.colostate.edu` (SLIDER global satellite tiles and JSON catalogs)
 
 Cache TTLs vary by endpoint (5 min for alerts, 10 min for forecasts and SPC, 15 min for heatmap, 24 h for geocoding).
 
@@ -100,6 +104,13 @@ That script:
 The deployed bundle must include:
 
 - `dist/` - Vite build output (copied to web root)
+
+When deploying, the nginx CSP must allow the SLIDER origin:
+
+```
+img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov https://rammb-slider.cira.colostate.edu;
+connect-src 'self' https://rammb-slider.cira.colostate.edu;
+```
 
 ## API Endpoints (proxy)
 
