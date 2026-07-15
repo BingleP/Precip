@@ -133,6 +133,8 @@ export interface Elements {
   satelliteSourceSelect: HTMLSelectElement | null;
   satelliteSatelliteSelect: HTMLSelectElement | null;
   satelliteSatelliteWrapper: HTMLElement | null;
+  satelliteKicker: HTMLElement | null;
+  satelliteHeadline: HTMLElement | null;
 }
 
 export const elements: Elements = {
@@ -221,6 +223,8 @@ export const elements: Elements = {
   satelliteSourceSelect: document.querySelector("#satellite-source-select") as HTMLSelectElement | null,
   satelliteSatelliteSelect: document.querySelector("#satellite-satellite-select") as HTMLSelectElement | null,
   satelliteSatelliteWrapper: document.querySelector("#satellite-satellite-wrapper") as HTMLElement | null,
+  satelliteKicker: document.querySelector("#satellite-kicker") as HTMLElement | null,
+  satelliteHeadline: document.querySelector("#satellite-headline") as HTMLElement | null,
 };
 
 export const chartCanvas = document.querySelector("#weather-chart") as HTMLCanvasElement;

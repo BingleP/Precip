@@ -341,6 +341,12 @@ elements.satelliteSourceSelect?.addEventListener("change", () => {
   if (elements.satelliteLink) {
     elements.satelliteLink.textContent = source === "slider" ? "SLIDER" : "NOAA";
   }
+  if (elements.satelliteKicker) {
+    elements.satelliteKicker.textContent = source === "slider" ? "SLIDER Satellite" : "NOAA Satellite";
+  }
+  if (elements.satelliteHeadline) {
+    elements.satelliteHeadline.textContent = source === "slider" ? "Global Sector Animation" : "GOES Sector Animation";
+  }
   setSatelliteTabLoaded(false);
   if (activeLocation) {
     setSatelliteTabLoaded(true);

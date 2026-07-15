@@ -1761,8 +1761,9 @@ a {
 
 .satellite-overlay-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
@@ -1793,8 +1794,9 @@ a {
 
 .satellite-overlay-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px 6px;
   flex: 1;
   min-width: 0;
 }
@@ -1816,8 +1818,8 @@ a {
 }
 
 .satellite-overlay-select select {
-  min-width: 70px;
-  max-width: 120px;
+  min-width: 60px;
+  max-width: 110px;
   min-height: 28px;
   padding: 3px 6px;
   border: 1px solid var(--border);
@@ -1934,7 +1936,7 @@ a {
   }
 
   .satellite-overlay-select select {
-    min-width: 60px;
+    min-width: 50px;
     max-width: 100px;
     min-height: 32px;
     font-size: 11px;

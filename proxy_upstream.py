@@ -13,6 +13,8 @@ USER_AGENT = "PrecipProxy/1.0 (+https://precip.kerrick.ca)"
 PLACE_CLASSES = {"place", "boundary"}
 CA_RISK_MAP = {"red": "Extreme", "orange": "Severe", "yellow": "Moderate"}
 
+SLIDER_BASE = "https://rammb-slider.cira.colostate.edu"
+
 ALLOWED_ENDPOINTS = {
     "/api/forecast",
     "/api/air-quality",
@@ -22,6 +24,7 @@ ALLOWED_ENDPOINTS = {
     "/api/alerts",
     "/api/spc-outlook",
     "/api/ca-alerts",
+    "/api/slider-catalog",
     "/health",
 }
 
@@ -130,6 +133,11 @@ def build_upstream(path, query):
         if layer not in ("1", "2", "3", "9", "10", "11", "17", "18", "19"):
             raise ValueError("invalid layer")
         return f"https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/SPC_wx_outlks/MapServer/{layer}/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson", "application/json"
+
+    if path == "/api/slider-catalog":
+        satellite = require(query, "satellite").strip()
+        sector = require(query, "sector").strip()
+        return f"{SLIDER_BASE}/data/json/{satellite}/{sector}/", "text/html; charset=utf-8"
 
     raise ValueError("unsupported endpoint")
 

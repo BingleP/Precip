@@ -1,5 +1,5 @@
 import type { Forecast, AirQuality, NwsAlert, SpcCollection, NoaaCatalog, NoaaSector, Location, CacheMeta, NoaaProduct } from "./types";
-import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES, SLIDER_BASE, SLIDER_PRODUCT_NAMES } from "./config";
+import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES, SLIDER_PRODUCT_NAMES } from "./config";
 import { getCachedApiResponse, setCachedApiResponse } from "./storage";
 import { worldToLatLon } from "./geo";
 
@@ -252,7 +252,9 @@ export function setCachedHeatmap(cacheKey: string, data: unknown): void {
 }
 
 export async function fetchSliderCatalog(satellite: string, sector: string): Promise<NoaaCatalog> {
-  const url = `${SLIDER_BASE}/data/json/${satellite}/${sector}/`;
+  const url = buildApiUrl("/slider-catalog");
+  url.searchParams.set("satellite", satellite);
+  url.searchParams.set("sector", sector);
   const response = await fetch(url);
   if (!response.ok) throw new Error(`SLIDER catalog unavailable for ${satellite}/${sector}`);
 

@@ -105,11 +105,10 @@ The deployed bundle must include:
 
 - `dist/` - Vite build output (copied to web root)
 
-When deploying, the nginx CSP must allow the SLIDER origin:
+When deploying, the nginx CSP must allow the SLIDER tile origin:
 
 ```
 img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov https://rammb-slider.cira.colostate.edu;
-connect-src 'self' https://rammb-slider.cira.colostate.edu;
 ```
 
 ## API Endpoints (proxy)
