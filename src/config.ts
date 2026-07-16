@@ -37,6 +37,8 @@ export const DEFAULT_APP_SETTINGS = {
   mapLayer: "temperature" as const,
   mapHourOffset: 0,
   useImperial: false,
+  showAlerts: true,
+  showWildfires: true,
 };
 
 export const NOAA_SECTORS: NoaaSector[] = [

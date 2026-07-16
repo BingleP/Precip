@@ -267,6 +267,8 @@ export interface AppSettings {
   mapLayer: string;
   mapHourOffset: number;
   useImperial: boolean;
+  showAlerts: boolean;
+  showWildfires: boolean;
 }
 
 export interface StormRisk {

@@ -73,6 +73,8 @@ export function getAppSettings(): AppSettings {
     mapLayer: normalizeMapLayer(parsed?.mapLayer),
     mapHourOffset: normalizeMapHourOffset(parsed?.mapHourOffset ?? DEFAULT_APP_SETTINGS.mapHourOffset),
     useImperial: parsed?.useImperial === true,
+    showAlerts: parsed?.showAlerts !== false,
+    showWildfires: parsed?.showWildfires !== false,
   };
 }
 

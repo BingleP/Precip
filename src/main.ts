@@ -21,6 +21,7 @@ import {
   activeHeatmapLayer, activeMapHourOffset,
   mapState, activePointers, pinchState,
   elements, chartCanvas, heatmapCanvas, heatmapButtons,
+  showAlerts, showWildfires, setShowAlerts, setShowWildfires,
 } from "./state";
 import { updateCurrentConditions } from "./panels/now";
 import {
@@ -553,6 +554,26 @@ elements.satelliteProductSelect?.addEventListener("change", async () => {
   }
 });
 
+// Overlay toggle buttons
+function syncOverlayToggles(): void {
+  if (elements.alertsToggle) elements.alertsToggle.classList.toggle("active", showAlerts);
+  if (elements.wildfiresToggle) elements.wildfiresToggle.classList.toggle("active", showWildfires);
+}
+
+elements.alertsToggle?.addEventListener("click", () => {
+  setShowAlerts(!showAlerts);
+  saveAppSettings({ showAlerts });
+  syncOverlayToggles();
+  renderHeatmap(latestHeatmap, activeHeatmapLayer);
+});
+
+elements.wildfiresToggle?.addEventListener("click", () => {
+  setShowWildfires(!showWildfires);
+  saveAppSettings({ showWildfires });
+  syncOverlayToggles();
+  renderHeatmap(latestHeatmap, activeHeatmapLayer);
+});
+
 // Satellite map toggle button
 document.querySelector("#satellite-toggle")?.addEventListener("click", () => {
   toggleSatelliteOverlay();
@@ -753,6 +774,9 @@ document.querySelector(".app-shell")?.classList.add("panel-expanded");
 const initialSettings = getAppSettings();
 setActiveHeatmapLayer(initialSettings.mapLayer);
 setActiveMapHourOffset(initialSettings.mapHourOffset);
+setShowAlerts(initialSettings.showAlerts);
+setShowWildfires(initialSettings.showWildfires);
+syncOverlayToggles();
 if (elements.satelliteSectorSelect) elements.satelliteSectorSelect.value = NOAA_SECTORS[0].id;
 if (elements.satelliteProductSelect) {
   elements.satelliteProductSelect.innerHTML = `<option value="">Select a location first</option>`;

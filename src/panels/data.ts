@@ -1,5 +1,5 @@
 import type { Location, Forecast, WatchlistItem, ForecastSnapshot, AppSettings, HeatmapSample, WildfireFeature } from "../types";
-import { elements, activeLocation, latestForecast, mapState, heatmapCanvas, heatmapButtons } from "../state";
+import { elements, activeLocation, latestForecast, mapState, heatmapCanvas, heatmapButtons, showAlerts, showWildfires } from "../state";
 import { MAX_HISTORY_ITEMS } from "../config";
 import {
   getWatchlist, saveWatchlist, getForecastHistory, saveForecastHistory,
@@ -276,10 +276,18 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
 
   drawMapPlaces(ctx, width, height, activeLocation, mapState, centerWorld);
 
-  const alertPolygons = drawMapAlertPolygons(ctx, width, height, centerWorld, zoomRound, getMapCenterAlerts());
-  setAlertPolygonsCache(alertPolygons);
+  if (showAlerts) {
+    const alertPolygons = drawMapAlertPolygons(ctx, width, height, centerWorld, zoomRound, getMapCenterAlerts());
+    setAlertPolygonsCache(alertPolygons);
+  } else {
+    setAlertPolygonsCache([]);
+  }
 
-  drawWildfireLayer(ctx, width, height, centerWorld, zoomRound);
+  if (showWildfires) {
+    drawWildfireLayer(ctx, width, height, centerWorld, zoomRound);
+  } else {
+    setWildfireHitCache([], []);
+  }
 
 }
 

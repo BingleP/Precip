@@ -135,6 +135,8 @@ export interface Elements {
   satelliteSatelliteWrapper: HTMLElement | null;
   satelliteKicker: HTMLElement | null;
   satelliteHeadline: HTMLElement | null;
+  alertsToggle: HTMLElement | null;
+  wildfiresToggle: HTMLElement | null;
 }
 
 export const elements: Elements = {
@@ -225,8 +227,21 @@ export const elements: Elements = {
   satelliteSatelliteWrapper: document.querySelector("#satellite-satellite-wrapper") as HTMLElement | null,
   satelliteKicker: document.querySelector("#satellite-kicker") as HTMLElement | null,
   satelliteHeadline: document.querySelector("#satellite-headline") as HTMLElement | null,
+  alertsToggle: document.querySelector("#alerts-toggle") as HTMLElement | null,
+  wildfiresToggle: document.querySelector("#wildfires-toggle") as HTMLElement | null,
 };
 
 export const chartCanvas = document.querySelector("#weather-chart") as HTMLCanvasElement;
 export const heatmapCanvas = document.querySelector("#heatmap-canvas") as HTMLCanvasElement;
 export const heatmapButtons = [...document.querySelectorAll(".heatmap-button")] as HTMLElement[];
+
+export let showAlerts = true;
+export let showWildfires = true;
+
+export function setShowAlerts(value: boolean): void {
+  showAlerts = value;
+}
+
+export function setShowWildfires(value: boolean): void {
+  showWildfires = value;
+}
