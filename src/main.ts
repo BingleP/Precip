@@ -433,10 +433,13 @@ elements.satelliteSourceSelect?.addEventListener("change", () => {
   // Clear stale imagery and status when switching sources
   if (elements.satelliteImage) {
     elements.satelliteImage.src = "";
-    elements.satelliteImage.classList.remove("loaded");
+    elements.satelliteImage.hidden = true;
   }
   if (elements.satelliteEmpty) {
-    elements.satelliteEmpty.style.display = "block";
+    elements.satelliteEmpty.hidden = false;
+    elements.satelliteEmpty.textContent = activeLocation
+      ? "Loading satellite imagery…"
+      : "Select a location to load the nearest sector animation.";
   }
   if (elements.satelliteStatus) {
     elements.satelliteStatus.textContent = activeLocation ? "Loading…" : "Awaiting location";
