@@ -22,12 +22,12 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
 - Real-time weather alerts:
   - NWS alerts for US locations (zone-geometry enriched for alerts without polygon data)
   - ECCC/GeoMet alerts for Canadian locations
-  - **all alerts rendered on map at all times** — no pop-in/out when panning (5 min cache)
+  - **all alerts rendered on map at all times** — no pop-in/out when panning (5 min cache, in-flight request deduplication)
   - severity-sorted weather warning bar with alert count badge on the Now tab
   - toast notifications for new alerts
   - browse/search all active US + Canada alerts from the Alerts tab
 - Wildfire data (proxy-fetched, 15 min cache):
-  - **CWFIS hotspots** — VIIRS/MODIS satellite detections via GeoMet WFS (`public:hotspots`), sorted by recency
+  - **CWFIS hotspots** — VIIRS/MODIS satellite detections via GeoMet WFS (`public:hotspots`), sorted by recency, **batched by age bucket (3 draw calls)**, frustum culled, **clustered at low zoom**
   - **CWFIS fire perimeters** — current-season polygon boundaries (`public:m3_polygons_current`) from CWFIS
   - **NASA FIRMS hotspots** — VIIRS NOAA20/SNPP and MODIS NRT detections via FIRMS API (requires `FIRMS_MAP_KEY`)
 - Storm Prediction Center outlooks:
@@ -36,8 +36,16 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
   - auto-detects local risk via point-in-polygon
 - Satellite imagery with dual source support:
   - NOAA GOES (North America) with nearest-sector auto selection and live animated GIFs
-  - RAMMB/CIRA SLIDER (global coverage) with tile-based imagery, timestamp fallback, and automatic 404 retry
+  - RAMMB/CIRA SLIDER (global coverage) with **proxied** tile-based imagery, timestamp resolution via `/api/slider-latest-times`, and automatic 404 retry
+  - Supported SLIDER satellites: GOES-18/19 (CONUS/hemispheres), Himawari, Meteosat (0°/45.5°E), GK-2A (Full Disk, East Asia, Korea), JPSS (CONUS, hemispheres)
   - Switchable source selector in the satellite overlay header
+- **Performance optimizations:**
+  - **Heatmap**: screen coordinate memoization + 4×4 interpolation grid (avoids O(pixels×samples) per frame)
+  - **Wildfire hotspots**: color-bucket batching (3 draw calls vs N), spatial clustering at zoom < 7, frustum culling
+  - **Alert polygons**: full screen-coordinate memoization + grid spatial index for hover hit-testing
+  - **Forecast chart**: static layer cached to offscreen canvas; only hover indicator redrawn on mouse move
+  - **Map tiles**: pre-composited dark-style filter (brightness/saturate/contrast) on load, eliminates per-frame `ctx.filter`
+  - **Label positions**: memoized by viewport state
 - 11-tab data panel (collapsible): Now, Hourly, Outlook, Storm, Satellite, Air, Trends, Pins, History, Settings, System
 - Current conditions, hourly forecast, daily forecast, weekly outlook
 - Stormwatch metrics, air quality, forecast confidence, regional context
@@ -76,13 +84,14 @@ The browser talks to same-origin `/api/*` routes. The proxy fetches and caches:
 - `https://cwfis.cfs.nrcan.gc.ca/geoserver/wfs` (CWFIS wildfire hotspots + perimeters via WFS)
 - `https://firms.modaps.eosdis.nasa.gov` (NASA FIRMS hotspot CSV data, requires `FIRMS_MAP_KEY`)
 
-Map tiles and satellite imagery load directly in the browser from:
+Map tiles and NOAA GOES animated GIFs load directly in the browser from:
 
 - `https://tile.openstreetmap.org`
-- `https://cdn.star.nesdis.noaa.gov` (NOAA GOES animated GIFs)
-- `https://slider.cira.colostate.edu` (SLIDER global satellite tiles and JSON catalogs)
+- `https://cdn.star.nesdis.noaa.gov`
 
-Cache TTLs vary by endpoint (5 min for alerts, 10 min for forecasts and SPC, 15 min for heatmap and wildfires, 24 h for geocoding and zone geometry).
+SLIDER global satellite imagery is **proxied** through the cache server (`/api/slider-image` for tiles, `/api/slider-latest-times` for timestamps) to bypass CSP restrictions on slider.cira.colostate.edu.
+
+Cache TTLs vary by endpoint (5 min for alerts, 10 min for forecasts/SPC/SLIDER latest-times, 15 min for heatmap/wildfires/SLIDER images, 24 h for geocoding and zone geometry).
 
 User state is stored in browser cookies. No app data is written to the server.
 
@@ -130,7 +139,7 @@ Get a key at https://firms.modaps.eosdis.nasa.gov/api/map_key/. The deploy scrip
 ### Nginx CSP for imagery
 
 ```
-img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov https://slider.cira.colostate.edu;
+img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov;
 ```
 
 ## API Endpoints (proxy)
@@ -148,6 +157,8 @@ img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov h
 | `/api/spc-outlook` | SPC ArcGIS | `layer` |
 | `/api/wildfires` | CWFIS WFS + NASA FIRMS | `bbox` (west,south,east,north) |
 | `/api/slider-catalog` | RAMMB/CIRA SLIDER | `satellite`, `sector` |
+| `/api/slider-image` | RAMMB/CIRA SLIDER | `satellite`, `sector`, `product`, `timestamp` |
+| `/api/slider-latest-times` | RAMMB/CIRA SLIDER | `satellite`, `sector`, `product` |
 
 ## Security Model
 
