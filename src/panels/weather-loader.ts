@@ -12,7 +12,7 @@ import { renderPatterns, renderStormToolkit, renderConfidence, renderContext } f
 import { renderDailyForecast, renderWeeklyForecast, renderHourlyForecast } from "../panels/forecast";
 import { drawForecastChart } from "../panels/chart";
 import {
-  updateSettingsUI, renderWatchlistUI, saveForecastSnapshot,
+  updateSettingsUI, renderWatchlistUI,
   setLoadingState, applyForecastCacheStatus,
   setActiveHeatmapLayer, setActiveMapHourOffset,
   renderHeatmap, renderHeatmapLoading,
@@ -77,7 +77,6 @@ export async function loadWeather(query: Location | string): Promise<void> {
     renderDailyForecast(forecast);
     renderWeeklyForecast(forecast);
     drawForecastChart(forecast);
-    saveForecastSnapshot(resolved, forecast);
     renderWatchlistUI();
     updateSettingsUI();
     showToast(`Weather data loaded for ${resolved.name}`, "success", 2500);

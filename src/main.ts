@@ -29,8 +29,7 @@ import {
 } from "./panels/chart";
 import {
   updateSettingsUI, renderWatchlistUI, pinCurrentLocation,
-  renderForecastHistoryUI,
-  clearSavedWatchlist, clearSavedHistory,
+  clearSavedWatchlist,
   saveCurrentAsPreferredLocation, clearPreferredLocationSetting,
   scheduleHeatmapRefresh,
   renderHeatmap,
@@ -228,7 +227,6 @@ elements.refreshButton?.addEventListener("click", () => {
   if (query) loadWeather(query);
 });
 
-elements.clearHistoryButton?.addEventListener("click", clearSavedHistory);
 elements.pinLocationButton?.addEventListener("click", pinCurrentLocation);
 
 elements.mapHourSlider?.addEventListener("input", () => {
@@ -373,7 +371,6 @@ document.querySelectorAll('input[name="units"]').forEach((radio) => {
 });
 
 elements.clearWatchlistButton?.addEventListener("click", clearSavedWatchlist);
-elements.clearHistorySettingsButton?.addEventListener("click", clearSavedHistory);
 
 elements.satelliteImage?.addEventListener("load", () => {
   if (elements.satelliteEmpty) elements.satelliteEmpty.hidden = true;
@@ -748,13 +745,8 @@ document.addEventListener("keydown", (event) => {
 
   const tabIndex = parseInt(event.key, 10);
   if (tabIndex >= 1 && tabIndex <= 9) {
-    const tabs = ["now", "hourly", "outlook", "storm", "alerts", "air", "trends", "pins", "history", "settings"];
+    const tabs = ["now", "hourly", "outlook", "storm", "alerts", "air", "trends", "pins", "settings"];
     selectTab(tabs[tabIndex - 1]);
-    return;
-  }
-
-  if (event.key === "0") {
-    selectTab("system");
     return;
   }
 });
@@ -810,7 +802,6 @@ if (elements.satelliteProductSelect) {
 if (elements.satelliteSatelliteWrapper) {
   elements.satelliteSatelliteWrapper.hidden = true;
 }
-renderForecastHistoryUI();
 renderWatchlistUI();
 updateSettingsUI();
 

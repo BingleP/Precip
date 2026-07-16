@@ -1,15 +1,14 @@
-import type { Location, Forecast, WatchlistItem, ForecastSnapshot, AppSettings, HeatmapSample, WildfireFeature } from "../types";
+import type { Location, Forecast, WatchlistItem, AppSettings, HeatmapSample, WildfireFeature } from "../types";
 import { elements, activeLocation, latestForecast, mapState, heatmapCanvas, heatmapButtons, showAlerts, showWildfires } from "../state";
-import { MAX_HISTORY_ITEMS } from "../config";
 import {
-  getWatchlist, saveWatchlist, getForecastHistory, saveForecastHistory,
+  getWatchlist, saveWatchlist,
   getPreferredLocation, getAppSettings, savePreferredLocation, saveAppSettings,
   removeCookieValue, formatSavedLocation,
 } from "../storage";
 import { fetchHeatmap } from "../heatmap";
 import {
   calculateStormRisk, formatTemp, formatSpeed, formatPrecip,
-  formatPressure, describeWeatherCode, maxNext, sumNext, isImperial,
+  maxNext, sumNext,
 } from "../weather";
 import { addLog, spinner, escapeHTML, showToast, prepareCanvas } from "../ui";
 import {
@@ -98,71 +97,11 @@ export function pinCurrentLocation(): void {
   addLog(`${activeLocation.name} pinned to stormwatch.`, elements.eventLog);
 }
 
-export function renderForecastHistoryUI(history = getForecastHistory()): void {
-  if (!elements.historyList) return;
-  if (!history.length) {
-    elements.historyList.innerHTML = `<div class="empty-signal">No forecast snapshots saved yet.</div>`;
-    return;
-  }
-
-  elements.historyList.innerHTML = history
-    .map(
-      (item) => `
-        <div class="history-row">
-          <div class="history-date">${new Date(item.savedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
-          <div class="history-location" title="${escapeHTML(item.location)}">${escapeHTML(item.location)}</div>
-          <div class="history-meta">
-            <span>Now <strong>${formatTemp(item.temperature)}</strong></span>
-            <span>Pressure <strong>${formatPressure(item.pressure)}</strong></span>
-            <span>Today <strong>${isImperial() ? `${Math.round(item.todayHigh * 9 / 5 + 32)}°F / ${Math.round(item.todayLow * 9 / 5 + 32)}°F` : `${Math.round(item.todayHigh)}°C / ${Math.round(item.todayLow)}°C`}</strong></span>
-            <span>Precip <strong>${formatPrecip(item.todayPrecip)}</strong></span>
-            <span>Cond <strong>${escapeHTML(item.condition)}</strong></span>
-          </div>
-        </div>
-      `,
-    )
-    .join("");
-}
-
-export function saveForecastSnapshot(location: Location, forecast: Forecast): void {
-  const current = forecast.current;
-  const daily = forecast.daily;
-  const snapshot: ForecastSnapshot = {
-    id: `${Date.now()}`,
-    savedAt: new Date().toISOString(),
-    location: [location.name, location.admin, location.country].filter(Boolean).join(", "),
-    temperature: current.temperature_2m,
-    pressure: current.pressure_msl,
-    wind: current.wind_speed_10m,
-    todayHigh: daily.temperature_2m_max[0],
-    todayLow: daily.temperature_2m_min[0],
-    todayPrecip: daily.precipitation_sum[0],
-    todayChance: daily.precipitation_probability_max[0],
-    condition: describeWeatherCode(daily.weather_code[0]),
-  };
-
-  try {
-    const existing = getForecastHistory();
-    const next = [snapshot, ...existing].slice(0, MAX_HISTORY_ITEMS);
-    saveForecastHistory(next);
-    renderForecastHistoryUI(next);
-  } catch {
-    addLog("Forecast history could not be saved in this browser.", elements.eventLog);
-  }
-}
-
 export function clearSavedWatchlist(): void {
   removeCookieValue("precip.watchlist.v1");
   try { window.localStorage.removeItem("precip.watchlist.v1"); } catch {}
   renderWatchlistUI([]);
   addLog("Pinned locations cleared.", elements.eventLog);
-}
-
-export function clearSavedHistory(): void {
-  removeCookieValue("precip.forecastHistory.v1");
-  try { window.localStorage.removeItem("precip.forecastHistory.v1"); } catch {}
-  renderForecastHistoryUI([]);
-  addLog("Forecast history cleared.", elements.eventLog);
 }
 
 export function saveCurrentAsPreferredLocation(): void {

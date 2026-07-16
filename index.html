@@ -24,9 +24,7 @@
           <button class="tab-button" role="tab" aria-selected="false" data-tab="air">Air</button>
           <button class="tab-button" role="tab" aria-selected="false" data-tab="trends">Trends</button>
           <button class="tab-button" role="tab" aria-selected="false" data-tab="pins">Pins</button>
-          <button class="tab-button" role="tab" aria-selected="false" data-tab="history">History</button>
           <button class="tab-button" role="tab" aria-selected="false" data-tab="settings">Settings</button>
-          <button class="tab-button" role="tab" aria-selected="false" data-tab="system">System</button>
         </div>
       </nav>
 
@@ -385,18 +383,6 @@
             </div>
           </section>
 
-          <!-- History Section -->
-          <section class="data-section" data-section="history">
-            <div class="data-section-header">
-              <span class="section-kicker">Forecast History</span>
-              <h2>Saved Forecast Snapshots</h2>
-              <button class="ghost-button" type="button" id="clear-history-button">Clear</button>
-            </div>
-            <div class="data-section-body">
-              <div class="history-list" id="history-list"></div>
-            </div>
-          </section>
-
           <!-- Settings Section -->
           <section class="data-section" data-section="settings">
             <div class="data-section-header">
@@ -471,63 +457,8 @@
                   <small class="setting-note">Exports saved location, map defaults, pins, and forecast history to a JSON preset.</small>
                 </div>
               </div>
-            </div>
-          </section>
-
-          <!-- System Section -->
-          <section class="data-section" data-section="system">
-            <div class="data-section-header">
-              <span class="section-kicker">Hardware Feed</span>
-              <h2>Receiver and Ingest Sources</h2>
-              <span class="status-pill standby">Not connected</span>
-            </div>
-            <div class="data-section-body">
-              <div class="hardware-layout">
-                <div class="receiver-panel" id="radio">
-                  <div class="signal-readout">
-                    <div>
-                      <span>Frequency</span>
-                      <strong id="frequency">--</strong>
-                    </div>
-                    <div>
-                      <span>Status</span>
-                      <strong id="receiver-status">No hardware feed</strong>
-                    </div>
-                  </div>
-                  <div class="empty-signal" role="status">Local receiver endpoint not connected.</div>
-                  <div class="input-row">
-                    <label for="ingest-url">Receiver endpoint</label>
-                    <input id="ingest-url" type="url" value="http://rig-node.local:8080/telemetry" />
-                  </div>
-                </div>
-                <div class="device-list">
-                  <div class="device-row">
-                    <span class="device-icon">ANT</span>
-                    <div>
-                      <strong>VHF Antenna</strong>
-                      <small>Mounted source, awaiting serial bridge</small>
-                    </div>
-                    <span class="status-pill standby">Standby</span>
-                  </div>
-                  <div class="device-row">
-                    <span class="device-icon">RX</span>
-                    <div>
-                      <strong>Weather Radio</strong>
-                      <small>No local feed detected</small>
-                    </div>
-                    <span class="status-pill standby">Offline</span>
-                  </div>
-                  <div class="device-row">
-                    <span class="device-icon">API</span>
-                    <div>
-                      <strong>Telemetry API</strong>
-                      <small>JSON ingest route placeholder</small>
-                    </div>
-                    <span class="status-pill standby">Pending</span>
-                  </div>
-                </div>
-              </div>
-
+              
+              <!-- Operations Log -->
               <div class="data-subsection">
                 <div class="data-section-header">
                   <span class="section-kicker">Operations Log</span>

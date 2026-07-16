@@ -77,10 +77,8 @@ export interface Elements {
   patternList: HTMLElement | null;
   dailyGrid: HTMLElement | null;
   weeklyList: HTMLElement | null;
-  historyList: HTMLElement | null;
   hourlyStrip: HTMLElement | null;
   refreshButton: HTMLElement | null;
-  clearHistoryButton: HTMLElement | null;
   chartTooltip: HTMLElement | null;
   heatmapLegend: HTMLElement | null;
   mapHourSlider: HTMLInputElement | null;
@@ -165,14 +163,12 @@ export const elements: Elements = {
   warningLabel: document.querySelector("#warning-label") as HTMLElement | null,
   warningTitle: document.querySelector("#warning-title") as HTMLElement | null,
   warningCopy: document.querySelector("#warning-copy") as HTMLElement | null,
-  eventLog: document.querySelector("#event-log") as HTMLElement | null,
+eventLog: document.querySelector("#event-log") as HTMLElement | null,
   patternList: document.querySelector("#pattern-list") as HTMLElement | null,
   dailyGrid: document.querySelector("#daily-grid") as HTMLElement | null,
   weeklyList: document.querySelector("#weekly-list") as HTMLElement | null,
-  historyList: document.querySelector("#history-list") as HTMLElement | null,
   hourlyStrip: document.querySelector("#hourly-strip") as HTMLElement | null,
   refreshButton: document.querySelector("#refresh-button") as HTMLElement | null,
-  clearHistoryButton: document.querySelector("#clear-history-button") as HTMLElement | null,
   chartTooltip: document.querySelector("#chart-tooltip") as HTMLElement | null,
   heatmapLegend: document.querySelector("#heatmap-legend") as HTMLElement | null,
   mapHourSlider: document.querySelector("#map-hour-slider") as HTMLInputElement | null,
