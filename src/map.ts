@@ -30,6 +30,10 @@ let cachedGridHeight = 0;
 let lastGridCacheKey = "";
 const INTERPOLATION_GRID_STEP = 4; // Sample every 4th pixel for grid
 
+// Tile filter pre-compositing cache
+const filteredTileCache = new Map<string, HTMLCanvasElement>();
+const TILE_FILTER = "brightness(0.48) saturate(0.6) contrast(1.25)";
+
 export function getMapState(center = INITIAL_MAP_CENTER): MapState {
   return {
     center: { latitude: center.latitude, longitude: center.longitude },
@@ -95,10 +99,9 @@ export function drawMapTiles(
       const y = Math.round(tileY * MAP_TILE_SIZE - topLeft.y);
 
       if (image.complete && image.naturalWidth) {
-        ctx.save();
-        ctx.filter = "brightness(0.48) saturate(0.6) contrast(1.25)";
-        ctx.drawImage(image, x, y, MAP_TILE_SIZE, MAP_TILE_SIZE);
-        ctx.restore();
+        // Use pre-filtered tile from cache
+        const filteredTile = getFilteredTile(image, zoom, wrappedTileX, tileY);
+        ctx.drawImage(filteredTile, x, y, MAP_TILE_SIZE, MAP_TILE_SIZE);
       } else {
         ctx.fillStyle = (tileX + tileY) % 2 ? "#0c111c" : "#0e141f";
         ctx.fillRect(x, y, MAP_TILE_SIZE, MAP_TILE_SIZE);
@@ -108,6 +111,26 @@ export function drawMapTiles(
 
   ctx.fillStyle = "rgba(5, 7, 12, 0.24)";
   ctx.fillRect(0, 0, width, height);
+}
+
+function getFilteredTile(
+  image: HTMLImageElement,
+  zoom: number,
+  x: number,
+  y: number
+): HTMLCanvasElement {
+  const key = `${zoom}/${x}/${y}`;
+  let filtered = filteredTileCache.get(key);
+  if (!filtered) {
+    filtered = document.createElement("canvas");
+    filtered.width = MAP_TILE_SIZE;
+    filtered.height = MAP_TILE_SIZE;
+    const fctx = filtered.getContext("2d")!;
+    fctx.filter = TILE_FILTER;
+    fctx.drawImage(image, 0, 0, MAP_TILE_SIZE, MAP_TILE_SIZE);
+    filteredTileCache.set(key, filtered);
+  }
+  return filtered;
 }
 
 let tileLoadTimer: ReturnType<typeof setTimeout> | null = null;
