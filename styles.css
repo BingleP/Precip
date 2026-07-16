@@ -2386,6 +2386,12 @@ a {
   color: var(--accent);
 }
 
+.ghost-button.active {
+  background: rgba(14, 165, 233, 0.14);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .primary-button {
   display: inline-flex;
   align-items: center;

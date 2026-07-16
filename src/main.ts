@@ -109,6 +109,8 @@ function toggleSatelliteOverlay(show?: boolean): void {
   if (!overlay) return;
   const isVisible = !overlay.hidden;
   const targetState = show ?? !isVisible;
+  const satBtn = document.querySelector("#satellite-toggle");
+  if (satBtn) satBtn.classList.toggle("active", targetState);
 
   if (targetState) {
     overlay.hidden = false;
