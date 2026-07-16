@@ -30,6 +30,7 @@ ALLOWED_ENDPOINTS = {
     "/api/all-alerts",
     "/api/wildfires",
     "/api/slider-catalog",
+    "/api/slider-image",
     "/health",
 }
 
@@ -140,6 +141,16 @@ def build_upstream(path, query):
         return f"{SLIDER_BASE}/data/json/{satellite}/{sector}/", "text/html; charset=utf-8"
 
     raise ValueError("unsupported endpoint")
+
+
+def fetch_slider_image(satellite, sector, product, timestamp):
+    date_path = f"{timestamp[:4]}/{timestamp[4:6]}/{timestamp[6:8]}"
+    url = f"{SLIDER_BASE}/data/imagery/{date_path}/{satellite}---{sector}/{product}/{timestamp}/00/000_000.png"
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=25) as response:
+        body = response.read()
+        content_type = response.headers.get_content_type() or "image/png"
+        return body, content_type
 
 
 def normalize_text(value):

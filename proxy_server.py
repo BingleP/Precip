@@ -16,7 +16,7 @@ from proxy_upstream import (
     ALLOWED_ENDPOINTS, require, fetch_upstream, fetch_json,
     build_upstream, build_geocode_payload, build_ca_alerts_payload,
     build_us_alerts_payload, build_all_alerts_payload,
-    build_wildfires_payload,
+    build_wildfires_payload, fetch_slider_image,
     aggregate_daily, symbol_to_weather_code,
 )
 from proxy_estimators import (
@@ -266,6 +266,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_common_headers("application/json; charset=utf-8", len(body))
                 self.send_header("X-Precip-Cache", "MISS")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/slider-image":
+                satellite = require(query, "satellite").strip()
+                sector = require(query, "sector").strip()
+                product = require(query, "product").strip()
+                timestamp = require(query, "timestamp").strip()
+                body, content_type = fetch_slider_image(satellite, sector, product, timestamp)
+                self.send_response(200)
+                self.send_common_headers(content_type, len(body))
                 self.end_headers()
                 self.wfile.write(body)
                 return

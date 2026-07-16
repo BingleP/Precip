@@ -1,5 +1,6 @@
 import type { Location, NoaaSector, NoaaProduct, SliderSatellite, SliderSector, SatelliteSource } from "./types";
 import { NOAA_SECTORS, NOAA_AUTO_SECTOR_IDS, SLIDER_SATELLITES, SLIDER_BASE } from "./config";
+import { buildApiUrl } from "./api";
 import { fetchNoaaSectorCatalog, fetchSliderCatalog } from "./api";
 import { haversineDistance } from "./geo";
 import { addLog, normalizeSearchText } from "./ui";
@@ -281,8 +282,7 @@ function getSliderTileConfig(satellite: string): SliderTileConfig {
 export function getSliderTileUrl(satellite: string, sector: string, product: string, timestamp?: string): string {
   const config = getSliderTileConfig(satellite);
   if (timestamp) {
-    const datePath = `${timestamp.slice(0, 4)}/${timestamp.slice(4, 6)}/${timestamp.slice(6, 8)}`;
-    return `${SLIDER_BASE}/data/imagery/${datePath}/${satellite}---${sector}/${product}/${timestamp}/00/000_000.png`;
+    return buildApiUrl(`/slider-image?satellite=${satellite}&sector=${sector}&product=${product}&timestamp=${timestamp}`).href;
   }
   const now = new Date();
   now.setUTCMinutes(now.getUTCMinutes() - 30);
@@ -293,7 +293,7 @@ export function getSliderTileUrl(satellite: string, sector: string, product: str
   const h = pad(now.getUTCHours());
   const min = pad(Math.floor(now.getUTCMinutes() / config.cadenceMinutes) * config.cadenceMinutes);
   const ts = `${y}${m}${d}${h}${min}${config.seconds}`;
-  return `${SLIDER_BASE}/data/imagery/${y}/${m}/${d}/${satellite}---${sector}/${product}/${ts}/00/000_000.png`;
+  return buildApiUrl(`/slider-image?satellite=${satellite}&sector=${sector}&product=${product}&timestamp=${ts}`).href;
 }
 
 export function tryNextSliderTimestamp(currentTs: string, satellite?: string): string | null {
