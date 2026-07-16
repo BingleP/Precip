@@ -329,3 +329,24 @@ export async function fetchSliderCatalog(satellite: string, sector: string): Pro
   if (!products.length) throw new Error("No SLIDER products found");
   return { products };
 }
+
+export async function fetchLatestSliderTimestamps(
+  satellite: string,
+  sector: string,
+  product: string,
+): Promise<number[]> {
+  const url = buildApiUrl("/slider-latest-times");
+  url.searchParams.set("satellite", satellite);
+  url.searchParams.set("sector", sector);
+  url.searchParams.set("product", product);
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const data = await response.json();
+    const ts = data?.timestamps_int;
+    if (!Array.isArray(ts) || !ts.length) return [];
+    return ts as number[];
+  } catch {
+    return [];
+  }
+}

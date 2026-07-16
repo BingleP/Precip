@@ -1,6 +1,7 @@
 import type { Location, NoaaSector, NoaaProduct, SliderSatellite, SliderSector, SatelliteSource } from "./types";
 import { NOAA_SECTORS, NOAA_AUTO_SECTOR_IDS, SLIDER_SATELLITES, SLIDER_BASE } from "./config";
 import { buildApiUrl } from "./api";
+import { fetchLatestSliderTimestamps } from "./api";
 import { fetchNoaaSectorCatalog, fetchSliderCatalog } from "./api";
 import { haversineDistance } from "./geo";
 import { addLog, normalizeSearchText } from "./ui";
@@ -414,6 +415,10 @@ export async function loadSliderSector(
     if (elements.satelliteLink) {
       elements.satelliteLink.href = `${SLIDER_BASE}/?sat=${satellite}&sector=${sector}&product=${selectedProduct.key}&z=0&im=1`;
     }
+
+    const timestamps = await fetchLatestSliderTimestamps(satellite, sector, selectedProduct.key);
+    const bestTs = timestamps.length > 0 ? String(timestamps[0]) : undefined;
+
     if (elements.satelliteImage) {
       elements.satelliteImage.hidden = false;
       loadSliderImageWithFallback(
@@ -433,6 +438,7 @@ export async function loadSliderSector(
           }
           if (elements.satelliteImage) elements.satelliteImage.hidden = true;
         },
+        bestTs,
       );
     }
     if (elements.satelliteEmpty) {

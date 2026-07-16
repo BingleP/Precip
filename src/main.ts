@@ -8,7 +8,7 @@ if (!document.cookie.split("; ").find((row) => row.startsWith("precip.preferredL
 import type { Location, NwsAlert } from "./types";
 import { MAP_DEFAULT_ZOOM, NOAA_SECTORS, SLIDER_SATELLITES, SLIDER_BASE, } from "./config";
 import { getAppSettings, saveAppSettings, getPreferredLocation, savePreferredLocation, getWatchlist, getForecastHistory, saveForecastHistory, saveWatchlist, removeCookieValue, } from "./storage";
-import { fetchNoaaSectorCatalog, fetchSliderCatalog, fetchAllAlerts, fetchWildfires } from "./api";
+import { fetchNoaaSectorCatalog, fetchSliderCatalog, fetchLatestSliderTimestamps, fetchAllAlerts, fetchWildfires } from "./api";
 import { resolveLocation, searchLocationSuggestions, searchAlertSuggestions, getAlertCentroid, } from "./search";
 import { zoomMap, startMapDrag, moveMapDrag, endMapDrag, resetMapView, updateMapTooltip, hideMapTooltip, } from "./map";
 import { updateSatelliteForLocation, loadSatelliteSector, getNoaaSectorById, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, renderSatelliteProductOptions, renderSatelliteImage, updateSliderForLocation, loadSliderSector, setActiveSource, loadSliderImageWithFallback, resolveSliderSatellite, resolveSliderSector } from "./satellite";
@@ -496,6 +496,8 @@ elements.satelliteProductSelect?.addEventListener("change", async () => {
       }
       if (elements.satelliteImage) {
         elements.satelliteImage.hidden = false;
+        const timestamps = await fetchLatestSliderTimestamps(satId, sectorId, selectedProduct.key);
+        const bestTs = timestamps.length > 0 ? String(timestamps[0]) : undefined;
         loadSliderImageWithFallback(
           satId, sectorId, selectedProduct.key,
           elements.satelliteImage,
@@ -511,6 +513,7 @@ elements.satelliteProductSelect?.addEventListener("change", async () => {
             }
             if (elements.satelliteImage) elements.satelliteImage.hidden = true;
           },
+          bestTs,
         );
       }
       if (elements.satelliteLink) {

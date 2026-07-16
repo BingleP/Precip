@@ -31,6 +31,7 @@ ALLOWED_ENDPOINTS = {
     "/api/wildfires",
     "/api/slider-catalog",
     "/api/slider-image",
+    "/api/slider-latest-times",
     "/health",
 }
 
@@ -139,6 +140,12 @@ def build_upstream(path, query):
         satellite = require(query, "satellite").strip()
         sector = require(query, "sector").strip()
         return f"{SLIDER_BASE}/data/json/{satellite}/{sector}/", "text/html; charset=utf-8"
+
+    if path == "/api/slider-latest-times":
+        satellite = require(query, "satellite").strip()
+        sector = require(query, "sector").strip()
+        product = require(query, "product").strip()
+        return f"{SLIDER_BASE}/data/json/{satellite}/{sector}/{product}/latest_times.json", "application/json"
 
     raise ValueError("unsupported endpoint")
 
