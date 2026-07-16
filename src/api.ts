@@ -25,6 +25,8 @@ export const satelliteCatalogCache = new Map<string, { savedAt: number; data: No
 export const heatmapCache = new Map<string, { savedAt: number; data: unknown }>();
 const alertCache = new Map<string, { savedAt: number; data: NwsAlert[] }>();
 let allAlertsCache: { savedAt: number; data: NwsAlert[] } | null = null;
+let allAlertsRequest: Promise<NwsAlert[]> | null = null;
+const spcOutlookCache = new Map<string, { savedAt: number; data: SpcCollection | null }>();
 
 export function setApiBackoff(name: string): void {
   apiBackoffUntil.set(name, Date.now() + API_RATE_LIMIT_BACKOFF_MS);
@@ -175,17 +177,23 @@ export async function fetchAllAlerts(): Promise<NwsAlert[]> {
   if (allAlertsCache && Date.now() - allAlertsCache.savedAt < ALERT_CACHE_TTL_MS) {
     return allAlertsCache.data;
   }
-  try {
-    const url = buildApiUrl("/all-alerts");
-    const response = await fetch(url, { cache: "no-store" });
-    if (!response.ok) return [];
-    const body = await response.json();
-    const alerts = body.features || [];
-    allAlertsCache = { savedAt: Date.now(), data: alerts };
-    return alerts;
-  } catch {
-    return [];
-  }
+  if (allAlertsRequest) return allAlertsRequest;
+  allAlertsRequest = (async () => {
+    try {
+      const url = buildApiUrl("/all-alerts");
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) return [];
+      const body = await response.json();
+      const alerts = body.features || [];
+      allAlertsCache = { savedAt: Date.now(), data: alerts };
+      return alerts;
+    } catch {
+      return [];
+    } finally {
+      allAlertsRequest = null;
+    }
+  })();
+  return allAlertsRequest;
 }
 
 export async function fetchNoaaSectorCatalog(sector: NoaaSector): Promise<NoaaCatalog> {
@@ -229,10 +237,16 @@ export async function fetchNoaaSectorCatalog(sector: NoaaSector): Promise<NoaaCa
 }
 
 export async function fetchSpcOutlook(layer = "1"): Promise<SpcCollection | null> {
+  const cached = spcOutlookCache.get(layer);
+  if (cached && Date.now() - cached.savedAt < 600000) {
+    return cached.data;
+  }
   try {
     const r = await fetch(buildApiUrl(`/spc-outlook?layer=${layer}`));
     if (!r.ok) return null;
-    return await r.json() as SpcCollection;
+    const data = await r.json() as SpcCollection;
+    spcOutlookCache.set(layer, { savedAt: Date.now(), data });
+    return data;
   } catch {
     return null;
   }

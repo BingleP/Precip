@@ -8,6 +8,13 @@ let latestSpcCat: SpcCollection | null = null;
 let latestSpcTorn: SpcCollection | null = null;
 let alertPolygonsCache: AlertPolygon[] = [];
 let allAlerts: NwsAlert[] | null = null;
+
+// Memoization state for drawMapAlertPolygons
+let lastDrawnAlertsRef: NwsAlert[] | null = null;
+let lastDrawnCenterKey = "";
+let lastDrawnZoom = -1;
+let lastDrawnWidth = -1;
+let lastDrawnHeight = -1;
 let mapCenterWildfires: WildfireFeature[] | null = null;
 
 interface WildfireHotspotEntry {
@@ -59,6 +66,7 @@ export function getAlertPolygonsCache(): AlertPolygon[] {
 
 export function setAlertPolygonsCache(cache: AlertPolygon[]): void {
   alertPolygonsCache = cache;
+  buildSpatialIndex();
 }
 
 export function getAllAlerts(): NwsAlert[] | null {
@@ -127,15 +135,36 @@ export function drawMapAlertPolygons(
   zoom: number,
   alertsOverride?: NwsAlert[] | null,
 ): AlertPolygon[] {
-  const cache: AlertPolygon[] = [];
   const alerts = (alertsOverride && alertsOverride.length) ? alertsOverride : latestAlerts;
-  if (!alerts?.length) return cache;
+  if (!alerts?.length) {
+    alertPolygonsCache = [];
+    lastDrawnAlertsRef = null;
+    return alertPolygonsCache;
+  }
 
   const polyAlerts = alerts.filter(
     (a) => a.geometry?.type === "Polygon" || a.geometry?.type === "MultiPolygon",
   );
-  if (!polyAlerts.length) return cache;
+  if (!polyAlerts.length) {
+    alertPolygonsCache = [];
+    lastDrawnAlertsRef = null;
+    return alertPolygonsCache;
+  }
 
+  const centerKey = `${centerWorld.x.toFixed(2)},${centerWorld.y.toFixed(2)}`;
+  const zoomRound = Math.round(zoom);
+
+  if (
+    alerts === lastDrawnAlertsRef &&
+    centerKey === lastDrawnCenterKey &&
+    zoomRound === lastDrawnZoom &&
+    width === lastDrawnWidth &&
+    height === lastDrawnHeight
+  ) {
+    return alertPolygonsCache;
+  }
+
+  const cache: AlertPolygon[] = [];
   const margin = 60;
 
   for (const alert of polyAlerts) {
@@ -197,11 +226,66 @@ export function drawMapAlertPolygons(
   }
 
   alertPolygonsCache = cache;
+  lastDrawnAlertsRef = alerts;
+  lastDrawnCenterKey = centerKey;
+  lastDrawnZoom = zoomRound;
+  lastDrawnWidth = width;
+  lastDrawnHeight = height;
   return cache;
 }
 
 export function isInsideAlertPolygon(px: number, py: number): AlertPolygon | null {
   for (const polygon of alertPolygonsCache) {
+    const { points } = polygon;
+    let inside = false;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+      const xi = points[i].x, yi = points[i].y;
+      const xj = points[j].x, yj = points[j].y;
+      if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+    if (inside) return polygon;
+  }
+  return null;
+}
+
+// Spatial index for fast point-in-polygon queries
+const spatialGrid = new Map<string, AlertPolygon[]>();
+const GRID_CELL_SIZE = 100;
+
+function buildSpatialIndex(): void {
+  spatialGrid.clear();
+  for (const polygon of alertPolygonsCache) {
+    if (!polygon.points.length) continue;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of polygon.points) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const startCol = Math.floor(minX / GRID_CELL_SIZE);
+    const endCol = Math.floor(maxX / GRID_CELL_SIZE);
+    const startRow = Math.floor(minY / GRID_CELL_SIZE);
+    const endRow = Math.floor(maxY / GRID_CELL_SIZE);
+    for (let col = startCol; col <= endCol; col++) {
+      for (let row = startRow; row <= endRow; row++) {
+        const key = `${col},${row}`;
+        const bucket = spatialGrid.get(key);
+        if (bucket) bucket.push(polygon);
+        else spatialGrid.set(key, [polygon]);
+      }
+    }
+  }
+}
+
+export function isInsideAlertPolygonSpatial(px: number, py: number): AlertPolygon | null {
+  const col = Math.floor(px / GRID_CELL_SIZE);
+  const row = Math.floor(py / GRID_CELL_SIZE);
+  const bucket = spatialGrid.get(`${col},${row}`);
+  if (!bucket || !bucket.length) return null;
+  for (const polygon of bucket) {
     const { points } = polygon;
     let inside = false;
     for (let i = 0, j = points.length - 1; i < points.length; j = i++) {

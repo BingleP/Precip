@@ -61,7 +61,7 @@ async function fetchMapCenterAlerts(): Promise<void> {
   }
 }
 
-function scheduleMapCenterAlertFetch(debounceMs = 600): void {
+function scheduleMapCenterAlertFetch(debounceMs = 800): void {
   if (mapCenterAlertTimer) clearTimeout(mapCenterAlertTimer);
   mapCenterAlertTimer = setTimeout(fetchMapCenterAlerts, debounceMs);
 }

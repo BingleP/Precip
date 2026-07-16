@@ -2,7 +2,7 @@ import type { HeatmapSample, MapState } from "./types";
 import { MAP_TILE_SIZE, MAP_MIN_ZOOM, MAP_MAX_ZOOM, MAP_DEFAULT_ZOOM, HEATMAP_SCALE, INITIAL_MAP_CENTER } from "./config";
 import { latLonToWorld, projectToMapScreen, projectToMapScreenFast, screenToMapLocation, setMapCenterFromWorld, clampMapZoom } from "./geo";
 import { normalizeValue, formatHeatmapValue, getHeatmapTitle } from "./weather";
-import { isInsideAlertPolygon, getWildfireAtPoint } from "./alerts";
+import { isInsideAlertPolygonSpatial, getWildfireAtPoint } from "./alerts";
 import { escapeHTML } from "./ui";
 
 const TILE_CACHE_MAX = 500;
@@ -406,7 +406,7 @@ export function updateMapTooltip(
     wind = weightedWind / weightTotal;
   }
 
-  const alertPoly = isInsideAlertPolygon(pointerX, pointerY);
+  const alertPoly = isInsideAlertPolygonSpatial(pointerX, pointerY);
   const wildfire = getWildfireAtPoint(pointerX, pointerY);
 
   let tooltipHTML =
