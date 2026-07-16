@@ -5,6 +5,13 @@ import { chartState } from "../chart";
 import { findCurrentIndex, formatTemp, formatPrecip, formatSpeed, isImperial } from "../weather";
 import { prepareCanvas, escapeHTML, roundedRect } from "../ui";
 
+// Offscreen canvas for static chart layer caching
+let chartOffscreenCanvas: HTMLCanvasElement | null = null;
+let chartOffscreenCtx: CanvasRenderingContext2D | null = null;
+let chartCacheKey = "";
+let chartCachedWidth = 0;
+let chartCachedHeight = 0;
+
 export function drawForecastChart(forecast: Forecast): void {
   if (!chartCanvas) return;
   const ctx = chartCanvas.getContext("2d");
@@ -51,58 +58,108 @@ export function drawForecastChart(forecast: Forecast): void {
     wind: hourly.wind_speed_10m[index],
   }));
 
-  ctx.clearRect(0, 0, width, height);
-  const background = ctx.createLinearGradient(0, 0, 0, height);
+  // Generate cache key for static chart layer
+  const newCacheKey = `${width}:${height}:${indexes.length}:${tempMin.toFixed(1)}:${tempMax.toFixed(1)}:${precipitation.join(",")}:${hourly.time.slice(currentIndex, currentIndex + HOURS_TO_SHOW).join(",")}`;
+
+  let useCache = newCacheKey === chartCacheKey && width === chartCachedWidth && height === chartCachedHeight;
+
+  if (!useCache || !chartOffscreenCanvas) {
+    // Create/recreate offscreen canvas for static layer
+    if (!chartOffscreenCanvas) {
+      chartOffscreenCanvas = document.createElement("canvas");
+      chartOffscreenCtx = chartOffscreenCanvas.getContext("2d")!;
+    }
+    chartOffscreenCanvas.width = width;
+    chartOffscreenCanvas.height = height;
+    chartCachedWidth = width;
+    chartCachedHeight = height;
+    chartCacheKey = newCacheKey;
+
+    // Draw static chart elements to offscreen canvas
+    drawStaticChart(chartOffscreenCtx!, {
+      width, height, leftPadding, rightPadding, bottomPadding, topPadding,
+      chartLeft, chartRight, chartTop, chartBottom, chartHeight, xStep,
+      indexes, temperatures, temperatureY, precipitation, precipY,
+      hourly, currentIndex, points: chartState.points, tempMin, tempMax
+    });
+  }
+
+  // Draw cached static layer to main canvas
+  ctx.drawImage(chartOffscreenCanvas!, 0, 0);
+
+  // Draw dynamic hover indicator on top
+  if (chartState.hoverIndex !== null && chartState.points[chartState.hoverIndex]) {
+    drawHoverIndicator(ctx, chartState.points[chartState.hoverIndex], chartTop, chartBottom);
+  }
+}
+
+interface StaticChartParams {
+  width: number; height: number;
+  leftPadding: number; rightPadding: number; bottomPadding: number; topPadding: number;
+  chartLeft: number; chartRight: number; chartTop: number; chartBottom: number; chartHeight: number;
+  xStep: number;
+  indexes: number[]; temperatures: number[]; temperatureY: number[];
+  precipitation: number[]; precipY: number[];
+  hourly: any; currentIndex: number; points: any[];
+  tempMin: number; tempMax: number;
+}
+
+function drawStaticChart(
+  ctx: CanvasRenderingContext2D,
+  p: StaticChartParams
+): void {
+  ctx.clearRect(0, 0, p.width, p.height);
+  const background = ctx.createLinearGradient(0, 0, 0, p.height);
   background.addColorStop(0, "#171c23");
   background.addColorStop(1, "#11161b");
   ctx.fillStyle = background;
-  ctx.fillRect(0, 0, width, height);
+  ctx.fillRect(0, 0, p.width, p.height);
 
   ctx.strokeStyle = "rgba(120, 134, 152, 0.36)";
   ctx.lineWidth = 1;
   for (let i = 0; i <= 5; i += 1) {
-    const y = chartTop + (chartHeight / 5) * i;
+    const y = p.chartTop + (p.chartHeight / 5) * i;
     ctx.beginPath();
-    ctx.moveTo(chartLeft, y);
-    ctx.lineTo(chartRight, y);
+    ctx.moveTo(p.chartLeft, y);
+    ctx.lineTo(p.chartRight, y);
     ctx.stroke();
 
-    const labelValue = tempMax - ((tempMax - tempMin) / 5) * i;
+    const labelValue = p.tempMax - ((p.tempMax - p.tempMin) / 5) * i;
     ctx.textAlign = "right";
     ctx.fillStyle = "#98a4b3";
     ctx.font = "700 12px system-ui";
     ctx.fillText(
       `${isImperial() ? `${(labelValue * 9 / 5 + 32).toFixed(0)}°` : `${labelValue.toFixed(0)}°`}`,
-      chartLeft - 8,
+      p.chartLeft - 8,
       y + 4,
     );
   }
   ctx.textAlign = "start";
 
-  precipitation.forEach((chance, offset) => {
-    const barHeight = (chartHeight * (chance || 0)) / 100;
-    const barWidth = Math.max(8, Math.min(18, xStep * 0.5));
-    const x = chartLeft + offset * xStep - barWidth / 2;
-    const barGradient = ctx.createLinearGradient(0, chartBottom - barHeight, 0, chartBottom);
+  p.precipitation.forEach((chance, offset) => {
+    const barHeight = (p.chartHeight * (chance || 0)) / 100;
+    const barWidth = Math.max(8, Math.min(18, p.xStep * 0.5));
+    const x = p.chartLeft + offset * p.xStep - barWidth / 2;
+    const barGradient = ctx.createLinearGradient(0, p.chartBottom - barHeight, 0, p.chartBottom);
     barGradient.addColorStop(0, "rgba(114, 174, 230, 0.64)");
     barGradient.addColorStop(1, "rgba(114, 174, 230, 0.1)");
     ctx.fillStyle = barGradient;
-    roundedRect(ctx, x, chartBottom - barHeight, barWidth, barHeight, 5);
+    roundedRect(ctx, x, p.chartBottom - barHeight, barWidth, barHeight, 5);
     ctx.fill();
   });
 
-  const areaGradient = ctx.createLinearGradient(0, chartTop, 0, chartBottom);
+  const areaGradient = ctx.createLinearGradient(0, p.chartTop, 0, p.chartBottom);
   areaGradient.addColorStop(0, "rgba(129, 197, 171, 0.22)");
   areaGradient.addColorStop(0.72, "rgba(129, 197, 171, 0.04)");
   areaGradient.addColorStop(1, "rgba(129, 197, 171, 0)");
   ctx.beginPath();
-  temperatureY.forEach((y, offset) => {
-    const x = chartLeft + offset * xStep;
+  p.temperatureY.forEach((y, offset) => {
+    const x = p.chartLeft + offset * p.xStep;
     if (offset === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
-  ctx.lineTo(chartRight, chartBottom);
-  ctx.lineTo(chartLeft, chartBottom);
+  ctx.lineTo(p.chartRight, p.chartBottom);
+  ctx.lineTo(p.chartLeft, p.chartBottom);
   ctx.closePath();
   ctx.fillStyle = areaGradient;
   ctx.fill();
@@ -112,14 +169,14 @@ export function drawForecastChart(forecast: Forecast): void {
   ctx.lineWidth = 4;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-  temperatureY.forEach((y, offset) => {
-    const x = chartLeft + offset * xStep;
+  p.temperatureY.forEach((y, offset) => {
+    const x = p.chartLeft + offset * p.xStep;
     if (offset === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
   ctx.stroke();
 
-  chartState.points.forEach((point, offset) => {
+  p.points.forEach((point, offset) => {
     if (offset % 3 !== 0 && offset !== 0) return;
     ctx.fillStyle = "#141a20";
     ctx.strokeStyle = "#81c5ab";
@@ -130,35 +187,14 @@ export function drawForecastChart(forecast: Forecast): void {
     ctx.stroke();
   });
 
-  if (chartState.hoverIndex !== null && chartState.points[chartState.hoverIndex]) {
-    const point = chartState.points[chartState.hoverIndex];
-    ctx.strokeStyle = "rgba(213, 221, 231, 0.28)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(point.x, chartTop);
-    ctx.lineTo(point.x, chartBottom);
-    ctx.stroke();
-
-    const drawMarker = (x: number, y: number, color: string) => {
-      ctx.fillStyle = "#141a20";
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(x, y, 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    };
-    drawMarker(point.x, point.temperatureY, "#81c5ab");
-    drawMarker(point.x, point.precipY, "#72aee6");
-  }
-
   ctx.font = "700 13px system-ui";
   const tempW = ctx.measureText("Temp").width;
   const rainW = ctx.measureText("Rain").width;
   const gap1 = 22, gap2 = 18, dotR = 5;
   const totalW = tempW + gap1 + rainW + gap2 + dotR * 2;
-  let legX = chartRight - totalW;
-  if (legX < chartLeft) legX = chartLeft;
+
+  let legX = p.chartRight - totalW;
+  if (legX < p.chartLeft) legX = p.chartLeft;
   ctx.textAlign = "left";
   ctx.fillStyle = "#d5dde7";
   ctx.fillText("Temp", legX, 29);
@@ -177,14 +213,40 @@ export function drawForecastChart(forecast: Forecast): void {
   ctx.textAlign = "center";
   ctx.fillStyle = "#98a4b3";
   ctx.font = "700 12px system-ui";
-  const labelStep = width < 400 ? 6 : 3;
-  indexes.forEach((index, offset) => {
+  const labelStep = p.width < 400 ? 6 : 3;
+  p.indexes.forEach((index, offset) => {
     if (offset % labelStep !== 0) return;
-    const x = chartLeft + offset * xStep;
-    const label = new Date(hourly.time[index]).toLocaleTimeString([], { hour: "2-digit" });
-    ctx.fillText(label, x, height - 22);
+    const x = p.chartLeft + offset * p.xStep;
+    const label = new Date(p.hourly.time[index]).toLocaleTimeString([], { hour: "2-digit" });
+    ctx.fillText(label, x, p.height - 22);
   });
   ctx.textAlign = "start";
+}
+
+function drawHoverIndicator(
+  ctx: CanvasRenderingContext2D,
+  point: any,
+  chartTop: number,
+  chartBottom: number
+): void {
+  ctx.strokeStyle = "rgba(213, 221, 231, 0.28)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(point.x, chartTop);
+  ctx.lineTo(point.x, chartBottom);
+  ctx.stroke();
+
+  const drawMarker = (x: number, y: number, color: string) => {
+    ctx.fillStyle = "#141a20";
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  };
+  drawMarker(point.x, point.temperatureY, "#81c5ab");
+  drawMarker(point.x, point.precipY, "#72aee6");
 }
 
 export function showChartTooltip(point: typeof chartState.points[0], pointerX: number, pointerY: number, rect: DOMRect): void {
@@ -222,7 +284,7 @@ export function hideChartTooltip(): void {
 
 export function updateChartTooltip(event: PointerEvent): void {
   if (!latestForecast || !chartState.points.length) return;
-  const rect = chartCanvas.getBoundingClientRect();
+  const rect = chartCanvas!.getBoundingClientRect();
   const pointerX = event.clientX - rect.left;
   const pointerY = event.clientY - rect.top;
   let nearestIndex: number | null = null;
@@ -239,12 +301,12 @@ export function updateChartTooltip(event: PointerEvent): void {
     }
   });
 
-  if (nearestIndex === null || nearestDistance > 32) {
+  if (nearestIndex !== null && nearestDistance < 20) {
+    if (chartState.hoverIndex !== nearestIndex) {
+      chartState.hoverIndex = nearestIndex;
+      showChartTooltip(chartState.points[nearestIndex], pointerX, pointerY, rect);
+    }
+  } else {
     hideChartTooltip();
-    return;
   }
-
-  chartState.hoverIndex = nearestIndex;
-  drawForecastChart(latestForecast);
-  showChartTooltip(chartState.points[nearestIndex], pointerX, pointerY, rect);
 }
