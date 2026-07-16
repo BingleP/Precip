@@ -34,6 +34,9 @@ const INTERPOLATION_GRID_STEP = 4; // Sample every 4th pixel for grid
 const filteredTileCache = new Map<string, HTMLCanvasElement>();
 const TILE_FILTER = "brightness(0.48) saturate(0.6) contrast(1.25)";
 
+// Label position memoization cache
+const labelPositionCache = new Map<string, { x: number; y: number }>();
+
 export function getMapState(center = INITIAL_MAP_CENTER): MapState {
   return {
     center: { latitude: center.latitude, longitude: center.longitude },
@@ -189,8 +192,8 @@ export function drawMapPlaces(
   const zoomRound = Math.round(mapState.zoom);
   const cw = centerWorld || latLonToWorld(mapState.center.latitude, mapState.center.longitude, zoomRound);
 
-  // Memoize label position by viewport
-  const cacheKey = `${selected.latitude.toFixed(4)}:${selected.longitude.toFixed(4)}:${zoomRound}:${width}:${height}`;
+  // Memoize label position by viewport (including map center)
+  const cacheKey = `${selected.latitude.toFixed(4)}:${selected.longitude.toFixed(4)}:${zoomRound}:${width}:${height}:${cw.x.toFixed(2)}:${cw.y.toFixed(2)}`;
   let position = labelPositionCache.get(cacheKey);
   if (!position) {
     position = projectToMapScreenFast(selected.latitude, selected.longitude, width, height, cw, zoomRound);
@@ -219,9 +222,6 @@ export function drawMapPlaces(
   ctx.fillStyle = "#f3f5f8";
   ctx.fillText(label, labelX, labelY);
 }
-
-// Label position cache
-const labelPositionCache = new Map<string, { x: number; y: number }>();
 
 export function drawHeatmapOverlay(
   ctx: CanvasRenderingContext2D,
