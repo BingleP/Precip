@@ -200,6 +200,7 @@ export const SLIDER_SATELLITES: SliderSatellite[] = [
     id: "jpss",
     name: "JPSS (Polar)",
     sectors: [
+      { id: "conus", name: "CONUS", latitude: 40, longitude: -100 },
       { id: "northern_hemisphere", name: "Northern Hemisphere", latitude: 60, longitude: 0 },
       { id: "southern_hemisphere", name: "Southern Hemisphere", latitude: -60, longitude: 0 },
     ],
