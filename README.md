@@ -1,6 +1,6 @@
 # Precip
 
-Precip is a full-screen map-centric weather dashboard for weather enthusiasts and stormwatchers. It uses a small same-host cache proxy to stay resilient against upstream rate limits, and pulls from Open-Meteo, NOAA, NWS, ECCC/GeoMet, and the SPC.
+Precip is a full-screen map-centric weather dashboard for weather enthusiasts and stormwatchers. It uses a small same-host cache proxy to stay resilient against upstream rate limits, and pulls from Open-Meteo, NOAA, NWS, ECCC/GeoMet, CWFIS, FIRMS, and the SPC.
 
 ## Current Feature Set
 
@@ -17,11 +17,19 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
   - viewport-based heatmap sampling (overlay skipped during drag)
   - cursor hover readout with coordinates and interpolated weather values
   - NWS/ECCC alert polygon overlays with severity-colored boundaries and hover tooltips
+  - **wildfire overlay**: CWFIS hotspots (color-coded by age), CWFIS fire perimeters, and NASA FIRMS hotspots (when configured) with hover tooltips showing source, date, confidence, temperature, and area
+  - frustum culling for 600+ alert polygons and wildfire perimeters (off-screen geometry skipped)
 - Real-time weather alerts:
-  - NWS alerts for US locations
+  - NWS alerts for US locations (zone-geometry enriched for alerts without polygon data)
   - ECCC/GeoMet alerts for Canadian locations
+  - **all alerts rendered on map at all times** — no pop-in/out when panning (5 min cache)
   - severity-sorted weather warning bar with alert count badge on the Now tab
   - toast notifications for new alerts
+  - browse/search all active US + Canada alerts from the Alerts tab
+- Wildfire data (proxy-fetched, 15 min cache):
+  - **CWFIS hotspots** — VIIRS/MODIS satellite detections via GeoMet WFS (`public:hotspots`), sorted by recency
+  - **CWFIS fire perimeters** — current-season polygon boundaries (`public:m3_polygons_current`) from CWFIS
+  - **NASA FIRMS hotspots** — VIIRS NOAA20/SNPP and MODIS NRT detections via FIRMS API (requires `FIRMS_MAP_KEY`)
 - Storm Prediction Center outlooks:
   - Day 1–3 categorical convective outlook
   - Day 1–2 tornado probability
@@ -41,13 +49,16 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
 - `src/` - TypeScript source files (Vite build)
 - `index.html` / `welcome.html` - Vite entry points (main dashboard + setup flow)
 - `styles.css` - full application styling
-- `proxy_server.py` - same-host cache proxy for weather/geocoding/NOAA/NWS/SPC/ECCC requests
+- `proxy_server.py` - HTTP server entry point for the cache proxy
+- `proxy_upstream.py` - upstream fetch logic (NWS, ECCC, CWFIS, FIRMS, SPC, etc.)
+- `proxy_cache.py` - in-memory cache with TTL and GeoMet zone-geometry cache
+- `proxy_estimators.py` - derived weather value estimators (gust, visibility, CAPE, etc.)
 - `precip.png` - site mark in the tab bar
 - `tab.png` - browser tab icon
 - `vite.config.ts` - Vite build configuration
-- `deploy/deploy.sh` - copy dist/ to nginx web root and reload nginx
+- `deploy/deploy.sh` - copy dist/ to nginx web root, install proxy + .py files, reload nginx
 - `deploy/precip.kerrick.ca.conf` - nginx config for `precip.kerrick.ca`
-- `deploy/precip-proxy.service` - systemd unit for the cache proxy
+- `deploy/precip-proxy.service` - systemd unit for the cache proxy (reads `FIRMS_MAP_KEY` from `/opt/precip/.env`)
 
 ## Runtime Model
 
@@ -62,6 +73,8 @@ The browser talks to same-origin `/api/*` routes. The proxy fetches and caches:
 - `https://api.weather.gov` (NWS alerts)
 - `https://api.weather.gc.ca` (Canadian weather alerts via GeoMet-OGC-API)
 - `https://mapservices.weather.noaa.gov` (SPC convective outlook contours)
+- `https://cwfis.cfs.nrcan.gc.ca/geoserver/wfs` (CWFIS wildfire hotspots + perimeters via WFS)
+- `https://firms.modaps.eosdis.nasa.gov` (NASA FIRMS hotspot CSV data, requires `FIRMS_MAP_KEY`)
 
 Map tiles and satellite imagery load directly in the browser from:
 
@@ -69,7 +82,7 @@ Map tiles and satellite imagery load directly in the browser from:
 - `https://cdn.star.nesdis.noaa.gov` (NOAA GOES animated GIFs)
 - `https://slider.cira.colostate.edu` (SLIDER global satellite tiles and JSON catalogs)
 
-Cache TTLs vary by endpoint (5 min for alerts, 10 min for forecasts and SPC, 15 min for heatmap, 24 h for geocoding).
+Cache TTLs vary by endpoint (5 min for alerts, 10 min for forecasts and SPC, 15 min for heatmap and wildfires, 24 h for geocoding and zone geometry).
 
 User state is stored in browser cookies. No app data is written to the server.
 
@@ -102,11 +115,19 @@ That script:
 5. validates nginx config
 6. reloads nginx
 
-The deployed bundle must include:
+The proxy also requires all four `.py` files to be present at `/opt/precip/` (the deploy script handles this).
 
-- `dist/` - Vite build output (copied to web root)
+### FIRMS API Key
 
-When deploying, the nginx CSP must allow the SLIDER tile origin:
+To enable NASA FIRMS hotspot data on the wildfire overlay, create `/opt/precip/.env` with:
+
+```
+FIRMS_MAP_KEY=your_key_here
+```
+
+Get a key at https://firms.modaps.eosdis.nasa.gov/api/map_key/. The deploy script creates a template `.env` if one doesn't exist. The `.env` file is never committed to the repo.
+
+### Nginx CSP for imagery
 
 ```
 img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov https://slider.cira.colostate.edu;
@@ -121,9 +142,12 @@ img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov h
 | `/api/geocode` | Open-Meteo + Nominatim (merged) | `name`, `count` |
 | `/api/reverse-geocode` | Nominatim | `latitude`, `longitude` |
 | `/api/noaa-sector` | NOAA STAR | `sat`, `sector` |
-| `/api/alerts` | NWS API | `latitude`, `longitude` |
-| `/api/ca-alerts` | GeoMet-OGC-API | `latitude`, `longitude` |
+| `/api/alerts` | NWS API (bbox-filtered, zone-enriched) | `latitude`, `longitude` |
+| `/api/ca-alerts` | GeoMet-OGC-API (bbox-filtered) | `latitude`, `longitude` |
+| `/api/all-alerts` | NWS + ECCC (zone-enriched, no bbox filter) | none |
 | `/api/spc-outlook` | SPC ArcGIS | `layer` |
+| `/api/wildfires` | CWFIS WFS + NASA FIRMS | `bbox` (west,south,east,north) |
+| `/api/slider-catalog` | RAMMB/CIRA SLIDER | `satellite`, `sector` |
 
 ## Security Model
 
@@ -132,3 +156,4 @@ img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov h
 - CSP restricts browser network access to same-origin `/api/*`, OpenStreetMap tiles, and NOAA imagery
 - No destructive server-side actions
 - Preference resets only clear browser cookies for the current visitor
+- API keys (e.g. `FIRMS_MAP_KEY`) are read from `/opt/precip/.env` on the server, which is excluded from version control by `.gitignore`

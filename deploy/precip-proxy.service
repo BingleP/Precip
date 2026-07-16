@@ -13,6 +13,7 @@ Restart=always
 RestartSec=3
 Environment=PRECIP_PROXY_HOST=127.0.0.1
 Environment=PRECIP_PROXY_PORT=7428
+EnvironmentFile=/opt/precip/.env
 
 [Install]
 WantedBy=multi-user.target
