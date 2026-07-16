@@ -20,6 +20,16 @@ function tileCacheSet(key: string, image: HTMLImageElement): void {
   tileCache.set(key, image);
 }
 
+// Heatmap memoization state
+let lastHeatmapSamplesKey = "";
+let lastHeatmapLayer = "";
+let cachedHeatmapSamples: (HeatmapSample & { value: number; normalized: number; x: number; y: number })[] | null = null;
+let cachedInterpolationGrid: Float32Array | null = null;
+let cachedGridWidth = 0;
+let cachedGridHeight = 0;
+let lastGridCacheKey = "";
+const INTERPOLATION_GRID_STEP = 4; // Sample every 4th pixel for grid
+
 export function getMapState(center = INITIAL_MAP_CENTER): MapState {
   return {
     center: { latitude: center.latitude, longitude: center.longitude },
@@ -199,27 +209,42 @@ export function drawHeatmapOverlay(
   center: { latitude: number; longitude: number },
   zoom: number,
 ): void {
-  mapState.samples = [];
-  const samples = points
-    .map((point, index) => {
-      const value = values[index];
-      if (!Number.isFinite(value)) return null;
-      const position = projectToMapScreen(point.latitude, point.longitude, width, height, center.latitude, center.longitude, zoom);
-      const sample: HeatmapSample & { value: number; normalized: number; x: number; y: number } = {
-        ...point,
-        value: value!,
-        normalized: normalizeValue(value!, min, max),
-        x: position.x,
-        y: position.y,
-      };
+  const centerKey = `${center.latitude.toFixed(2)},${center.longitude.toFixed(2)}`;
+  const samplesKey = `${centerKey}:${zoom}:${width}:${height}:${layer}:${min.toFixed(1)}:${max.toFixed(1)}`;
+  let samples: (HeatmapSample & { value: number; normalized: number; x: number; y: number })[];
 
-      if (position.x > -30 && position.x < width + 30 && position.y > -30 && position.y < height + 30) {
-        (mapState.samples as HeatmapSample[]).push(sample);
-      }
+  // Check if we can use cached samples
+  if (samplesKey === lastHeatmapSamplesKey && cachedHeatmapSamples) {
+    samples = cachedHeatmapSamples;
+  } else {
+    mapState.samples = [];
+    samples = points
+      .map((point, index) => {
+        const value = values[index];
+        if (!Number.isFinite(value)) return null;
+        const position = projectToMapScreen(point.latitude, point.longitude, width, height, center.latitude, center.longitude, zoom);
+        const sample: HeatmapSample & { value: number; normalized: number; x: number; y: number } = {
+          ...point,
+          value: value!,
+          normalized: normalizeValue(value!, min, max),
+          x: position.x,
+          y: position.y,
+        };
 
-      return sample;
-    })
-    .filter(Boolean) as (HeatmapSample & { value: number; normalized: number; x: number; y: number })[];
+        if (position.x > -30 && position.x < width + 30 && position.y > -30 && position.y < height + 30) {
+          (mapState.samples as HeatmapSample[]).push(sample);
+        }
+
+        return sample;
+      })
+      .filter(Boolean) as (HeatmapSample & { value: number; normalized: number; x: number; y: number })[];
+
+    cachedHeatmapSamples = samples;
+    lastHeatmapSamplesKey = samplesKey;
+    lastHeatmapLayer = layer;
+    // Invalidate interpolation grid when samples change
+    cachedInterpolationGrid = null;
+  }
 
   if (!samples.length) return;
 
@@ -243,17 +268,64 @@ export function drawHeatmapOverlay(
   }
   const data = heatmapImageData.data;
 
-  for (let y = 0; y < overlayHeight; y += 1) {
-    for (let x = 0; x < overlayWidth; x += 1) {
-      const screenX = (x / overlayWidth) * width;
-      const screenY = (y / overlayHeight) * height;
-      const normalized = interpolateHeatmapAt(screenX, screenY, samples, smoothing);
-      const color = getHeatmapChannels(normalized, layer);
-      const offset = (y * overlayWidth + x) * 4;
-      data[offset] = color[0];
-      data[offset + 1] = color[1];
-      data[offset + 2] = color[2];
-      data[offset + 3] = 132;
+  // Check if we can reuse cached interpolation grid
+  const gridWidth = Math.ceil(overlayWidth / INTERPOLATION_GRID_STEP);
+  const gridHeight = Math.ceil(overlayHeight / INTERPOLATION_GRID_STEP);
+  const gridCacheKey = `${overlayWidth}:${overlayHeight}:${smoothing.toFixed(2)}:${layer}:${lastHeatmapLayer}`;
+
+  let useCachedGrid = false;
+  if (
+    cachedInterpolationGrid &&
+    gridWidth === cachedGridWidth &&
+    gridHeight === cachedGridHeight &&
+    gridCacheKey === lastGridCacheKey
+  ) {
+    useCachedGrid = true;
+  }
+
+  if (useCachedGrid) {
+    // Use cached interpolation grid
+    for (let y = 0; y < overlayHeight; y += 1) {
+      for (let x = 0; x < overlayWidth; x += 1) {
+        const gx = Math.floor(x / INTERPOLATION_GRID_STEP);
+        const gy = Math.floor(y / INTERPOLATION_GRID_STEP);
+        const normalized = cachedInterpolationGrid![gy * gridWidth + gx];
+        const color = getHeatmapChannels(normalized, layer);
+        const offset = (y * overlayWidth + x) * 4;
+        data[offset] = color[0];
+        data[offset + 1] = color[1];
+        data[offset + 2] = color[2];
+        data[offset + 3] = 132;
+      }
+    }
+  } else {
+    // Compute new interpolation grid
+    const grid = new Float32Array(gridWidth * gridHeight);
+    for (let gy = 0; gy < gridHeight; gy += 1) {
+      for (let gx = 0; gx < gridWidth; gx += 1) {
+        const screenX = (gx * INTERPOLATION_GRID_STEP / overlayWidth) * width;
+        const screenY = (gy * INTERPOLATION_GRID_STEP / overlayHeight) * height;
+        grid[gy * gridWidth + gx] = interpolateHeatmapAt(screenX, screenY, samples, smoothing);
+      }
+    }
+    cachedInterpolationGrid = grid;
+    cachedGridWidth = gridWidth;
+    cachedGridHeight = gridHeight;
+    lastGridCacheKey = gridCacheKey;
+
+    // Render from new grid
+    for (let y = 0; y < overlayHeight; y += 1) {
+      for (let x = 0; x < overlayWidth; x += 1) {
+        const gx = Math.floor(x / INTERPOLATION_GRID_STEP);
+        const gy = Math.floor(y / INTERPOLATION_GRID_STEP);
+        const normalized = grid[gy * gridWidth + gx];
+        const color = getHeatmapChannels(normalized, layer);
+        const offset = (y * overlayWidth + x) * 4;
+        data[offset] = color[0];
+        data[offset + 1] = color[1];
+        data[offset + 2] = color[2];
+        data[offset + 3] = 132;
+      }
     }
   }
 
