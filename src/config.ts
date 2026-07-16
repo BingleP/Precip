@@ -194,6 +194,8 @@ export const SLIDER_SATELLITES: SliderSatellite[] = [
     name: "GK-2A",
     sectors: [
       { id: "full_disk", name: "Full Disk", latitude: 0, longitude: 128.2 },
+      { id: "ela", name: "East Asia", latitude: 35, longitude: 120 },
+      { id: "korea", name: "Korea", latitude: 37, longitude: 127 },
     ],
   },
   {

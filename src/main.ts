@@ -410,8 +410,9 @@ elements.satelliteSourceSelect?.addEventListener("change", () => {
         .map((sector) => `<option value="${sector.id}">${sector.name}</option>`)
         .join("");
     } else {
-      const satId = elements.satelliteSatelliteSelect?.value || SLIDER_SATELLITES[0].id;
-      const sat = SLIDER_SATELLITES.find((s) => s.id === satId) || SLIDER_SATELLITES[0];
+      const satId = SLIDER_SATELLITES[0].id;
+      if (elements.satelliteSatelliteSelect) elements.satelliteSatelliteSelect.value = satId;
+      const sat = SLIDER_SATELLITES[0];
       elements.satelliteSectorSelect.innerHTML = sat.sectors
         .map((sector) => `<option value="${sector.id}">${sector.name}</option>`)
         .join("");
@@ -428,6 +429,23 @@ elements.satelliteSourceSelect?.addEventListener("change", () => {
   }
   if (elements.satelliteHeadline) {
     elements.satelliteHeadline.textContent = source === "slider" ? "Global Sector Animation" : "GOES Sector Animation";
+  }
+  // Clear stale imagery and status when switching sources
+  if (elements.satelliteImage) {
+    elements.satelliteImage.src = "";
+    elements.satelliteImage.classList.remove("loaded");
+  }
+  if (elements.satelliteEmpty) {
+    elements.satelliteEmpty.style.display = "block";
+  }
+  if (elements.satelliteStatus) {
+    elements.satelliteStatus.textContent = activeLocation ? "Loading…" : "Awaiting location";
+    elements.satelliteStatus.className = "status-pill standby";
+  }
+  if (elements.satelliteCopy) {
+    elements.satelliteCopy.textContent = activeLocation
+      ? "Loading satellite imagery…"
+      : "Select a location to load the nearest sector animation.";
   }
   setSatelliteTabLoaded(false);
   if (activeLocation) {
