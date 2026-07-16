@@ -188,16 +188,17 @@ export function drawMapPlaces(
   const selected = mapState.selected || location;
   const zoomRound = Math.round(mapState.zoom);
   const cw = centerWorld || latLonToWorld(mapState.center.latitude, mapState.center.longitude, zoomRound);
-  const position = projectToMapScreenFast(
-    selected.latitude,
-    selected.longitude,
-    width,
-    height,
-    cw,
-    zoomRound,
-  );
 
-  if (position.x < -80 || position.x > width + 80 || position.y < -80 || position.y > height + 80) return;
+  // Memoize label position by viewport
+  const cacheKey = `${selected.latitude.toFixed(4)}:${selected.longitude.toFixed(4)}:${zoomRound}:${width}:${height}`;
+  let position = labelPositionCache.get(cacheKey);
+  if (!position) {
+    position = projectToMapScreenFast(selected.latitude, selected.longitude, width, height, cw, zoomRound);
+    if (position.x >= -80 && position.x <= width + 80 && position.y >= -80 && position.y <= height + 80) {
+      labelPositionCache.set(cacheKey, position);
+    }
+  }
+  if (!position || position.x < -80 || position.x > width + 80 || position.y < -80 || position.y > height + 80) return;
 
   ctx.fillStyle = "#090a10";
   ctx.strokeStyle = "#f3f5f8";
@@ -218,6 +219,9 @@ export function drawMapPlaces(
   ctx.fillStyle = "#f3f5f8";
   ctx.fillText(label, labelX, labelY);
 }
+
+// Label position cache
+const labelPositionCache = new Map<string, { x: number; y: number }>();
 
 export function drawHeatmapOverlay(
   ctx: CanvasRenderingContext2D,
