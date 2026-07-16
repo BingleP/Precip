@@ -154,13 +154,15 @@ export function drawMapAlertPolygons(
   const centerKey = `${centerWorld.x.toFixed(2)},${centerWorld.y.toFixed(2)}`;
   const zoomRound = Math.round(zoom);
 
-  if (
+  const cacheHit =
     alerts === lastDrawnAlertsRef &&
     centerKey === lastDrawnCenterKey &&
     zoomRound === lastDrawnZoom &&
     width === lastDrawnWidth &&
-    height === lastDrawnHeight
-  ) {
+    height === lastDrawnHeight;
+
+  if (cacheHit) {
+    drawCachedAlertPolygons(ctx, alertPolygonsCache);
     return alertPolygonsCache;
   }
 
@@ -195,7 +197,6 @@ export function drawMapAlertPolygons(
     }
 
     const severity = alert.properties.severity || "Unknown";
-    const colors = ALERT_SEVERITY_COLORS[severity] || ALERT_SEVERITY_COLORS.Unknown;
     const screenPoints = ring.map(([lon, lat]) =>
       projectToMapScreenFast(lat, lon, width, height, centerWorld, zoom),
     );
@@ -209,11 +210,32 @@ export function drawMapAlertPolygons(
       description: (alert.properties.description || "").slice(0, 300),
       id: alert.properties.id || "",
     });
+  }
+
+  drawCachedAlertPolygons(ctx, cache);
+
+  alertPolygonsCache = cache;
+  lastDrawnAlertsRef = alerts;
+  lastDrawnCenterKey = centerKey;
+  lastDrawnZoom = zoomRound;
+  lastDrawnWidth = width;
+  lastDrawnHeight = height;
+  return cache;
+}
+
+function drawCachedAlertPolygons(
+  ctx: CanvasRenderingContext2D,
+  polygons: AlertPolygon[],
+): void {
+  for (const polygon of polygons) {
+    const { points, severity } = polygon;
+    if (!points.length) continue;
+    const colors = ALERT_SEVERITY_COLORS[severity] || ALERT_SEVERITY_COLORS.Unknown;
 
     ctx.beginPath();
-    ctx.moveTo(screenPoints[0].x, screenPoints[0].y);
-    for (let i = 1; i < screenPoints.length; i++) {
-      ctx.lineTo(screenPoints[i].x, screenPoints[i].y);
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y);
     }
     ctx.closePath();
     ctx.fillStyle = colors.fill;
@@ -224,14 +246,6 @@ export function drawMapAlertPolygons(
     ctx.stroke();
     ctx.setLineDash([]);
   }
-
-  alertPolygonsCache = cache;
-  lastDrawnAlertsRef = alerts;
-  lastDrawnCenterKey = centerKey;
-  lastDrawnZoom = zoomRound;
-  lastDrawnWidth = width;
-  lastDrawnHeight = height;
-  return cache;
 }
 
 export function isInsideAlertPolygon(px: number, py: number): AlertPolygon | null {
