@@ -32,6 +32,10 @@ ALLOWED_ENDPOINTS = {
     "/api/slider-catalog",
     "/api/slider-image",
     "/api/slider-latest-times",
+    "/api/nhc-active",
+    "/api/nhc-forecast",
+    "/api/nhc-cone",
+    "/api/nhc-windprob",
     "/health",
 }
 
@@ -146,6 +150,21 @@ def build_upstream(path, query):
         sector = require(query, "sector").strip()
         product = require(query, "product").strip()
         return f"{SLIDER_BASE}/data/json/{satellite}/{sector}/{product}/latest_times.json", "application/json"
+
+    if path == "/api/nhc-active":
+        return "https://www.nhc.noaa.gov/CurrentStorms.json", "application/json"
+
+    if path == "/api/nhc-forecast":
+        storm_id = require(query, "stormId").strip()
+        return f"https://www.nhc.noaa.gov/storms/{storm_id}-forecast.json", "application/json"
+
+    if path == "/api/nhc-cone":
+        storm_id = require(query, "stormId").strip()
+        return f"https://www.nhc.noaa.gov/storms/{storm_id}-cone.json", "application/json"
+
+    if path == "/api/nhc-windprob":
+        storm_id = require(query, "stormId").strip()
+        return f"https://www.nhc.noaa.gov/storms/{storm_id}-windprob.json", "application/json"
 
     raise ValueError("unsupported endpoint")
 

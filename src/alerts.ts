@@ -1,4 +1,4 @@
-import type { NwsAlert, AlertPolygon, SpcCollection, WildfireFeature } from "./types";
+import type { NwsAlert, AlertPolygon, SpcCollection, WildfireFeature, TropicalCyclone, StormTrackPoint, ConePoint } from "./types";
 import { NWS_SEVERITY_ORDER, TORNADO_EVENTS, ALERT_SEVERITY_COLORS, SPC_CATEGORIES, SPC_TORNADO_PROB } from "./config";
 import { pointInPolygon, projectToMapScreenFast } from "./geo";
 
@@ -17,6 +17,46 @@ let lastDrawnWidth = -1;
 let lastDrawnHeight = -1;
 
 let mapCenterWildfires: WildfireFeature[] | null = null;
+
+export let showStormTracks = true;
+
+export function setShowStormTracks(value: boolean): void {
+  showStormTracks = value;
+}
+
+let activeCyclones: TropicalCyclone[] = [];
+let stormForecasts: Map<string, StormTrackPoint[]> = new Map();
+let stormCones: Map<string, ConePoint[]> = new Map();
+
+export function getActiveCyclones(): TropicalCyclone[] {
+  return activeCyclones;
+}
+
+export function setActiveCyclones(storms: TropicalCyclone[]): void {
+  activeCyclones = storms;
+}
+
+export function getStormForecast(stormId: string): StormTrackPoint[] | undefined {
+  return stormForecasts.get(stormId);
+}
+
+export function setStormForecast(stormId: string, forecast: StormTrackPoint[]): void {
+  stormForecasts.set(stormId, forecast);
+}
+
+export function getStormCone(stormId: string): ConePoint[] | undefined {
+  return stormCones.get(stormId);
+}
+
+export function setStormCone(stormId: string, cone: ConePoint[]): void {
+  stormCones.set(stormId, cone);
+}
+
+export function clearStormData(): void {
+  activeCyclones = [];
+  stormForecasts.clear();
+  stormCones.clear();
+}
 
 interface WildfireHotspotEntry {
   x: number; y: number; radius: number;

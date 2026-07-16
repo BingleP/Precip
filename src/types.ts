@@ -337,3 +337,35 @@ export type HeatmapLayer =
   | "cloud"
   | "visibility"
   | "cape";
+
+export interface TropicalCyclone {
+  id: string;
+  name: string;
+  stormType: string;
+  category?: number;
+  latitude: number;
+  longitude: number;
+  maxWindSpeed: number;
+  minPressure: number;
+  movement: {
+    direction: number;
+    speed: number;
+  };
+  lastUpdate: string;
+  basin: string;
+}
+
+export interface StormTrackPoint {
+  validTime: string;
+  latitude: number;
+  longitude: number;
+  maxWindSpeed: number;
+  stormType: string;
+}
+
+export interface ConePoint {
+  validTime: string;
+  centerLat: number;
+  centerLon: number;
+  radius: number;
+}

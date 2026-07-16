@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Precip Weather Operations</title>
     <link rel="icon" href="/assets/tab-CSFEXn2q.png?v=2" type="image/png" />
-    <script type="module" crossorigin src="/assets/main-CQsBS9DW.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/ui-Dtcrl3DT.js">
-    <link rel="stylesheet" crossorigin href="/assets/ui-B_NqFWTo.css">
+    <script type="module" crossorigin src="/assets/main-DHjdv8J-.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/ui-AokBgG_x.js">
+    <link rel="stylesheet" crossorigin href="/assets/ui-Bq-LMnPG.css">
   </head>
   <body>
     <div class="app-shell">
@@ -26,6 +26,7 @@
           <button class="tab-button" role="tab" aria-selected="false" data-tab="air">Air</button>
           <button class="tab-button" role="tab" aria-selected="false" data-tab="trends">Trends</button>
           <button class="tab-button" role="tab" aria-selected="false" data-tab="pins">Pins</button>
+          <button class="tab-button" role="tab" aria-selected="false" data-tab="tropical">Tropical</button>
           <button class="tab-button" role="tab" aria-selected="false" data-tab="settings">Settings</button>
         </div>
       </nav>
@@ -58,6 +59,7 @@
                 </div>
                 <div class="map-tools-row" style="margin-top:4px">
                   <button class="ghost-button" type="button" id="satellite-toggle">Satellite</button>
+                  <button class="ghost-button active" type="button" id="storm-tracks-toggle">Tracks</button>
                 </div>
               </div>
               <div class="map-tools-section">
@@ -382,6 +384,18 @@
             </div>
             <div class="data-section-body">
               <div class="watchlist-grid" id="watchlist-grid"></div>
+            </div>
+          </section>
+
+          <!-- Tropical Section -->
+          <section class="data-section" data-section="tropical">
+            <div class="data-section-header">
+              <span class="section-kicker">Tropical Cyclones</span>
+              <h2>Active Storms</h2>
+              <span class="status-pill" id="tropical-storm-count">0 active</span>
+            </div>
+            <div class="data-section-body">
+              <div class="tropical-storm-list" id="tropical-storm-list"></div>
             </div>
           </section>
 

@@ -18,7 +18,8 @@ import {
   hideMapTooltip,
 } from "../map";
 import { projectToMapScreenFast, latLonToWorld } from "../geo";
-import { drawMapAlertPolygons, getMapCenterAlerts, setAlertPolygonsCache, getMapCenterWildfires, setWildfireHitCache, getWildfireScreenCache, setWildfireScreenCache, getLastWildfireState, setLastWildfireState, drawCachedWildfires } from "../alerts";
+import { drawStormTracks } from "../storm-tracks";
+import { drawMapAlertPolygons, getMapCenterAlerts, setAlertPolygonsCache, getMapCenterWildfires, setWildfireHitCache, getWildfireScreenCache, setWildfireScreenCache, getLastWildfireState, setLastWildfireState, drawCachedWildfires, showStormTracks } from "../alerts";
 import {
   latestHeatmap, latestHeatmapMeta, activeHeatmapLayer, activeMapHourOffset,
   setLatestHeatmap, setLatestHeatmapMeta,
@@ -226,6 +227,10 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
     drawWildfireLayer(ctx, width, height, centerWorld, zoomRound);
   } else {
     setWildfireHitCache([], []);
+  }
+
+  if (showStormTracks) {
+    drawStormTracks(ctx, width, height, centerWorld, zoomRound);
   }
 
 }

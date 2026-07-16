@@ -1,4 +1,4 @@
-import type { Forecast, AirQuality, NwsAlert, SpcCollection, NoaaCatalog, NoaaSector, Location, CacheMeta, NoaaProduct, WildfireFeature } from "./types";
+import type { Forecast, AirQuality, NwsAlert, SpcCollection, NoaaCatalog, NoaaSector, Location, CacheMeta, NoaaProduct, WildfireFeature, TropicalCyclone, StormTrackPoint, ConePoint } from "./types";
 import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, ALERT_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES, SLIDER_PRODUCT_NAMES } from "./config";
 import { getCachedApiResponse, setCachedApiResponse } from "./storage";
 import { worldToLatLon } from "./geo";
@@ -360,6 +360,50 @@ export async function fetchLatestSliderTimestamps(
     const ts = data?.timestamps_int;
     if (!Array.isArray(ts) || !ts.length) return [];
     return ts as number[];
+  } catch {
+    return [];
+  }
+}
+
+let nhcActiveCache: { savedAt: number; data: TropicalCyclone[] } | null = null;
+
+export async function fetchActiveCyclones(): Promise<TropicalCyclone[]> {
+  if (nhcActiveCache && Date.now() - nhcActiveCache.savedAt < 900000) {
+    return nhcActiveCache.data;
+  }
+  try {
+    const response = await fetch(buildApiUrl("/nhc-active"));
+    if (!response.ok) return [];
+    const data = await response.json();
+    const storms = (data?.activeStorms || data?.storms || []) as TropicalCyclone[];
+    nhcActiveCache = { savedAt: Date.now(), data: storms };
+    return storms;
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchStormForecast(stormId: string): Promise<StormTrackPoint[]> {
+  const url = buildApiUrl("/nhc-forecast");
+  url.searchParams.set("stormId", stormId);
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const data = await response.json();
+    return (data?.track || data?.forecastPoints || []) as StormTrackPoint[];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchStormCone(stormId: string): Promise<ConePoint[]> {
+  const url = buildApiUrl("/nhc-cone");
+  url.searchParams.set("stormId", stormId);
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const data = await response.json();
+    return (data?.cone || data?.conePoints || []) as ConePoint[];
   } catch {
     return [];
   }

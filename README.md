@@ -23,6 +23,7 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
   - NWS alerts for US locations (zone-geometry enriched for alerts without polygon data)
   - ECCC/GeoMet alerts for Canadian locations
   - **all alerts rendered on map at all times** — no pop-in/out when panning (5 min cache, in-flight request deduplication)
+  - **Hurricane tracking** — Hurricane Warnings/Watches, Tropical Storm Warnings/Watches, and Storm Surge Warnings/Watches automatically displayed via NWS alerts with severity-colored polygons
   - severity-sorted weather warning bar with alert count badge on the Now tab
   - toast notifications for new alerts
   - browse/search all active US + Canada alerts from the Alerts tab
@@ -46,11 +47,11 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
   - **Forecast chart**: static layer cached to offscreen canvas; only hover indicator redrawn on mouse move
   - **Map tiles**: pre-composited dark-style filter (brightness/saturate/contrast) on load, eliminates per-frame `ctx.filter`
   - **Label positions**: memoized by viewport state
-- 11-tab data panel (collapsible): Now, Hourly, Outlook, Storm, Satellite, Air, Trends, Pins, History, Settings, System
+- 9-tab data panel (collapsible): Now, Hourly, Outlook, Storm, Alerts, Air, Trends, Pins, Settings
 - Current conditions, hourly forecast, daily forecast, weekly outlook
 - Stormwatch metrics, air quality, forecast confidence, regional context
 - Timeline animation: play/pause hourly weather through the map
-- Keyboard shortcuts: Cmd+K (search), Escape (tooltips), 1–9 tabs, 0 (System)
+- Keyboard shortcuts: Cmd+K (search), Escape (tooltips), 1–9 tabs
 
 ## Project Files
 

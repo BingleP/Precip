@@ -8,11 +8,11 @@ if (!document.cookie.split("; ").find((row) => row.startsWith("precip.preferredL
 import type { Location, NwsAlert } from "./types";
 import { MAP_DEFAULT_ZOOM, NOAA_SECTORS, SLIDER_SATELLITES, SLIDER_BASE, } from "./config";
 import { getAppSettings, saveAppSettings, getPreferredLocation, savePreferredLocation, getWatchlist, getForecastHistory, saveForecastHistory, saveWatchlist, removeCookieValue, } from "./storage";
-import { fetchNoaaSectorCatalog, fetchSliderCatalog, fetchLatestSliderTimestamps, fetchAllAlerts, fetchWildfires } from "./api";
+import { fetchNoaaSectorCatalog, fetchSliderCatalog, fetchLatestSliderTimestamps, fetchAllAlerts, fetchWildfires, fetchActiveCyclones, fetchStormForecast, fetchStormCone } from "./api";
 import { resolveLocation, searchLocationSuggestions, searchAlertSuggestions, getAlertCentroid, } from "./search";
 import { zoomMap, startMapDrag, moveMapDrag, endMapDrag, resetMapView, updateMapTooltip, hideMapTooltip, } from "./map";
 import { updateSatelliteForLocation, loadSatelliteSector, getNoaaSectorById, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, renderSatelliteProductOptions, renderSatelliteImage, updateSliderForLocation, loadSliderSector, setActiveSource, loadSliderImageWithFallback, resolveSliderSatellite, resolveSliderSector } from "./satellite";
-import { setMapCenterAlerts, setMapCenterWildfires, getAllAlerts } from "./alerts";
+import { setMapCenterAlerts, setMapCenterWildfires, getAllAlerts, showStormTracks, setShowStormTracks, setActiveCyclones, setStormForecast, setStormCone } from "./alerts";
 import { selectTab, togglePanel, formatLocationLabel, normalizeSearchText, showToast } from "./ui";
 import { loadBrowseAlerts } from "./panels/alerts";
 import { exportSettingsPreset, importSettingsPreset, } from "./settings";
@@ -38,6 +38,7 @@ import {
 import {
   loadWeather, selectMapLocation,
 } from "./panels/weather-loader";
+import { renderTropicalPanel } from "./panels/tropical";
 
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let selectedLocationSuggestion: Location | null = null;
@@ -89,6 +90,24 @@ async function fetchMapCenterWildfires(): Promise<void> {
 function scheduleWildfireFetch(debounceMs = 600): void {
   if (wildfireFetchTimer) clearTimeout(wildfireFetchTimer);
   wildfireFetchTimer = setTimeout(fetchMapCenterWildfires, debounceMs);
+}
+
+async function fetchStormTrackData(): Promise<void> {
+  try {
+    const storms = await fetchActiveCyclones();
+    setActiveCyclones(storms);
+    for (const storm of storms) {
+      const [forecast, cone] = await Promise.all([
+        fetchStormForecast(storm.id),
+        fetchStormCone(storm.id),
+      ]);
+      setStormForecast(storm.id, forecast);
+      setStormCone(storm.id, cone);
+    }
+    renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  } catch {
+    // Storm track data unavailable
+  }
 }
 
 // Initialize satellite controls
@@ -581,6 +600,9 @@ elements.satelliteProductSelect?.addEventListener("change", async () => {
 function syncOverlayToggles(): void {
   if (elements.alertsToggle) elements.alertsToggle.classList.toggle("active", showAlerts);
   if (elements.wildfiresToggle) elements.wildfiresToggle.classList.toggle("active", showWildfires);
+  if (document.querySelector("#storm-tracks-toggle")) {
+    document.querySelector("#storm-tracks-toggle")!.classList.toggle("active", showStormTracks);
+  }
 }
 
 elements.alertsToggle?.addEventListener("click", () => {
@@ -593,6 +615,12 @@ elements.alertsToggle?.addEventListener("click", () => {
 elements.wildfiresToggle?.addEventListener("click", () => {
   setShowWildfires(!showWildfires);
   saveAppSettings({ showWildfires });
+  syncOverlayToggles();
+  renderHeatmap(latestHeatmap, activeHeatmapLayer);
+});
+
+document.querySelector("#storm-tracks-toggle")?.addEventListener("click", () => {
+  setShowStormTracks(!showStormTracks);
   syncOverlayToggles();
   renderHeatmap(latestHeatmap, activeHeatmapLayer);
 });
@@ -745,8 +773,13 @@ document.addEventListener("keydown", (event) => {
 
   const tabIndex = parseInt(event.key, 10);
   if (tabIndex >= 1 && tabIndex <= 9) {
-    const tabs = ["now", "hourly", "outlook", "storm", "alerts", "air", "trends", "pins", "settings"];
+    const tabs = ["now", "hourly", "outlook", "storm", "alerts", "air", "trends", "pins", "tropical", "settings"];
     selectTab(tabs[tabIndex - 1]);
+    return;
+  }
+
+  if (event.key === "0") {
+    selectTab("settings");
     return;
   }
 });
@@ -758,6 +791,9 @@ document.querySelectorAll(".tab-button").forEach((btn) => {
     selectTab(tabId);
     if (tabId === "alerts") {
       void loadBrowseAlerts();
+    }
+    if (tabId === "tropical") {
+      renderTropicalPanel();
     }
   });
 });
@@ -815,3 +851,6 @@ if (preferredLocation) {
   loadWeather(preferredLocation);
 }
 scheduleMapCenterAlertFetch(800);
+
+// Fetch NHC storm track data on startup
+void fetchStormTrackData();

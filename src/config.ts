@@ -92,6 +92,17 @@ export const TORNADO_EVENTS = new Set([
   "Severe Thunderstorm Watch",
 ]);
 
+export const HURRICANE_EVENTS = new Set([
+  "Hurricane Warning",
+  "Hurricane Watch",
+  "Tropical Storm Warning",
+  "Tropical Storm Watch",
+  "Storm Surge Warning",
+  "Storm Surge Watch",
+  "Rip Current Statement",
+  "High Surf Warning",
+]);
+
 export const ALERT_SEVERITY_COLORS: Record<string, { fill: string; stroke: string }> = {
   Extreme: { fill: "rgba(201, 106, 110, 0.15)", stroke: "rgba(201, 106, 110, 0.8)" },
   Severe: { fill: "rgba(217, 144, 74, 0.15)", stroke: "rgba(217, 144, 74, 0.8)" },
