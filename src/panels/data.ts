@@ -19,7 +19,7 @@ import {
   hideMapTooltip,
 } from "../map";
 import { projectToMapScreenFast, latLonToWorld } from "../geo";
-import { drawMapAlertPolygons, getMapCenterAlerts, setAlertPolygonsCache, getMapCenterWildfires, setWildfireHitCache } from "../alerts";
+import { drawMapAlertPolygons, getMapCenterAlerts, setAlertPolygonsCache, getMapCenterWildfires, setWildfireHitCache, getWildfireScreenCache, setWildfireScreenCache, getLastWildfireState, setLastWildfireState, drawCachedWildfires } from "../alerts";
 import {
   latestHeatmap, latestHeatmapMeta, activeHeatmapLayer, activeMapHourOffset,
   setLatestHeatmap, setLatestHeatmapMeta,
@@ -298,10 +298,30 @@ function drawWildfireLayer(
   zoomRound: number,
 ): void {
   const features = getMapCenterWildfires();
-  if (!features?.length) { setWildfireHitCache([], []); return; }
+  if (!features?.length) { setWildfireHitCache([], []); setWildfireScreenCache([], []); return; }
 
-  const now = Date.now();
   const margin = 60;
+
+  // Build center key for memoization
+  const centerKey = `${centerWorld.x.toFixed(2)},${centerWorld.y.toFixed(2)}`;
+
+  // Get memoization state
+  const lastState = getLastWildfireState();
+  const cacheHit =
+    features === lastState.featuresRef &&
+    centerKey === lastState.centerKey &&
+    zoomRound === lastState.zoom &&
+    width === lastState.width &&
+    height === lastState.height;
+
+  if (cacheHit) {
+    // Use cached screen points and draw them
+    const { hotspots, perimeters } = getWildfireScreenCache();
+    drawCachedWildfires(ctx, hotspots, perimeters);
+    return;
+  }
+
+  // Cache miss: compute screen points
   const hotspotCache: { x: number; y: number; radius: number; feature: WildfireFeature }[] = [];
   const perimeterCache: { points: { x: number; y: number }[]; feature: WildfireFeature }[] = [];
 
@@ -313,17 +333,7 @@ function drawWildfireLayer(
     if (g.type === "Point" && props.featureType === "hotspot") {
       const [lon, lat] = g.coordinates as number[];
       const { x, y } = projectToMapScreenFast(lat, lon, width, height, centerWorld, zoomRound);
-      const ageHours = props.date
-        ? (now - new Date(props.date).getTime()) / 3600000
-        : 999;
       const radius = Math.max(3, Math.min(8, 6 / Math.pow(2, zoomRound - 8)));
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.fillStyle = ageHours < 6 ? "#ef4444" : ageHours < 24 ? "#f97316" : "#fbbf24";
-      ctx.fill();
-      ctx.strokeStyle = "rgba(0,0,0,0.4)";
-      ctx.lineWidth = 1;
-      ctx.stroke();
       hotspotCache.push({ x, y, radius, feature: f });
     } else if ((g.type === "Polygon" || g.type === "MultiPolygon") && props.featureType === "perimeter") {
       const allRings: number[][][] = [];
@@ -365,23 +375,22 @@ function drawWildfireLayer(
           screenPts.push(projectToMapScreenFast(coord[1], coord[0], width, height, centerWorld, zoomRound));
         }
         if (screenPts.length < 3) continue;
-        ctx.beginPath();
-        ctx.moveTo(screenPts[0].x, screenPts[0].y);
-        for (let i = 1; i < screenPts.length; i++) {
-          ctx.lineTo(screenPts[i].x, screenPts[i].y);
-        }
-        ctx.closePath();
-        ctx.fillStyle = "rgba(249, 115, 22, 0.12)";
-        ctx.fill();
-        ctx.strokeStyle = "#f97316";
-        ctx.lineWidth = 2;
-        ctx.stroke();
         perimeterCache.push({ points: screenPts, feature: f });
       }
     }
   }
 
+  // Update hit-test caches
   setWildfireHitCache(hotspotCache, perimeterCache);
+
+  // Update memoization screen caches
+  setWildfireScreenCache(hotspotCache, perimeterCache);
+
+  // Draw the computed points
+  drawCachedWildfires(ctx, hotspotCache, perimeterCache);
+
+  // Update memoization state
+  setLastWildfireState(features, centerKey, zoomRound, width, height);
 }
 
 export function renderHeatmapLoading(message = "Loading regional weather layer"): void {

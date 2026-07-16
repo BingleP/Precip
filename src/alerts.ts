@@ -15,6 +15,7 @@ let lastDrawnCenterKey = "";
 let lastDrawnZoom = -1;
 let lastDrawnWidth = -1;
 let lastDrawnHeight = -1;
+
 let mapCenterWildfires: WildfireFeature[] | null = null;
 
 interface WildfireHotspotEntry {
@@ -27,6 +28,10 @@ interface WildfirePerimeterEntry {
 }
 let wildfireHotspotCache: WildfireHotspotEntry[] = [];
 let wildfirePerimeterCache: WildfirePerimeterEntry[] = [];
+
+// Memoized screen-space caches for wildfires
+let wildfireHotspotScreenCache: WildfireHotspotEntry[] = [];
+let wildfirePerimeterScreenCache: WildfirePerimeterEntry[] = [];
 
 export function getLatestAlerts(): NwsAlert[] | null {
   return latestAlerts;
@@ -381,6 +386,94 @@ export function setWildfireHitCache(
 ): void {
   wildfireHotspotCache = hotspots;
   wildfirePerimeterCache = perimeters;
+}
+
+// Memoization state for wildfire drawing
+let lastWildfireFeaturesRef: WildfireFeature[] | null = null;
+let lastWildfireCenterKey = "";
+let lastWildfireZoom = -1;
+let lastWildfireWidth = -1;
+let lastWildfireHeight = -1;
+
+export function getWildfireScreenCache(): {
+  hotspots: WildfireHotspotEntry[];
+  perimeters: WildfirePerimeterEntry[];
+} {
+  return { hotspots: wildfireHotspotScreenCache, perimeters: wildfirePerimeterScreenCache };
+}
+
+export function setWildfireScreenCache(
+  hotspots: WildfireHotspotEntry[],
+  perimeters: WildfirePerimeterEntry[],
+): void {
+  wildfireHotspotScreenCache = hotspots;
+  wildfirePerimeterScreenCache = perimeters;
+}
+
+export function getLastWildfireState(): {
+  featuresRef: WildfireFeature[] | null;
+  centerKey: string;
+  zoom: number;
+  width: number;
+  height: number;
+} {
+  return {
+    featuresRef: lastWildfireFeaturesRef,
+    centerKey: lastWildfireCenterKey,
+    zoom: lastWildfireZoom,
+    width: lastWildfireWidth,
+    height: lastWildfireHeight,
+  };
+}
+
+export function setLastWildfireState(
+  featuresRef: WildfireFeature[] | null,
+  centerKey: string,
+  zoom: number,
+  width: number,
+  height: number,
+): void {
+  lastWildfireFeaturesRef = featuresRef;
+  lastWildfireCenterKey = centerKey;
+  lastWildfireZoom = zoom;
+  lastWildfireWidth = width;
+  lastWildfireHeight = height;
+}
+
+export function drawCachedWildfires(
+  ctx: CanvasRenderingContext2D,
+  hotspots: WildfireHotspotEntry[],
+  perimeters: WildfirePerimeterEntry[],
+): void {
+  for (const h of hotspots) {
+    ctx.beginPath();
+    ctx.arc(h.x, h.y, h.radius, 0, Math.PI * 2);
+    ctx.fillStyle = h.feature.properties.date
+      ? (() => {
+          const ageHours = (Date.now() - new Date(h.feature.properties.date).getTime()) / 3600000;
+          return ageHours < 6 ? "#ef4444" : ageHours < 24 ? "#f97316" : "#fbbf24";
+        })()
+      : "#fbbf24";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  for (const p of perimeters) {
+    const { points } = p;
+    if (points.length < 3) continue;
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = "rgba(249, 115, 22, 0.12)";
+    ctx.fill();
+    ctx.strokeStyle = "#f97316";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
 }
 
 export function getWildfireAtPoint(px: number, py: number): WildfireFeature | null {
