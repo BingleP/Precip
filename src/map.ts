@@ -1,8 +1,8 @@
 import type { HeatmapSample, MapState } from "./types";
 import { MAP_TILE_SIZE, MAP_MIN_ZOOM, MAP_MAX_ZOOM, MAP_DEFAULT_ZOOM, HEATMAP_SCALE, INITIAL_MAP_CENTER } from "./config";
-import { latLonToWorld, projectToMapScreen, screenToMapLocation, setMapCenterFromWorld, clampMapZoom } from "./geo";
+import { latLonToWorld, projectToMapScreen, projectToMapScreenFast, screenToMapLocation, setMapCenterFromWorld, clampMapZoom } from "./geo";
 import { normalizeValue, formatHeatmapValue, getHeatmapTitle } from "./weather";
-import { isInsideAlertPolygon } from "./alerts";
+import { isInsideAlertPolygon, getWildfireAtPoint } from "./alerts";
 import { escapeHTML } from "./ui";
 
 const TILE_CACHE_MAX = 500;
@@ -148,18 +148,20 @@ export function drawMapPlaces(
   height: number,
   activeLocation: { latitude: number; longitude: number; name?: string; admin?: string; country?: string } | null,
   mapState: MapState,
+  centerWorld?: { x: number; y: number },
 ): void {
   const location = activeLocation || mapState.selected;
   if (!location) return;
   const selected = mapState.selected || location;
-  const position = projectToMapScreen(
+  const zoomRound = Math.round(mapState.zoom);
+  const cw = centerWorld || latLonToWorld(mapState.center.latitude, mapState.center.longitude, zoomRound);
+  const position = projectToMapScreenFast(
     selected.latitude,
     selected.longitude,
     width,
     height,
-    mapState.center.latitude,
-    mapState.center.longitude,
-    Math.round(mapState.zoom),
+    cw,
+    zoomRound,
   );
 
   if (position.x < -80 || position.x > width + 80 || position.y < -80 || position.y > height + 80) return;
@@ -405,6 +407,7 @@ export function updateMapTooltip(
   }
 
   const alertPoly = isInsideAlertPolygon(pointerX, pointerY);
+  const wildfire = getWildfireAtPoint(pointerX, pointerY);
 
   let tooltipHTML =
     `<strong>${formatHeatmapValue(layerValue ?? undefined, activeHeatmapLayer)}</strong>` +
@@ -415,6 +418,26 @@ export function updateMapTooltip(
 
   if (alertPoly) {
     tooltipHTML += `<div class="tooltip-alert ${alertPoly.severity.toLowerCase()}"><strong>⚠ ${escapeHTML(alertPoly.event)}</strong><small>${escapeHTML((alertPoly.headline || alertPoly.description || "").slice(0, 180))}</small></div>`;
+  }
+
+  if (wildfire) {
+    const wp = wildfire.properties;
+    let detail = "";
+    if (wp.featureType === "hotspot") {
+      detail += `<strong>🔥 ${wp.source} Hotspot</strong>`;
+      if (wp.date) detail += `<span>${new Date(wp.date).toLocaleString()}</span>`;
+      if (wp.sensor || wp.satellite) detail += `<span>${wp.satellite || ""}${wp.sensor ? " — " + wp.sensor : ""}</span>`;
+      if (wp.confidence) detail += `<span>Confidence: ${wp.confidence}</span>`;
+      if (wp.temperature != null) detail += `<span>Brightness: ${wp.temperature.toFixed(0)}K</span>`;
+    } else {
+      detail += `<strong>🔥 ${wp.source} Fire Perimeter</strong>`;
+      if (wp.firstDate && wp.lastDate) {
+        detail += `<span>${new Date(wp.firstDate).toLocaleDateString()} – ${new Date(wp.lastDate).toLocaleDateString()}</span>`;
+      }
+      if (wp.hotspotCount != null) detail += `<span>Hotspots: ${wp.hotspotCount}</span>`;
+      if (wp.areaHa != null) detail += `<span>Area: ${wp.areaHa.toLocaleString()} ha</span>`;
+    }
+    tooltipHTML += `<div class="tooltip-wildfire">${detail}</div>`;
   }
 
   if (elements.mapTooltip) {

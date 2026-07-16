@@ -1,4 +1,4 @@
-import type { Location, Forecast, WatchlistItem, ForecastSnapshot, AppSettings, HeatmapSample } from "../types";
+import type { Location, Forecast, WatchlistItem, ForecastSnapshot, AppSettings, HeatmapSample, WildfireFeature } from "../types";
 import { elements, activeLocation, latestForecast, mapState, heatmapCanvas, heatmapButtons } from "../state";
 import { MAX_HISTORY_ITEMS } from "../config";
 import {
@@ -18,7 +18,8 @@ import {
   renderMapReadout, renderHeatmapLegend, updateMapHourLabel,
   hideMapTooltip,
 } from "../map";
-import { drawMapAlertPolygons, getMapCenterAlerts, setAlertPolygonsCache } from "../alerts";
+import { projectToMapScreenFast, latLonToWorld } from "../geo";
+import { drawMapAlertPolygons, getMapCenterAlerts, setAlertPolygonsCache, getMapCenterWildfires, setWildfireHitCache } from "../alerts";
 import {
   latestHeatmap, latestHeatmapMeta, activeHeatmapLayer, activeMapHourOffset,
   setLatestHeatmap, setLatestHeatmapMeta,
@@ -247,8 +248,10 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
   const ctx = heatmapCanvas.getContext("2d");
   if (!ctx) return;
   const { width, height } = prepareCanvas(heatmapCanvas, ctx);
+  const zoomRound = Math.round(mapState.zoom);
+  const centerWorld = latLonToWorld(mapState.center.latitude, mapState.center.longitude, zoomRound);
 
-  drawMapTiles(ctx, width, height, mapState.center, Math.round(mapState.zoom), () => {
+  drawMapTiles(ctx, width, height, mapState.center, zoomRound, () => {
     queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
   });
 
@@ -263,7 +266,7 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
       const min = Math.min(...finiteValues);
       const max = Math.max(...finiteValues);
       if (!mapState.drag) {
-        drawHeatmapOverlay(ctx, points, values, layer || activeHeatmapLayer, min, max, width, height, mapState, mapState.center, Math.round(mapState.zoom));
+        drawHeatmapOverlay(ctx, points, values, layer || activeHeatmapLayer, min, max, width, height, mapState, mapState.center, zoomRound);
         renderMapReadout(layer || activeHeatmapLayer, min, max, latestHeatmapMeta, elements.mapReadout);
         renderHeatmapLegend(layer || activeHeatmapLayer, min, max, elements.heatmapLegend);
         updateMapHourLabel(activeMapHourOffset, latestHeatmap, elements.mapHourLabel);
@@ -271,11 +274,106 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
     }
   }
 
-  drawMapPlaces(ctx, width, height, activeLocation, mapState);
+  drawMapPlaces(ctx, width, height, activeLocation, mapState, centerWorld);
 
-  const alertPolygons = drawMapAlertPolygons(ctx, width, height, mapState.center.latitude, mapState.center.longitude, Math.round(mapState.zoom), getMapCenterAlerts());
+  const alertPolygons = drawMapAlertPolygons(ctx, width, height, centerWorld, zoomRound, getMapCenterAlerts());
   setAlertPolygonsCache(alertPolygons);
 
+  drawWildfireLayer(ctx, width, height, centerWorld, zoomRound);
+
+}
+
+function drawWildfireLayer(
+  ctx: CanvasRenderingContext2D,
+  width: number, height: number,
+  centerWorld: { x: number; y: number },
+  zoomRound: number,
+): void {
+  const features = getMapCenterWildfires();
+  if (!features?.length) { setWildfireHitCache([], []); return; }
+
+  const now = Date.now();
+  const margin = 60;
+  const hotspotCache: { x: number; y: number; radius: number; feature: WildfireFeature }[] = [];
+  const perimeterCache: { points: { x: number; y: number }[]; feature: WildfireFeature }[] = [];
+
+  for (const f of features) {
+    const g = f.geometry;
+    if (!g) continue;
+    const props = f.properties;
+
+    if (g.type === "Point" && props.featureType === "hotspot") {
+      const [lon, lat] = g.coordinates as number[];
+      const { x, y } = projectToMapScreenFast(lat, lon, width, height, centerWorld, zoomRound);
+      const ageHours = props.date
+        ? (now - new Date(props.date).getTime()) / 3600000
+        : 999;
+      const radius = Math.max(3, Math.min(8, 6 / Math.pow(2, zoomRound - 8)));
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = ageHours < 6 ? "#ef4444" : ageHours < 24 ? "#f97316" : "#fbbf24";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.4)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      hotspotCache.push({ x, y, radius, feature: f });
+    } else if ((g.type === "Polygon" || g.type === "MultiPolygon") && props.featureType === "perimeter") {
+      const allRings: number[][][] = [];
+      if (g.type === "MultiPolygon") {
+        for (const poly of g.coordinates as number[][][][]) {
+          for (const ring of poly) {
+            allRings.push(ring);
+          }
+        }
+      } else {
+        for (const ring of g.coordinates as number[][][]) {
+          allRings.push(ring);
+        }
+      }
+      for (const ring of allRings) {
+        // Frustum cull per ring
+        let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+        for (const coord of ring) {
+          const lon = coord[0], lat = coord[1];
+          if (lat < minLat) minLat = lat;
+          if (lat > maxLat) maxLat = lat;
+          if (lon < minLon) minLon = lon;
+          if (lon > maxLon) maxLon = lon;
+        }
+        const nw = projectToMapScreenFast(maxLat, minLon, width, height, centerWorld, zoomRound);
+        const ne = projectToMapScreenFast(maxLat, maxLon, width, height, centerWorld, zoomRound);
+        const sw = projectToMapScreenFast(minLat, minLon, width, height, centerWorld, zoomRound);
+        const se = projectToMapScreenFast(minLat, maxLon, width, height, centerWorld, zoomRound);
+        const sx1 = Math.min(nw.x, ne.x, sw.x, se.x);
+        const sy1 = Math.min(nw.y, ne.y, sw.y, se.y);
+        const sx2 = Math.max(nw.x, ne.x, sw.x, se.x);
+        const sy2 = Math.max(nw.y, ne.y, sw.y, se.y);
+        if (sx2 < -margin || sx1 > width + margin || sy2 < -margin || sy1 > height + margin) {
+          continue;
+        }
+
+        const screenPts: { x: number; y: number }[] = [];
+        for (const coord of ring) {
+          screenPts.push(projectToMapScreenFast(coord[1], coord[0], width, height, centerWorld, zoomRound));
+        }
+        if (screenPts.length < 3) continue;
+        ctx.beginPath();
+        ctx.moveTo(screenPts[0].x, screenPts[0].y);
+        for (let i = 1; i < screenPts.length; i++) {
+          ctx.lineTo(screenPts[i].x, screenPts[i].y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = "rgba(249, 115, 22, 0.12)";
+        ctx.fill();
+        ctx.strokeStyle = "#f97316";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        perimeterCache.push({ points: screenPts, feature: f });
+      }
+    }
+  }
+
+  setWildfireHitCache(hotspotCache, perimeterCache);
 }
 
 export function renderHeatmapLoading(message = "Loading regional weather layer"): void {

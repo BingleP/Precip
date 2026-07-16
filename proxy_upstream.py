@@ -1,4 +1,6 @@
 import concurrent.futures
+import csv
+import io
 import json
 import os
 import sys
@@ -6,13 +8,14 @@ import urllib.parse
 import urllib.request
 
 from proxy_estimators import estimate_sunrise_sunset, estimate_gust_kmh, estimate_visibility_meters, estimate_cape_jkg, estimate_apparent_temperature, estimate_surface_pressure, estimate_solar_hour_angle, estimate_uv_index, dew_point_celsius
-from proxy_cache import rounded, rounded_list
+from proxy_cache import rounded, rounded_list, zone_geometry_get, zone_geometry_set
 
 
 USER_AGENT = "PrecipProxy/1.0 (+https://precip.kerrick.ca)"
 PLACE_CLASSES = {"place", "boundary"}
 CA_RISK_MAP = {"red": "Extreme", "orange": "Severe", "yellow": "Moderate"}
 
+FIRMS_MAP_KEY = os.environ.get("FIRMS_MAP_KEY", "")
 SLIDER_BASE = "https://slider.cira.colostate.edu"
 
 ALLOWED_ENDPOINTS = {
@@ -25,6 +28,7 @@ ALLOWED_ENDPOINTS = {
     "/api/spc-outlook",
     "/api/ca-alerts",
     "/api/all-alerts",
+    "/api/wildfires",
     "/api/slider-catalog",
     "/health",
 }
@@ -123,11 +127,6 @@ def build_upstream(path, query):
             "sector": sector,
         })
         return f"https://www.star.nesdis.noaa.gov/goes/sector.php?{url}", "text/html; charset=utf-8"
-
-    if path == "/api/alerts":
-        latitude = require(query, "latitude").strip()
-        longitude = require(query, "longitude").strip()
-        return f"https://api.weather.gov/alerts/active?point={latitude},{longitude}", "application/json"
 
     if path == "/api/spc-outlook":
         layer = query.get("layer", ["1"])[0].strip()
@@ -311,9 +310,55 @@ def build_ca_alerts_payload(latitude, longitude):
     return json.dumps({"type": "FeatureCollection", "features": normalized}).encode("utf-8")
 
 
+def _enrich_zone_geometries(features):
+    """Enrich geometry-less US alert features with zone polygon geometries (in-place)."""
+    zone_fetch_tasks = []
+    for f in features:
+        if f.get("geometry") is None:
+            zones = f.get("properties", {}).get("affectedZones", [])
+            if zones:
+                zone_fetch_tasks.append((f, zones))
+
+    if not zone_fetch_tasks:
+        return
+
+    all_zone_urls = list(set(z for _, zones in zone_fetch_tasks for z in zones))
+    zone_geometries = {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_url = {
+            executor.submit(_fetch_zone_geometry, url): url
+            for url in all_zone_urls
+        }
+        for future in concurrent.futures.as_completed(future_to_url):
+            url = future_to_url[future]
+            try:
+                geom = future.result()
+                if geom:
+                    zone_geometries[url] = geom
+            except Exception:
+                pass
+
+    for f, zones in zone_fetch_tasks:
+        zone_polys = []
+        for z in zones:
+            geom = zone_geometries.get(z)
+            if geom:
+                if geom["type"] == "Polygon":
+                    zone_polys.append(geom["coordinates"])
+                elif geom["type"] == "MultiPolygon":
+                    zone_polys.extend(geom["coordinates"])
+        if zone_polys:
+            if len(zone_polys) == 1:
+                f["geometry"] = {"type": "Polygon", "coordinates": zone_polys[0]}
+            else:
+                f["geometry"] = {"type": "MultiPolygon", "coordinates": zone_polys}
+
+
 def build_all_alerts_payload():
-    us_url = "https://api.weather.gov/alerts/active?status=actual&limit=500"
-    ca_url = "https://api.weather.gc.ca/collections/weather-alerts/items?f=json&limit=500&sortby=-cap_base_effective_datetime_e"
+    us_url = "https://api.weather.gov/alerts/active?status=actual"
+    ca_url = "https://api.weather.gc.ca/collections/weather-alerts/items?f=json&limit=500"
+    us_features = []
     all_features = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
@@ -353,10 +398,251 @@ def build_all_alerts_payload():
                             },
                         })
                 else:
-                    all_features.extend(features)
+                    us_features = features
             except Exception as exc:
                 print(f"All-alerts upstream failed: {exc}", file=sys.stderr)
                 continue
+
+    _enrich_zone_geometries(us_features)
+    for f in us_features:
+        if "properties" in f and "source" not in f["properties"]:
+            f["properties"]["source"] = "NWS"
+    all_features.extend(us_features)
+    return json.dumps({"type": "FeatureCollection", "features": all_features}).encode("utf-8")
+
+
+def _fetch_zone_geometry(zone_url):
+    """Fetch and cache a single NWS forecast zone polygon geometry."""
+    cached = zone_geometry_get(zone_url)
+    if cached:
+        return cached
+    try:
+        data = fetch_json(zone_url)
+        g = data.get("geometry")
+        if g and g.get("type") in ("Polygon", "MultiPolygon"):
+            zone_geometry_set(zone_url, g)
+            return g
+    except Exception:
+        pass
+    return None
+
+
+def build_us_alerts_payload(latitude, longitude):
+    """Fetch NWS alerts and enrich geometry-less alerts with zone polygons."""
+    url = f"https://api.weather.gov/alerts/active?point={latitude},{longitude}"
+    data = fetch_json(url)
+    features = data.get("features") or []
+
+    # Collect alerts without geometry that have affectedZones
+    zone_fetch_tasks = []
+    for f in features:
+        if f.get("geometry") is None:
+            zones = f.get("properties", {}).get("affectedZones", [])
+            if zones:
+                zone_fetch_tasks.append((f, zones))
+
+    if zone_fetch_tasks:
+        all_zone_urls = list(set(z for _, zones in zone_fetch_tasks for z in zones))
+        zone_geometries = {}
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_url = {
+                executor.submit(_fetch_zone_geometry, url): url
+                for url in all_zone_urls
+            }
+            for future in concurrent.futures.as_completed(future_to_url):
+                url = future_to_url[future]
+                try:
+                    geom = future.result()
+                    if geom:
+                        zone_geometries[url] = geom
+                except Exception:
+                    pass
+
+        for f, zones in zone_fetch_tasks:
+            zone_polys = []
+            for z in zones:
+                geom = zone_geometries.get(z)
+                if geom:
+                    if geom["type"] == "Polygon":
+                        zone_polys.append(geom["coordinates"])
+                    elif geom["type"] == "MultiPolygon":
+                        zone_polys.extend(geom["coordinates"])
+            if zone_polys:
+                if len(zone_polys) == 1:
+                    f["geometry"] = {"type": "Polygon", "coordinates": zone_polys[0]}
+                else:
+                    f["geometry"] = {"type": "MultiPolygon", "coordinates": zone_polys}
+
+    return json.dumps(data).encode("utf-8")
+
+
+CWFIS_GEO = "https://cwfis.cfs.nrcan.gc.ca/geoserver/wfs"
+FIRMS_BASE = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
+FIRMS_SOURCES = ["VIIRS_NOAA20_NRT", "VIIRS_SNPP_NRT", "MODIS_NRT"]
+
+
+def _cwfis_query(type_names, bbox_str, sort_by=None):
+    """Query CWFIS WFS and return parsed GeoJSON.
+    Note: bbox filtering is done client-side; WFS bbox defaults to EPSG:3978."""
+    sort_param = f"&sortBy={sort_by}" if sort_by else ""
+    url = (
+        f"{CWFIS_GEO}?request=GetFeature&service=WFS&version=2.0.0"
+        f"&typeNames={type_names}&outputFormat=application/json"
+        f"&srsName=EPSG:4326&count=500{sort_param}"
+    )
+    try:
+        data = fetch_json(url)
+        features = data.get("features") or []
+        west, south, east, north = (float(x) for x in bbox_str.split(","))
+        filtered = []
+        for f in features:
+            g = f.get("geometry")
+            if not g:
+                continue
+            if g["type"] == "Point":
+                coords = g["coordinates"]
+                if west <= coords[0] <= east and south <= coords[1] <= north:
+                    filtered.append(f)
+            elif g["type"] in ("Polygon", "MultiPolygon"):
+                rings = [g["coordinates"][0]] if g["type"] == "Polygon" else [p[0] for p in g["coordinates"]]
+                in_bbox = False
+                for ring in rings:
+                    for lon, lat in ring:
+                        if west <= lon <= east and south <= lat <= north:
+                            in_bbox = True
+                            break
+                    if in_bbox:
+                        break
+                if in_bbox:
+                    filtered.append(f)
+        return filtered
+    except Exception as exc:
+        print(f"CWFIS {type_names} query failed: {exc}", file=sys.stderr)
+        return []
+
+
+def _fetch_cwfis_hotspots(bbox_str):
+    """Fetch CWFIS hotspot point detections and normalize to unified format."""
+    features = _cwfis_query("public:hotspots", bbox_str, sort_by="rep_date%20D")
+    result = []
+    for f in features:
+        p = f.get("properties") or {}
+        g = f.get("geometry")
+        if not g:
+            continue
+        result.append({
+            "type": "Feature",
+            "geometry": g,
+            "properties": {
+                "id": p.get("id") or p.get("objectid") or "",
+                "featureType": "hotspot",
+                "source": "CWFIS",
+                "date": p.get("rep_date", ""),
+                "agency": p.get("agency", ""),
+                "sensor": p.get("sensor", ""),
+                "satellite": p.get("satellite", ""),
+                "temperature": p.get("temp"),
+                "confidence": "",
+            },
+        })
+    return result
+
+
+def _fetch_cwfis_perimeters(bbox_str):
+    """Fetch CWFIS fire perimeter polygons and normalize to unified format."""
+    features = _cwfis_query("public:m3_polygons_current", bbox_str)
+    result = []
+    for f in features:
+        p = f.get("properties") or {}
+        g = f.get("geometry")
+        if not g:
+            continue
+        result.append({
+            "type": "Feature",
+            "geometry": g,
+            "properties": {
+                "id": p.get("id") or p.get("objectid") or "",
+                "featureType": "perimeter",
+                "source": "CWFIS",
+                "firstDate": p.get("firstdate", ""),
+                "lastDate": p.get("lastdate", ""),
+                "hotspotCount": p.get("hcount"),
+                "areaHa": p.get("area"),
+            },
+        })
+    return result
+
+
+def _parse_firms_csv(text):
+    """Parse FIRMS CSV text into GeoJSON features."""
+    result = []
+    try:
+        reader = csv.DictReader(io.StringIO(text))
+        for row in reader:
+            lat = row.get("latitude")
+            lon = row.get("longitude")
+            if not lat or not lon:
+                continue
+            conf = (row.get("confidence") or "").lower()
+            if conf and conf not in ("h", "high", "n", "nominal"):
+                pass
+            result.append({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [float(lon), float(lat)]},
+                "properties": {
+                    "id": "",
+                    "featureType": "hotspot",
+                    "source": "FIRMS",
+                    "date": f"{row.get('acq_date', '')}T{row.get('acq_time', ''):0>4s}Z",
+                    "agency": "",
+                    "sensor": row.get("instrument", ""),
+                    "satellite": row.get("satellite", ""),
+                    "temperature": float(row.get("bright_ti4", 0) or 0),
+                    "confidence": "high" if conf.startswith("h") else "nominal" if conf.startswith("n") else conf,
+                },
+            })
+    except Exception as exc:
+        print(f"FIRMS CSV parse failed: {exc}", file=sys.stderr)
+    return result
+
+
+def _fetch_firms_hotspots(bbox_str):
+    """Fetch FIRMS hotspot data. Returns empty if no MAP_KEY configured."""
+    if not FIRMS_MAP_KEY:
+        return []
+    all_features = []
+    for source in FIRMS_SOURCES:
+        url = f"{FIRMS_BASE}/{FIRMS_MAP_KEY}/{source}/{bbox_str}/1"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                text = resp.read().decode("utf-8")
+                if not text.startswith("latitude"):
+                    continue
+                all_features.extend(_parse_firms_csv(text))
+        except Exception as exc:
+            print(f"FIRMS {source} failed: {exc}", file=sys.stderr)
+            continue
+    return all_features
+
+
+def build_wildfires_payload(bbox_str):
+    """Fetch wildfire data from CWFIS and FIRMS, return unified GeoJSON."""
+    all_features = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {
+            executor.submit(_fetch_cwfis_hotspots, bbox_str): "cwfis_hotspots",
+            executor.submit(_fetch_cwfis_perimeters, bbox_str): "cwfis_perimeters",
+            executor.submit(_fetch_firms_hotspots, bbox_str): "firms_hotspots",
+        }
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                all_features.extend(future.result())
+            except Exception as exc:
+                src = futures[future]
+                print(f"Wildfire fetch ({src}) failed: {exc}", file=sys.stderr)
 
     return json.dumps({"type": "FeatureCollection", "features": all_features}).encode("utf-8")
 

@@ -13,6 +13,7 @@ CACHE_TTLS = {
     "/api/ca-alerts": 300,
     "/api/all-alerts": 300,
     "/api/slider-catalog": 600,
+    "/api/wildfires": 900,
 }
 
 MAX_CACHE_ENTRIES = 500
@@ -20,6 +21,27 @@ CACHE_EVICT_BATCH = 50
 
 cache = {}
 cache_lock = threading.Lock()
+
+# Zone geometry cache (county boundaries rarely change)
+ZONE_GEOMETRY_TTL = 86400  # 24 hours
+_zone_geometry_cache = {}
+_zone_cache_lock = threading.Lock()
+
+
+def zone_geometry_get(url):
+    with _zone_cache_lock:
+        entry = _zone_geometry_cache.get(url)
+        if entry and entry["expires_at"] > time.time():
+            return entry["geometry"]
+    return None
+
+
+def zone_geometry_set(url, geometry):
+    with _zone_cache_lock:
+        _zone_geometry_cache[url] = {
+            "geometry": geometry,
+            "expires_at": time.time() + ZONE_GEOMETRY_TTL,
+        }
 
 
 def cache_get(key, allow_stale=False):

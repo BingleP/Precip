@@ -434,6 +434,23 @@ a {
   line-height: 1.25;
 }
 
+.tooltip-wildfire {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.tooltip-wildfire strong {
+  font-size: 11px;
+  color: #f97316;
+}
+
+.tooltip-wildfire span {
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.25;
+}
+
 .map-hover-indicator {
   position: absolute;
   z-index: 12;

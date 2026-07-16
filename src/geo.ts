@@ -35,6 +35,21 @@ export function projectToMapScreen(
   };
 }
 
+export function projectToMapScreenFast(
+  latitude: number,
+  longitude: number,
+  width: number,
+  height: number,
+  centerWorld: { x: number; y: number },
+  zoom: number,
+): { x: number; y: number } {
+  const pointWorld = latLonToWorld(latitude, longitude, zoom);
+  return {
+    x: width / 2 + pointWorld.x - centerWorld.x,
+    y: height / 2 + pointWorld.y - centerWorld.y,
+  };
+}
+
 export function screenToMapLocation(
   x: number,
   y: number,

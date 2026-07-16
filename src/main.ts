@@ -8,11 +8,11 @@ if (!document.cookie.split("; ").find((row) => row.startsWith("precip.preferredL
 import type { Location, NwsAlert } from "./types";
 import { MAP_DEFAULT_ZOOM, NOAA_SECTORS, SLIDER_SATELLITES, SLIDER_BASE, } from "./config";
 import { getAppSettings, saveAppSettings, getPreferredLocation, savePreferredLocation, getWatchlist, getForecastHistory, saveForecastHistory, saveWatchlist, removeCookieValue, } from "./storage";
-import { fetchNoaaSectorCatalog, fetchSliderCatalog, fetchAlerts } from "./api";
+import { fetchNoaaSectorCatalog, fetchSliderCatalog, fetchAllAlerts, fetchWildfires } from "./api";
 import { resolveLocation, searchLocationSuggestions, searchAlertSuggestions, getAlertCentroid, } from "./search";
 import { zoomMap, startMapDrag, moveMapDrag, endMapDrag, resetMapView, updateMapTooltip, hideMapTooltip, } from "./map";
 import { updateSatelliteForLocation, loadSatelliteSector, getNoaaSectorById, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, renderSatelliteProductOptions, renderSatelliteImage, updateSliderForLocation, loadSliderSector, setActiveSource, loadSliderImageWithFallback, resolveSliderSatellite, resolveSliderSector } from "./satellite";
-import { setMapCenterAlerts, getAllAlerts } from "./alerts";
+import { setMapCenterAlerts, setMapCenterWildfires, getAllAlerts } from "./alerts";
 import { selectTab, togglePanel, formatLocationLabel, normalizeSearchText, showToast } from "./ui";
 import { loadBrowseAlerts } from "./panels/alerts";
 import { exportSettingsPreset, importSettingsPreset, } from "./settings";
@@ -46,12 +46,12 @@ let tooltipRaf: number | null = null;
 let satelliteOverlayDrag: { startX: number; startY: number; left: number; top: number } | null = null;
 let satelliteOverlayResizeDrag: { startX: number; startY: number; width: number; height: number } | null = null;
 let mapCenterAlertTimer: ReturnType<typeof setTimeout> | null = null;
+let wildfireFetchTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function fetchMapCenterAlerts(): Promise<void> {
-  const center = mapState.center;
-  if (!center || !center.latitude || !center.longitude) return;
+  if (!mapState.center) return;
   try {
-    const alerts = await fetchAlerts({ latitude: center.latitude, longitude: center.longitude } as Location);
+    const alerts = await fetchAllAlerts();
     setMapCenterAlerts(alerts);
     renderHeatmap(latestHeatmap, activeHeatmapLayer);
   } catch {
@@ -63,6 +63,32 @@ async function fetchMapCenterAlerts(): Promise<void> {
 function scheduleMapCenterAlertFetch(debounceMs = 600): void {
   if (mapCenterAlertTimer) clearTimeout(mapCenterAlertTimer);
   mapCenterAlertTimer = setTimeout(fetchMapCenterAlerts, debounceMs);
+}
+
+async function fetchMapCenterWildfires(): Promise<void> {
+  const center = mapState.center;
+  if (!center || !center.latitude || !center.longitude) return;
+  const zoom = Math.round(mapState.zoom);
+  const viewSpan = Math.max(1, 360 / Math.pow(2, zoom));
+  const bbox = {
+    west: center.longitude - viewSpan,
+    south: center.latitude - viewSpan,
+    east: center.longitude + viewSpan,
+    north: center.latitude + viewSpan,
+  };
+  try {
+    const features = await fetchWildfires(bbox);
+    setMapCenterWildfires(features);
+    renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  } catch {
+    setMapCenterWildfires(null);
+    renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  }
+}
+
+function scheduleWildfireFetch(debounceMs = 600): void {
+  if (wildfireFetchTimer) clearTimeout(wildfireFetchTimer);
+  wildfireFetchTimer = setTimeout(fetchMapCenterWildfires, debounceMs);
 }
 
 // Initialize satellite controls
@@ -241,7 +267,7 @@ if (heatmapCanvas) {
         renderHeatmap(latestHeatmap, activeHeatmapLayer);
       },
       () => renderHeatmap(latestHeatmap, activeHeatmapLayer),
-      () => { scheduleHeatmapRefresh(); scheduleMapCenterAlertFetch(); },
+      () => { scheduleHeatmapRefresh(); scheduleMapCenterAlertFetch(); scheduleWildfireFetch(); },
       (e) => {
         if (!mapState.drag) {
           if (tooltipRaf !== null) cancelAnimationFrame(tooltipRaf);
@@ -260,7 +286,7 @@ if (heatmapCanvas) {
   heatmapCanvas.addEventListener("pointerup", (event) => {
     endMapDrag(
       event, mapState, activePointers, pinchState,
-      () => { scheduleHeatmapRefresh(); scheduleMapCenterAlertFetch(); },
+      () => { scheduleHeatmapRefresh(); scheduleMapCenterAlertFetch(); scheduleWildfireFetch(); },
       (lat, lon) => selectMapLocation(lat, lon),
     );
   });
@@ -300,21 +326,21 @@ elements.mapZoomIn?.addEventListener("click", () => {
   zoomMap(1, mapState, () => {
     hideMapTooltip({ mapTooltip: elements.mapTooltip, mapHoverIndicator: elements.mapHoverIndicator });
     renderHeatmap(latestHeatmap, activeHeatmapLayer);
-  }, () => { scheduleHeatmapRefresh(); scheduleMapCenterAlertFetch(); });
+  }, () => { scheduleHeatmapRefresh(); scheduleMapCenterAlertFetch(); scheduleWildfireFetch(); });
 });
 
 elements.mapZoomOut?.addEventListener("click", () => {
   zoomMap(-1, mapState, () => {
     hideMapTooltip({ mapTooltip: elements.mapTooltip, mapHoverIndicator: elements.mapHoverIndicator });
     renderHeatmap(latestHeatmap, activeHeatmapLayer);
-  }, () => { scheduleHeatmapRefresh(); scheduleMapCenterAlertFetch(); });
+  }, () => { scheduleHeatmapRefresh(); scheduleMapCenterAlertFetch(); scheduleWildfireFetch(); });
 });
 
 elements.mapReset?.addEventListener("click", () => {
   resetMapView(mapState, MAP_DEFAULT_ZOOM, activeLocation);
   renderHeatmap(latestHeatmap, activeHeatmapLayer);
   scheduleHeatmapRefresh(0);
-  scheduleMapCenterAlertFetch();
+  scheduleMapCenterAlertFetch(); scheduleWildfireFetch();
 });
 
 heatmapButtons.forEach((button) => {

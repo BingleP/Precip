@@ -14,7 +14,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from proxy_cache import CACHE_TTLS, cache_get, cache_set, cache_stats, rounded, rounded_list
 from proxy_upstream import (
     ALLOWED_ENDPOINTS, require, fetch_upstream, fetch_json,
-    build_upstream, build_geocode_payload, build_ca_alerts_payload, build_all_alerts_payload,
+    build_upstream, build_geocode_payload, build_ca_alerts_payload,
+    build_us_alerts_payload, build_all_alerts_payload,
+    build_wildfires_payload,
     aggregate_daily, symbol_to_weather_code,
 )
 from proxy_estimators import (
@@ -235,8 +237,31 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
+            if parsed.path == "/api/alerts":
+                latitude = require(query, "latitude").strip()
+                longitude = require(query, "longitude").strip()
+                body = build_us_alerts_payload(latitude, longitude)
+                cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
+                self.send_response(200)
+                self.send_common_headers("application/json; charset=utf-8", len(body))
+                self.send_header("X-Precip-Cache", "MISS")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             if parsed.path == "/api/all-alerts":
                 body = build_all_alerts_payload()
+                cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
+                self.send_response(200)
+                self.send_common_headers("application/json; charset=utf-8", len(body))
+                self.send_header("X-Precip-Cache", "MISS")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/wildfires":
+                bbox = require(query, "bbox").strip()
+                body = build_wildfires_payload(bbox)
                 cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
                 self.send_response(200)
                 self.send_common_headers("application/json; charset=utf-8", len(body))

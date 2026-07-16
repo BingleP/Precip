@@ -1,4 +1,4 @@
-import type { Forecast, AirQuality, NwsAlert, SpcCollection, NoaaCatalog, NoaaSector, Location, CacheMeta, NoaaProduct } from "./types";
+import type { Forecast, AirQuality, NwsAlert, SpcCollection, NoaaCatalog, NoaaSector, Location, CacheMeta, NoaaProduct, WildfireFeature } from "./types";
 import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, ALERT_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES, SLIDER_PRODUCT_NAMES } from "./config";
 import { getCachedApiResponse, setCachedApiResponse } from "./storage";
 import { worldToLatLon } from "./geo";
@@ -274,6 +274,29 @@ export function setCachedHeatmap(cacheKey: string, data: unknown): void {
   while (heatmapCache.size > HEATMAP_MAX_CACHE_ENTRIES) {
     const oldestKey = heatmapCache.keys().next().value;
     if (oldestKey) heatmapCache.delete(oldestKey);
+  }
+}
+
+const wildfireCache = new Map<string, { savedAt: number; data: WildfireFeature[] }>();
+const WILDFIRE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export async function fetchWildfires(bbox: { west: number; south: number; east: number; north: number }): Promise<WildfireFeature[]> {
+  const cacheKey = `${bbox.west.toFixed(2)},${bbox.south.toFixed(2)},${bbox.east.toFixed(2)},${bbox.north.toFixed(2)}`;
+  const cached = wildfireCache.get(cacheKey);
+  if (cached && Date.now() - cached.savedAt < WILDFIRE_CACHE_TTL_MS) {
+    return cached.data;
+  }
+  try {
+    const url = buildApiUrl("/wildfires");
+    url.searchParams.set("bbox", cacheKey);
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) return [];
+    const body = await response.json();
+    const features = body.features || [];
+    wildfireCache.set(cacheKey, { savedAt: Date.now(), data: features });
+    return features;
+  } catch {
+    return [];
   }
 }
 

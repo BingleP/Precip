@@ -1,6 +1,6 @@
-import type { NwsAlert, AlertPolygon, SpcCollection } from "./types";
+import type { NwsAlert, AlertPolygon, SpcCollection, WildfireFeature } from "./types";
 import { NWS_SEVERITY_ORDER, TORNADO_EVENTS, ALERT_SEVERITY_COLORS, SPC_CATEGORIES, SPC_TORNADO_PROB } from "./config";
-import { pointInPolygon, projectToMapScreen } from "./geo";
+import { pointInPolygon, projectToMapScreenFast } from "./geo";
 
 let latestAlerts: NwsAlert[] | null = null;
 let mapCenterAlerts: NwsAlert[] | null = null;
@@ -8,6 +8,18 @@ let latestSpcCat: SpcCollection | null = null;
 let latestSpcTorn: SpcCollection | null = null;
 let alertPolygonsCache: AlertPolygon[] = [];
 let allAlerts: NwsAlert[] | null = null;
+let mapCenterWildfires: WildfireFeature[] | null = null;
+
+interface WildfireHotspotEntry {
+  x: number; y: number; radius: number;
+  feature: WildfireFeature;
+}
+interface WildfirePerimeterEntry {
+  points: { x: number; y: number }[];
+  feature: WildfireFeature;
+}
+let wildfireHotspotCache: WildfireHotspotEntry[] = [];
+let wildfirePerimeterCache: WildfirePerimeterEntry[] = [];
 
 export function getLatestAlerts(): NwsAlert[] | null {
   return latestAlerts;
@@ -57,6 +69,14 @@ export function setAllAlerts(alerts: NwsAlert[] | null): void {
   allAlerts = alerts;
 }
 
+export function getMapCenterWildfires(): WildfireFeature[] | null {
+  return mapCenterWildfires;
+}
+
+export function setMapCenterWildfires(features: WildfireFeature[] | null): void {
+  mapCenterWildfires = features;
+}
+
 export function updateNwsAlerts(
   alerts: NwsAlert[],
   _elements: Record<string, HTMLElement | null>,
@@ -103,8 +123,7 @@ export function drawMapAlertPolygons(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
-  centerLat: number,
-  centerLon: number,
+  centerWorld: { x: number; y: number },
   zoom: number,
   alertsOverride?: NwsAlert[] | null,
 ): AlertPolygon[] {
@@ -117,16 +136,39 @@ export function drawMapAlertPolygons(
   );
   if (!polyAlerts.length) return cache;
 
+  const margin = 60;
+
   for (const alert of polyAlerts) {
     const coords = alert.geometry!.coordinates;
     const rings = alert.geometry!.type === "MultiPolygon"
       ? coords[0]
       : [coords[0]];
     const ring = rings[0] as number[][];
+
+    // Frustum cull: compute lat/lon bbox and check screen-space visibility
+    let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+    for (const [lon, lat] of ring) {
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lon < minLon) minLon = lon;
+      if (lon > maxLon) maxLon = lon;
+    }
+    const nw = projectToMapScreenFast(maxLat, minLon, width, height, centerWorld, zoom);
+    const ne = projectToMapScreenFast(maxLat, maxLon, width, height, centerWorld, zoom);
+    const sw = projectToMapScreenFast(minLat, minLon, width, height, centerWorld, zoom);
+    const se = projectToMapScreenFast(minLat, maxLon, width, height, centerWorld, zoom);
+    const sx1 = Math.min(nw.x, ne.x, sw.x, se.x);
+    const sy1 = Math.min(nw.y, ne.y, sw.y, se.y);
+    const sx2 = Math.max(nw.x, ne.x, sw.x, se.x);
+    const sy2 = Math.max(nw.y, ne.y, sw.y, se.y);
+    if (sx2 < -margin || sx1 > width + margin || sy2 < -margin || sy1 > height + margin) {
+      continue;
+    }
+
     const severity = alert.properties.severity || "Unknown";
     const colors = ALERT_SEVERITY_COLORS[severity] || ALERT_SEVERITY_COLORS.Unknown;
     const screenPoints = ring.map(([lon, lat]) =>
-      projectToMapScreen(lat, lon, width, height, centerLat, centerLon, zoom),
+      projectToMapScreenFast(lat, lon, width, height, centerWorld, zoom),
     );
 
     cache.push({
@@ -233,4 +275,35 @@ export function renderSpcOutlook(center: { latitude: number; longitude: number }
     return `<div class="empty-signal">No SPC convective outlook risk for this area today.</div>`;
   }
   return items.join("");
+}
+
+export function setWildfireHitCache(
+  hotspots: { x: number; y: number; radius: number; feature: WildfireFeature }[],
+  perimeters: { points: { x: number; y: number }[]; feature: WildfireFeature }[],
+): void {
+  wildfireHotspotCache = hotspots;
+  wildfirePerimeterCache = perimeters;
+}
+
+export function getWildfireAtPoint(px: number, py: number): WildfireFeature | null {
+  for (const h of wildfireHotspotCache) {
+    const dx = px - h.x;
+    const dy = py - h.y;
+    if (dx * dx + dy * dy <= h.radius * h.radius) {
+      return h.feature;
+    }
+  }
+  for (const p of wildfirePerimeterCache) {
+    const { points } = p;
+    let inside = false;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+      const xi = points[i].x, yi = points[i].y;
+      const xj = points[j].x, yj = points[j].y;
+      if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+    if (inside) return p.feature;
+  }
+  return null;
 }

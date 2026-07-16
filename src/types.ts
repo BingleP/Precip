@@ -115,6 +115,29 @@ export interface NwsAlert {
   };
 }
 
+export interface WildfireFeature {
+  type: "Feature";
+  geometry: {
+    type: string;
+    coordinates: any;
+  };
+  properties: {
+    id?: string;
+    featureType: "hotspot" | "perimeter";
+    source: "CWFIS" | "FIRMS";
+    date?: string;
+    agency?: string;
+    sensor?: string;
+    satellite?: string;
+    confidence?: string;
+    temperature?: number;
+    firstDate?: string;
+    lastDate?: string;
+    hotspotCount?: number;
+    areaHa?: number;
+  };
+}
+
 export interface SpcFeature {
   type: string;
   properties: {
