@@ -19,13 +19,33 @@ function getMagnitudeColor(magnitude: number): string {
   return EARTHQUAKE_COLORS.minor;
 }
 
-function getMagnitudeRadius(magnitude: number): number {
+export function getMagnitudeRadius(magnitude: number): number {
   if (magnitude >= 8) return 14;
   if (magnitude >= 7) return 11;
   if (magnitude >= 6) return 9;
   if (magnitude >= 5) return 7;
   if (magnitude >= 4) return 5;
   return 4;
+}
+
+export function getEarthquakeAtPoint(
+  px: number, py: number,
+  earthquakes: Earthquake[],
+  width: number, height: number,
+  centerWorld: { x: number; y: number },
+  zoom: number,
+): Earthquake | null {
+  if (!earthquakes?.length) return null;
+  for (const eq of earthquakes) {
+    const { x, y } = projectToMapScreenFast(eq.latitude, eq.longitude, width, height, centerWorld, zoom);
+    const radius = getMagnitudeRadius(eq.magnitude);
+    const dx = px - x;
+    const dy = py - y;
+    if (dx * dx + dy * dy <= (radius + 4) * (radius + 4)) {
+      return eq;
+    }
+  }
+  return null;
 }
 
 export function drawEarthquakes(

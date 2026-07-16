@@ -2,7 +2,8 @@ import type { HeatmapSample, MapState } from "./types";
 import { MAP_TILE_SIZE, MAP_MIN_ZOOM, MAP_MAX_ZOOM, MAP_DEFAULT_ZOOM, HEATMAP_SCALE, INITIAL_MAP_CENTER } from "./config";
 import { latLonToWorld, projectToMapScreen, projectToMapScreenFast, screenToMapLocation, setMapCenterFromWorld, clampMapZoom } from "./geo";
 import { normalizeValue, formatHeatmapValue, getHeatmapTitle } from "./weather";
-import { isInsideAlertPolygonSpatial, getWildfireAtPoint } from "./alerts";
+import { isInsideAlertPolygonSpatial, getWildfireAtPoint, getEarthquakes, showEarthquakes } from "./alerts";
+import { getEarthquakeAtPoint } from "./earthquakes";
 import { escapeHTML } from "./ui";
 
 const TILE_CACHE_MAX = 500;
@@ -537,6 +538,20 @@ export function updateMapTooltip(
       if (wp.areaHa != null) detail += `<span>Area: ${wp.areaHa.toLocaleString()} ha</span>`;
     }
     tooltipHTML += `<div class="tooltip-wildfire">${detail}</div>`;
+  }
+
+  if (showEarthquakes) {
+    const eq = getEarthquakeAtPoint(
+      pointerX, pointerY,
+      getEarthquakes(),
+      rect.width, rect.height,
+      latLonToWorld(mapState.center.latitude, mapState.center.longitude, Math.round(mapState.zoom)),
+      Math.round(mapState.zoom),
+    );
+    if (eq) {
+      const time = eq.time ? new Date(Number(eq.time) || eq.time).toLocaleString() : "Unknown";
+      tooltipHTML += `<div class="tooltip-earthquake"><strong>🌍 M${eq.magnitude.toFixed(1)}</strong><small>${eq.source} · ${eq.place}</small><span>Depth: ${eq.depth.toFixed(1)} km · ${time}</span>${eq.tsunami ? '<span class="tsunami-warning">⚠ Tsunami warning active</span>' : ""}</div>`;
+    }
   }
 
   if (elements.mapTooltip) {
