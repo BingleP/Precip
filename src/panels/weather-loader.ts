@@ -5,6 +5,7 @@ import { fetchForecast, fetchAirQuality, fetchAlerts, fetchSpcOutlook } from "..
 import { fetchHeatmap } from "../heatmap";
 import { resolveLocation, reverseGeocodeLocation } from "../search";
 import { updateNwsAlerts, setLatestAlerts, setLatestSpcCat, setLatestSpcTorn, renderSpcOutlook, setMapCenterAlerts } from "../alerts";
+import { renderLocalAlerts } from "../panels/alerts";
 import { updateSatelliteForLocation, setSatelliteTabLoaded } from "../satellite";
 import { updateCurrentConditions, updateWeatherWarning, setWarningBarStandby, updateWarningBar } from "../panels/now";
 import { renderPatterns, renderStormToolkit, renderConfidence, renderContext } from "../panels/trends";
@@ -119,8 +120,10 @@ export async function hydrateSupplementalWeather(location: Location, requestId: 
   if (alertsResult.status === "fulfilled") {
     if (alertsResult.value.length) {
       updateNwsAlerts(alertsResult.value, elements as unknown as Record<string, HTMLElement | null>, showToast, updateWarningBar);
+      renderLocalAlerts(alertsResult.value);
     } else {
       setLatestAlerts(null);
+      renderLocalAlerts([]);
       const alertBadge = document.querySelector('.tab-button[data-tab="now"] .alert-badge');
       if (alertBadge) alertBadge.remove();
       if (latestForecast) updateWeatherWarning(latestForecast);

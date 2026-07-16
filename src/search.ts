@@ -1,5 +1,5 @@
-import type { Location, GeocodingResult } from "./types";
-import { LOCATION_SUGGESTION_LIMIT } from "./config";
+import type { Location, GeocodingResult, NwsAlert } from "./types";
+import { LOCATION_SUGGESTION_LIMIT, NWS_SEVERITY_ORDER } from "./config";
 import { buildApiUrl } from "./api";
 import { escapeHTML, normalizeSearchText, formatLocationLabel } from "./ui";
 
@@ -57,7 +57,8 @@ export async function reverseGeocodeLocation(
   return {
     name,
     admin: address.state || address.region || address.province || address.county,
-    country: address.country_code ? address.country_code.toUpperCase() : address.country,
+    country: address.country || (address.country_code || "").toUpperCase(),
+    countryCode: (address.country_code || "").toUpperCase(),
     latitude,
     longitude,
     timezone: "auto",
@@ -215,5 +216,148 @@ export async function searchLocationSuggestions(
     if (currentToken !== searchRequestToken) return;
     clearLocationSuggestions(suggestionsEl || null);
     if (searchNoteEl) searchNoteEl.textContent = (error as Error).message;
+  }
+}
+
+
+export function getAlertCentroid(alert: NwsAlert): { lat: number; lon: number } | null {
+  if (!alert.geometry) return null;
+  const coords = alert.geometry.coordinates;
+  let ring: number[][];
+  if (alert.geometry.type === "MultiPolygon") {
+    ring = (coords[0] as unknown as number[][][])[0];
+  } else if (alert.geometry.type === "Polygon") {
+    ring = coords[0] as number[][];
+  } else {
+    return null;
+  }
+  if (!ring.length) return null;
+  let sumLat = 0, sumLon = 0;
+  for (const [lon, lat] of ring) {
+    sumLat += lat;
+    sumLon += lon;
+  }
+  return { lat: sumLat / ring.length, lon: sumLon / ring.length };
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+let alertSearchRequestToken = 0;
+
+export async function searchAlertSuggestions(
+  query: string,
+  allAlerts: NwsAlert[],
+  suggestionsEl: HTMLElement | null,
+  searchNoteEl: HTMLElement | null,
+  onSelect: (alert: NwsAlert) => void,
+): Promise<void> {
+  const currentToken = ++alertSearchRequestToken;
+
+  if (!query.trim() || !allAlerts?.length) {
+    if (suggestionsEl) suggestionsEl.classList.remove("visible");
+    return;
+  }
+
+  const lower = query.toLowerCase();
+
+  const textMatches = allAlerts.filter((a) => {
+    const p = a.properties;
+    const text = [p.event, p.headline, p.description].filter(Boolean).join(" ").toLowerCase();
+    return text.includes(lower);
+  });
+
+  if (searchNoteEl) searchNoteEl.textContent = "Searching...";
+
+  let locationResults: Location[] = [];
+  try {
+    locationResults = await geocodeLocationCandidates(query, 3);
+  } catch {}
+
+  if (currentToken !== alertSearchRequestToken) return;
+
+  type Scored = { alert: NwsAlert; lat: number; lon: number; dist?: number };
+  const scored: Scored[] = [];
+  const textMatchIds = new Set(textMatches.map((a) => a.properties.id));
+
+  if (locationResults.length > 0) {
+    const loc = locationResults[0];
+    for (const alert of textMatches) {
+      const c = getAlertCentroid(alert);
+      if (c) {
+        scored.push({ alert, lat: c.lat, lon: c.lon, dist: haversineKm(loc.latitude, loc.longitude, c.lat, c.lon) });
+      } else {
+        scored.push({ alert, lat: 0, lon: 0 });
+      }
+    }
+    for (const alert of allAlerts) {
+      if (textMatchIds.has(alert.properties.id)) continue;
+      const c = getAlertCentroid(alert);
+      if (c) {
+        const dist = haversineKm(loc.latitude, loc.longitude, c.lat, c.lon);
+        if (dist < 200) {
+          scored.push({ alert, lat: c.lat, lon: c.lon, dist });
+        }
+      }
+    }
+  } else {
+    for (const alert of textMatches) {
+      scored.push({ alert, lat: 0, lon: 0 });
+    }
+  }
+
+  scored.sort((a, b) => {
+    if (a.dist !== undefined && b.dist !== undefined) return a.dist - b.dist;
+    if (a.dist !== undefined) return -1;
+    if (b.dist !== undefined) return 1;
+    return (NWS_SEVERITY_ORDER[b.alert.properties.severity] || 0) - (NWS_SEVERITY_ORDER[a.alert.properties.severity] || 0);
+  });
+
+  const results = scored.slice(0, 8);
+
+  if (currentToken !== alertSearchRequestToken) return;
+
+  if (!results.length) {
+    if (suggestionsEl) suggestionsEl.classList.remove("visible");
+    if (searchNoteEl) searchNoteEl.textContent = `No alerts matching "${query}".`;
+    return;
+  }
+
+  if (suggestionsEl) {
+    suggestionsEl.innerHTML = results
+      .map((item, i) => {
+        const p = item.alert.properties;
+        const severity = p.severity || "Unknown";
+        const event = escapeHTML(p.event || "Weather alert");
+        const headline = escapeHTML(p.headline || "");
+        const distStr = item.dist !== undefined ? ` · ${Math.round(item.dist)} km` : "";
+        return `
+          <button class="suggestion-item alert-suggestion" type="button" data-alert-index="${i}">
+            <span class="suggestion-alert-severity severity-${severity}">${severity.slice(0, 3)}</span>
+            <div>
+              <strong>${event}${distStr}</strong>
+              <small>${headline}</small>
+            </div>
+          </button>
+        `;
+      })
+      .join("");
+    suggestionsEl.classList.add("visible");
+    if (searchNoteEl) searchNoteEl.textContent = results.length + (locationResults.length > 0 ? " nearby" : "") + " alert" + (results.length > 1 ? "s" : "") + " found.";
+
+    suggestionsEl.querySelectorAll(".alert-suggestion").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = Number((btn as HTMLElement).dataset.alertIndex);
+        onSelect(results[idx].alert);
+        if (suggestionsEl) suggestionsEl.classList.remove("visible");
+      });
+    });
   }
 }

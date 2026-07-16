@@ -5,15 +5,16 @@ if (!document.cookie.split("; ").find((row) => row.startsWith("precip.preferredL
   }
 }
 
-import type { Location } from "./types";
+import type { Location, NwsAlert } from "./types";
 import { MAP_DEFAULT_ZOOM, NOAA_SECTORS, SLIDER_SATELLITES, SLIDER_BASE, } from "./config";
 import { getAppSettings, saveAppSettings, getPreferredLocation, savePreferredLocation, getWatchlist, getForecastHistory, saveForecastHistory, saveWatchlist, removeCookieValue, } from "./storage";
 import { fetchNoaaSectorCatalog, fetchSliderCatalog, fetchAlerts } from "./api";
-import { resolveLocation, searchLocationSuggestions, } from "./search";
+import { resolveLocation, searchLocationSuggestions, searchAlertSuggestions, getAlertCentroid, } from "./search";
 import { zoomMap, startMapDrag, moveMapDrag, endMapDrag, resetMapView, updateMapTooltip, hideMapTooltip, } from "./map";
 import { updateSatelliteForLocation, loadSatelliteSector, getNoaaSectorById, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, renderSatelliteProductOptions, renderSatelliteImage, updateSliderForLocation, loadSliderSector, setActiveSource, loadSliderImageWithFallback, resolveSliderSatellite, resolveSliderSector } from "./satellite";
-import { setMapCenterAlerts } from "./alerts";
-import { selectTab, togglePanel, formatLocationLabel, normalizeSearchText, } from "./ui";
+import { setMapCenterAlerts, getAllAlerts } from "./alerts";
+import { selectTab, togglePanel, formatLocationLabel, normalizeSearchText, showToast } from "./ui";
+import { loadBrowseAlerts } from "./panels/alerts";
 import { exportSettingsPreset, importSettingsPreset, } from "./settings";
 import {
   activeLocation, latestForecast, latestHeatmap,
@@ -107,6 +108,8 @@ function toggleSatelliteOverlay(show?: boolean): void {
 if (elements.locationForm) {
   elements.locationForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    const mode = (document.querySelector("#search-mode") as HTMLSelectElement)?.value || "location";
+    if (mode === "alerts") return;
     const query = elements.locationInput?.value.trim() || "";
     if (!query) return;
     if (
@@ -133,18 +136,57 @@ if (elements.locationForm) {
 if (elements.locationInput) {
   elements.locationInput.addEventListener("input", () => {
     selectedLocationSuggestion = null;
+    const mode = (document.querySelector("#search-mode") as HTMLSelectElement)?.value || "location";
     if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
     searchDebounceTimer = setTimeout(() => {
-      searchLocationSuggestions(
-        elements.locationInput?.value.trim() || "",
-        elements.eventLog,
-        elements.locationSearchNote,
-        elements.locationSuggestions,
-        elements.locationInput,
-      );
+      const query = elements.locationInput?.value.trim() || "";
+      if (!query) return;
+      if (mode === "alerts") {
+        const allAlerts = getAllAlerts();
+        if (!allAlerts) {
+          void loadBrowseAlerts().then(() => {
+            searchAlertSuggestions(query, getAllAlerts() || [], elements.locationSuggestions, elements.locationSearchNote, handleAlertSelect);
+          });
+          return;
+        }
+        searchAlertSuggestions(query, allAlerts, elements.locationSuggestions, elements.locationSearchNote, handleAlertSelect);
+      } else {
+        searchLocationSuggestions(query, elements.eventLog, elements.locationSearchNote, elements.locationSuggestions, elements.locationInput);
+      }
     }, 180);
   });
 }
+
+function handleAlertSelect(alert: NwsAlert): void {
+  const centroid = getAlertCentroid(alert);
+  if (centroid) {
+    selectMapLocation(centroid.lat, centroid.lon);
+  } else {
+    showToast("This alert doesn't have location data for map navigation.", "info");
+  }
+}
+
+document.querySelector("#search-mode")?.addEventListener("change", () => {
+  const mode = (document.querySelector("#search-mode") as HTMLSelectElement)?.value || "location";
+  const input = elements.locationInput;
+  const note = elements.locationSearchNote;
+  const suggestions = elements.locationSuggestions;
+  if (suggestions) suggestions.classList.remove("visible");
+  if (input) {
+    input.value = "";
+    input.placeholder = mode === "alerts"
+      ? "Search alerts by location or event type..."
+      : "Search for a city, region, or country";
+  }
+  if (note) {
+    note.textContent = mode === "alerts"
+      ? "Type a location name or alert type to find active warnings."
+      : "Search suggestions will appear as you type.";
+  }
+  if (mode === "alerts") {
+    void loadBrowseAlerts();
+  }
+});
 
 document.addEventListener("click", (event) => {
   if (elements.locationForm && !elements.locationForm.contains(event.target as Node)) {
@@ -633,7 +675,7 @@ document.addEventListener("keydown", (event) => {
 
   const tabIndex = parseInt(event.key, 10);
   if (tabIndex >= 1 && tabIndex <= 9) {
-    const tabs = ["now", "hourly", "outlook", "storm", "air", "trends", "pins", "history", "settings"];
+    const tabs = ["now", "hourly", "outlook", "storm", "alerts", "air", "trends", "pins", "history", "settings"];
     selectTab(tabs[tabIndex - 1]);
     return;
   }
@@ -649,6 +691,9 @@ document.querySelectorAll(".tab-button").forEach((btn) => {
   btn.addEventListener("click", () => {
     const tabId = (btn as HTMLElement).dataset.tab || "";
     selectTab(tabId);
+    if (tabId === "alerts") {
+      void loadBrowseAlerts();
+    }
   });
 });
 

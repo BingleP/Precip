@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Precip Weather Operations</title>
     <link rel="icon" href="/assets/tab-CSFEXn2q.png?v=2" type="image/png" />
-    <script type="module" crossorigin src="/assets/main-Bb48SDUK.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/ui-E1k5gKeX.js">
-    <link rel="stylesheet" crossorigin href="/assets/ui-B0f1H3X7.css">
+    <script type="module" crossorigin src="/assets/main-7vb5lbmM.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/ui-DKAZ9JEf.js">
+    <link rel="stylesheet" crossorigin href="/assets/ui-Bwxyp2KE.css">
   </head>
   <body>
     <div class="app-shell">
@@ -22,6 +22,7 @@
           <button class="tab-button" role="tab" aria-selected="false" data-tab="hourly">Hourly</button>
           <button class="tab-button" role="tab" aria-selected="false" data-tab="outlook">Outlook</button>
           <button class="tab-button" role="tab" aria-selected="false" data-tab="storm">Storm</button>
+          <button class="tab-button" role="tab" aria-selected="false" data-tab="alerts">Alerts</button>
           <button class="tab-button" role="tab" aria-selected="false" data-tab="air">Air</button>
           <button class="tab-button" role="tab" aria-selected="false" data-tab="trends">Trends</button>
           <button class="tab-button" role="tab" aria-selected="false" data-tab="pins">Pins</button>
@@ -92,6 +93,10 @@
         <!-- Floating Search Bar -->
         <form class="map-search" id="location-form">
           <label class="visually-hidden" for="location-input">Weather location</label>
+          <select class="search-mode" id="search-mode">
+            <option value="location">Location</option>
+            <option value="alerts">Alerts</option>
+          </select>
           <input id="location-input" type="search" value="" placeholder="Search for a city, region, or country" autocomplete="off" />
           <button class="search-submit" type="submit" aria-label="Update location">&#8981;</button>
           <button class="search-refresh" type="button" aria-label="Refresh telemetry" id="refresh-button">&#8635;</button>
@@ -305,7 +310,29 @@
             </div>
           </section>
 
+          <!-- Alerts Section -->
+          <section class="data-section" data-section="alerts">
+            <div class="data-section-header">
+              <span class="section-kicker">Active Weather Alerts</span>
+              <h2 id="alerts-heading">Local Alerts</h2>
+            </div>
+            <div class="data-section-body">
+              <div class="alerts-local-grid" id="alerts-local-grid">
+                <div class="empty-signal">No active alerts for this area.</div>
+              </div>
 
+              <div class="data-subsection">
+                <div class="data-section-header">
+                  <span class="section-kicker">Browse All Alerts</span>
+                  <h2>US & Canada Active Warnings</h2>
+                  <span class="status-pill" id="browse-alert-count"></span>
+                </div>
+                <div class="alerts-browse-grid" id="alerts-browse-grid">
+                  <div class="empty-signal">Loading all active alerts...</div>
+                </div>
+              </div>
+            </div>
+          </section>
 
           <!-- Air Section -->
           <section class="data-section" data-section="air">

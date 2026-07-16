@@ -7,6 +7,7 @@ let mapCenterAlerts: NwsAlert[] | null = null;
 let latestSpcCat: SpcCollection | null = null;
 let latestSpcTorn: SpcCollection | null = null;
 let alertPolygonsCache: AlertPolygon[] = [];
+let allAlerts: NwsAlert[] | null = null;
 
 export function getLatestAlerts(): NwsAlert[] | null {
   return latestAlerts;
@@ -46,6 +47,14 @@ export function getAlertPolygonsCache(): AlertPolygon[] {
 
 export function setAlertPolygonsCache(cache: AlertPolygon[]): void {
   alertPolygonsCache = cache;
+}
+
+export function getAllAlerts(): NwsAlert[] | null {
+  return allAlerts;
+}
+
+export function setAllAlerts(alerts: NwsAlert[] | null): void {
+  allAlerts = alerts;
 }
 
 export function updateNwsAlerts(

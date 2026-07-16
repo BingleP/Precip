@@ -24,6 +24,7 @@ ALLOWED_ENDPOINTS = {
     "/api/alerts",
     "/api/spc-outlook",
     "/api/ca-alerts",
+    "/api/all-alerts",
     "/api/slider-catalog",
     "/health",
 }
@@ -308,6 +309,56 @@ def build_ca_alerts_payload(latitude, longitude):
             },
         })
     return json.dumps({"type": "FeatureCollection", "features": normalized}).encode("utf-8")
+
+
+def build_all_alerts_payload():
+    us_url = "https://api.weather.gov/alerts/active?status=actual&limit=500"
+    ca_url = "https://api.weather.gc.ca/collections/weather-alerts/items?f=json&limit=500&sortby=-cap_base_effective_datetime_e"
+    all_features = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(fetch_json, us_url),
+            executor.submit(fetch_json, ca_url),
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                data = future.result()
+                features = data.get("features") or []
+                if future in (futures[1],):
+                    for f in features:
+                        p = f.get("properties") or {}
+                        risk = (p.get("risk_colour_en") or "yellow").lower()
+                        severity = CA_RISK_MAP.get(risk, "Moderate")
+                        event = p.get("alert_name_en") or p.get("alert_short_name_en") or "Weather alert"
+                        alert_type = (p.get("alert_type") or "").capitalize()
+                        location_name = (p.get("feature_name_en") or "")
+                        province = (p.get("province") or "")
+                        headline = f"{alert_type}: {event}"
+                        if location_name:
+                            headline += f" for {location_name}"
+                        if province:
+                            headline += f", {province}"
+                        description = (p.get("alert_text_en") or "").strip()
+                        all_features.append({
+                            "type": "Feature",
+                            "geometry": f.get("geometry"),
+                            "properties": {
+                                "id": p.get("id") or f.get("id"),
+                                "event": event,
+                                "headline": headline,
+                                "description": description[:2000] if description else "",
+                                "severity": severity,
+                                "source": "ECCC",
+                            },
+                        })
+                else:
+                    all_features.extend(features)
+            except Exception as exc:
+                print(f"All-alerts upstream failed: {exc}", file=sys.stderr)
+                continue
+
+    return json.dumps({"type": "FeatureCollection", "features": all_features}).encode("utf-8")
 
 
 def aggregate_daily(hourly_times, hourly_temp, hourly_precip, hourly_precip_prob, hourly_wind, hourly_gusts, hourly_codes, latitude=None, longitude=None, hourly_cloud=None):

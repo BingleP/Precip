@@ -254,32 +254,28 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
 
   if (!points?.length) {
     drawMapOverlayText(ctx, width, "Regional weather layer unavailable");
-    return;
+  } else {
+    const values = points.map((point) => getHeatmapValue(point, layer || activeHeatmapLayer, activeMapHourOffset));
+    const finiteValues = values.filter((v): v is number => Number.isFinite(v));
+    if (!finiteValues.length) {
+      drawMapOverlayText(ctx, width, "Weather samples unavailable");
+    } else {
+      const min = Math.min(...finiteValues);
+      const max = Math.max(...finiteValues);
+      if (!mapState.drag) {
+        drawHeatmapOverlay(ctx, points, values, layer || activeHeatmapLayer, min, max, width, height, mapState, mapState.center, Math.round(mapState.zoom));
+        renderMapReadout(layer || activeHeatmapLayer, min, max, latestHeatmapMeta, elements.mapReadout);
+        renderHeatmapLegend(layer || activeHeatmapLayer, min, max, elements.heatmapLegend);
+        updateMapHourLabel(activeMapHourOffset, latestHeatmap, elements.mapHourLabel);
+      }
+    }
   }
 
-  const values = points.map((point) => getHeatmapValue(point, layer || activeHeatmapLayer, activeMapHourOffset));
-  const finiteValues = values.filter((v): v is number => Number.isFinite(v));
-  if (!finiteValues.length) {
-    drawMapOverlayText(ctx, width, "Weather samples unavailable");
-    return;
-  }
-
-  const min = Math.min(...finiteValues);
-  const max = Math.max(...finiteValues);
-
-  if (!mapState.drag) {
-    drawHeatmapOverlay(ctx, points, values, layer || activeHeatmapLayer, min, max, width, height, mapState, mapState.center, Math.round(mapState.zoom));
-  }
   drawMapPlaces(ctx, width, height, activeLocation, mapState);
 
   const alertPolygons = drawMapAlertPolygons(ctx, width, height, mapState.center.latitude, mapState.center.longitude, Math.round(mapState.zoom), getMapCenterAlerts());
   setAlertPolygonsCache(alertPolygons);
 
-  if (!mapState.drag) {
-    renderMapReadout(layer || activeHeatmapLayer, min, max, latestHeatmapMeta, elements.mapReadout);
-    renderHeatmapLegend(layer || activeHeatmapLayer, min, max, elements.heatmapLegend);
-    updateMapHourLabel(activeMapHourOffset, latestHeatmap, elements.mapHourLabel);
-  }
 }
 
 export function renderHeatmapLoading(message = "Loading regional weather layer"): void {

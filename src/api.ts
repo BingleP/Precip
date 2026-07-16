@@ -24,6 +24,7 @@ const airQualityRequestCache = new Map<string, Promise<AirQuality>>();
 export const satelliteCatalogCache = new Map<string, { savedAt: number; data: NoaaCatalog }>();
 export const heatmapCache = new Map<string, { savedAt: number; data: unknown }>();
 const alertCache = new Map<string, { savedAt: number; data: NwsAlert[] }>();
+let allAlertsCache: { savedAt: number; data: NwsAlert[] } | null = null;
 
 export function setApiBackoff(name: string): void {
   apiBackoffUntil.set(name, Date.now() + API_RATE_LIMIT_BACKOFF_MS);
@@ -164,6 +165,23 @@ export async function fetchAlerts(location: Location): Promise<NwsAlert[]> {
     const body = await response.json();
     const alerts = body.features || [];
     alertCache.set(cacheKey, { savedAt: Date.now(), data: alerts });
+    return alerts;
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchAllAlerts(): Promise<NwsAlert[]> {
+  if (allAlertsCache && Date.now() - allAlertsCache.savedAt < ALERT_CACHE_TTL_MS) {
+    return allAlertsCache.data;
+  }
+  try {
+    const url = buildApiUrl("/all-alerts");
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) return [];
+    const body = await response.json();
+    const alerts = body.features || [];
+    allAlertsCache = { savedAt: Date.now(), data: alerts };
     return alerts;
   } catch {
     return [];

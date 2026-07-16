@@ -11,6 +11,7 @@ CACHE_TTLS = {
     "/api/alerts": 300,
     "/api/spc-outlook": 600,
     "/api/ca-alerts": 300,
+    "/api/all-alerts": 300,
     "/api/slider-catalog": 600,
 }
 
