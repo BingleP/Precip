@@ -318,7 +318,7 @@ export async function fetchSliderCatalog(satellite: string, sector: string): Pro
     if (!href) continue;
     const name = href.replace(/\/$/, "");
     if (!name || name === ".." || name.startsWith(".")) continue;
-    if (name === "geocolor") continue;
+    if (name === "geocolor" && seen.has("cira_geocolor")) continue;
     if (seen.has(name)) continue;
     seen.add(name);
 

@@ -208,7 +208,7 @@ export const SLIDER_SATELLITES: SliderSatellite[] = [
 
 export const SLIDER_PRODUCT_NAMES: Record<string, string> = {
   cira_geocolor: "GeoColor",
-  geocolor: "GeoColor (NOAA)",
+  geocolor: "GeoColor",
   band_01: "Band 1 (Blue Vis)",
   band_02: "Band 2 (Red Vis)",
   band_03: "Band 3 (Veggie Near-IR)",
@@ -239,4 +239,19 @@ export const SLIDER_PRODUCT_NAMES: Record<string, string> = {
   cira_glm_l2_group_counts: "GLM Lightning",
   cira_glm_l2_group_energy: "GLM Lightning Energy",
   "split_window_difference_10_3-12_3": "Split Window Diff",
+  acspo_sst: "Sea Surface Temp (ACSPO)",
+  awips_dust: "Dust RGB",
+  awips_fog: "Fog/Low Cloud RGB",
+  awips_snow: "Snow Cloud RGB",
+  awips_tpw: "Total Precipitable Water",
+  day_snow_fog_rgb: "Snow/Fog RGB",
+  dust_rgb: "Dust (EUMETSAT)",
+  fire_power: "Fire Power",
+  fog_rgb: "Fog RGB",
+  rgb_cimss_nd_tc: "Tropical Cyclone RGB",
+  rgb_enhanced_aerosol: "Aerosol RGB",
+  rgb_enhanced_ash: "Ash RGB",
+  rgb_natural_enhanced: "Enhanced Natural Color",
+  rgb_stormtop: "Storm Top RGB",
+  rgb_true_color: "True Color",
 };

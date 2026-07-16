@@ -399,6 +399,7 @@ export async function loadSliderSector(
       catalog.products.find((product) => product.key === preferredProductKey) ||
       catalog.products.find((product) => product.key === activeSatelliteProductKey) ||
       catalog.products.find((product) => product.key === "cira_geocolor") ||
+      catalog.products.find((product) => product.key === "geocolor") ||
       catalog.products[0];
 
     renderSatelliteProductOptions(catalog.products, selectedProduct.key, elements.satelliteProductSelect);
