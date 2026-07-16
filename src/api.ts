@@ -1,4 +1,4 @@
-import type { Forecast, AirQuality, NwsAlert, SpcCollection, NoaaCatalog, NoaaSector, Location, CacheMeta, NoaaProduct, WildfireFeature, TropicalCyclone, StormTrackPoint, ConePoint } from "./types";
+import type { Forecast, AirQuality, NwsAlert, SpcCollection, NoaaCatalog, NoaaSector, Location, CacheMeta, NoaaProduct, WildfireFeature, TropicalCyclone, StormTrackPoint, ConePoint, Earthquake } from "./types";
 import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, ALERT_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES, SLIDER_PRODUCT_NAMES } from "./config";
 import { getCachedApiResponse, setCachedApiResponse } from "./storage";
 import { worldToLatLon } from "./geo";
@@ -407,4 +407,86 @@ export async function fetchStormCone(stormId: string): Promise<ConePoint[]> {
   } catch {
     return [];
   }
+}
+
+let earthquakesCache: { savedAt: number; data: Earthquake[] } | null = null;
+let earthquakesRequest: Promise<Earthquake[]> | null = null;
+
+export async function fetchEarthquakesUS(minMagnitude = 2.5): Promise<Earthquake[]> {
+  const url = buildApiUrl("/earthquakes-us");
+  url.searchParams.set("minMagnitude", String(minMagnitude));
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const body = await response.json() as Record<string, unknown>;
+    const features = (body.features || []) as Array<Record<string, unknown>>;
+    return features.map((f) => {
+      const props = (f.properties || {}) as Record<string, unknown>;
+      const geom = (f.geometry || {}) as Record<string, unknown>;
+      const coords = (geom.coordinates || []) as number[];
+      return {
+        id: String(f.id ?? props.time ?? ""),
+        magnitude: Number(props.mag ?? 0),
+        depth: coords[2] ?? 0,
+        latitude: coords[1] ?? 0,
+        longitude: coords[0] ?? 0,
+        place: String(props.place ?? ""),
+        time: String(props.time ?? ""),
+        source: "USGS" as const,
+        tsunami: Boolean(props.tsunami),
+        status: String(props.status ?? ""),
+        detail_url: String(props.detail ?? ""),
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchEarthquakesCA(days = 30): Promise<Earthquake[]> {
+  const url = buildApiUrl("/earthquakes-ca");
+  url.searchParams.set("days", String(days));
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const body = await response.json() as Record<string, unknown>;
+    const features = (body.features || []) as Array<Record<string, unknown>>;
+    return features.map((f) => {
+      const props = (f.properties || {}) as Record<string, unknown>;
+      const geom = (f.geometry || {}) as Record<string, unknown>;
+      const coords = (geom.coordinates || []) as number[];
+      return {
+        id: String(f.id ?? props.time ?? ""),
+        magnitude: Number(props.magnitude ?? props.mag ?? 0),
+        depth: coords[2] ?? 0,
+        latitude: coords[1] ?? 0,
+        longitude: coords[0] ?? 0,
+        place: String(props.place ?? props.region ?? props.location ?? ""),
+        time: String(props.time ?? props.date ?? ""),
+        source: "NRCAN" as const,
+        tsunami: false,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchAllEarthquakes(minMagnitude = 2.5): Promise<Earthquake[]> {
+  if (earthquakesCache && Date.now() - earthquakesCache.savedAt < 300000) {
+    return earthquakesCache.data;
+  }
+  if (earthquakesRequest) return earthquakesRequest;
+  earthquakesRequest = (async () => {
+    const [us, ca] = await Promise.all([
+      fetchEarthquakesUS(minMagnitude),
+      fetchEarthquakesCA(minMagnitude),
+    ]);
+    const all = [...us, ...ca];
+    all.sort((a, b) => b.magnitude - a.magnitude);
+    earthquakesCache = { savedAt: Date.now(), data: all };
+    earthquakesRequest = null;
+    return all;
+  })();
+  return earthquakesRequest;
 }

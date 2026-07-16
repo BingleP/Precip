@@ -19,7 +19,8 @@ import {
 } from "../map";
 import { projectToMapScreenFast, latLonToWorld } from "../geo";
 import { drawStormTracks } from "../storm-tracks";
-import { drawMapAlertPolygons, getMapCenterAlerts, setAlertPolygonsCache, getMapCenterWildfires, setWildfireHitCache, getWildfireScreenCache, setWildfireScreenCache, getLastWildfireState, setLastWildfireState, drawCachedWildfires, showStormTracks } from "../alerts";
+import { drawEarthquakes } from "../earthquakes";
+import { drawMapAlertPolygons, getMapCenterAlerts, setAlertPolygonsCache, getMapCenterWildfires, setWildfireHitCache, getWildfireScreenCache, setWildfireScreenCache, getLastWildfireState, setLastWildfireState, drawCachedWildfires, showStormTracks, showEarthquakes, getEarthquakes } from "../alerts";
 import {
   latestHeatmap, latestHeatmapMeta, activeHeatmapLayer, activeMapHourOffset,
   setLatestHeatmap, setLatestHeatmapMeta,
@@ -231,6 +232,10 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
 
   if (showStormTracks) {
     drawStormTracks(ctx, width, height, centerWorld, zoomRound);
+  }
+
+  if (showEarthquakes) {
+    drawEarthquakes(ctx, getEarthquakes(), width, height, centerWorld, zoomRound);
   }
 
 }

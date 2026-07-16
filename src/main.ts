@@ -8,11 +8,11 @@ if (!document.cookie.split("; ").find((row) => row.startsWith("precip.preferredL
 import type { Location, NwsAlert } from "./types";
 import { MAP_DEFAULT_ZOOM, NOAA_SECTORS, SLIDER_SATELLITES, SLIDER_BASE, } from "./config";
 import { getAppSettings, saveAppSettings, getPreferredLocation, savePreferredLocation, getWatchlist, getForecastHistory, saveForecastHistory, saveWatchlist, removeCookieValue, } from "./storage";
-import { fetchNoaaSectorCatalog, fetchSliderCatalog, fetchLatestSliderTimestamps, fetchAllAlerts, fetchWildfires, fetchActiveCyclones, fetchStormForecast, fetchStormCone } from "./api";
+import { fetchNoaaSectorCatalog, fetchSliderCatalog, fetchLatestSliderTimestamps, fetchAllAlerts, fetchWildfires, fetchActiveCyclones, fetchStormForecast, fetchStormCone, fetchAllEarthquakes } from "./api";
 import { resolveLocation, searchLocationSuggestions, searchAlertSuggestions, getAlertCentroid, } from "./search";
 import { zoomMap, startMapDrag, moveMapDrag, endMapDrag, resetMapView, updateMapTooltip, hideMapTooltip, } from "./map";
 import { updateSatelliteForLocation, loadSatelliteSector, getNoaaSectorById, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, renderSatelliteProductOptions, renderSatelliteImage, updateSliderForLocation, loadSliderSector, setActiveSource, loadSliderImageWithFallback, resolveSliderSatellite, resolveSliderSector } from "./satellite";
-import { setMapCenterAlerts, setMapCenterWildfires, getAllAlerts, showStormTracks, setShowStormTracks, setActiveCyclones, setStormForecast, setStormCone } from "./alerts";
+import { setMapCenterAlerts, setMapCenterWildfires, getAllAlerts, showStormTracks, setShowStormTracks, setActiveCyclones, setStormForecast, setStormCone, showEarthquakes, setShowEarthquakes, setEarthquakes } from "./alerts";
 import { selectTab, togglePanel, formatLocationLabel, normalizeSearchText, showToast } from "./ui";
 import { loadBrowseAlerts } from "./panels/alerts";
 import { exportSettingsPreset, importSettingsPreset, } from "./settings";
@@ -107,6 +107,16 @@ async function fetchStormTrackData(): Promise<void> {
     renderHeatmap(latestHeatmap, activeHeatmapLayer);
   } catch {
     // Storm track data unavailable
+  }
+}
+
+async function fetchEarthquakeData(): Promise<void> {
+  try {
+    const eq = await fetchAllEarthquakes(2.5);
+    setEarthquakes(eq);
+    renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  } catch {
+    // Earthquake data unavailable
   }
 }
 
@@ -603,6 +613,9 @@ function syncOverlayToggles(): void {
   if (document.querySelector("#storm-tracks-toggle")) {
     document.querySelector("#storm-tracks-toggle")!.classList.toggle("active", showStormTracks);
   }
+  if (document.querySelector("#earthquakes-toggle")) {
+    document.querySelector("#earthquakes-toggle")!.classList.toggle("active", showEarthquakes);
+  }
 }
 
 elements.alertsToggle?.addEventListener("click", () => {
@@ -621,6 +634,12 @@ elements.wildfiresToggle?.addEventListener("click", () => {
 
 document.querySelector("#storm-tracks-toggle")?.addEventListener("click", () => {
   setShowStormTracks(!showStormTracks);
+  syncOverlayToggles();
+  renderHeatmap(latestHeatmap, activeHeatmapLayer);
+});
+
+document.querySelector("#earthquakes-toggle")?.addEventListener("click", () => {
+  setShowEarthquakes(!showEarthquakes);
   syncOverlayToggles();
   renderHeatmap(latestHeatmap, activeHeatmapLayer);
 });
@@ -854,3 +873,6 @@ scheduleMapCenterAlertFetch(800);
 
 // Fetch NHC storm track data on startup
 void fetchStormTrackData();
+
+// Fetch earthquake data on startup
+void fetchEarthquakeData();

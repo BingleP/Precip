@@ -36,6 +36,8 @@ ALLOWED_ENDPOINTS = {
     "/api/nhc-forecast",
     "/api/nhc-cone",
     "/api/nhc-windprob",
+    "/api/earthquakes-us",
+    "/api/earthquakes-ca",
     "/health",
 }
 
@@ -165,6 +167,14 @@ def build_upstream(path, query):
     if path == "/api/nhc-windprob":
         storm_id = require(query, "stormId").strip()
         return f"https://www.nhc.noaa.gov/storms/{storm_id}-windprob.json", "application/json"
+
+    if path == "/api/earthquakes-us":
+        min_magnitude = float(query.get("minMagnitude", ["2.5"])[0])
+        return f"https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude={min_magnitude}&eventtype=earthquake&orderby=magnitude", "application/json"
+
+    if path == "/api/earthquakes-ca":
+        days = int(query.get("days", ["30"])[0])
+        return f"https://www.earthquakescanada.nrcan.gc.ca/api/earthquakes/latest/{days}d/", "application/json"
 
     raise ValueError("unsupported endpoint")
 

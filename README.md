@@ -40,6 +40,12 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
   - RAMMB/CIRA SLIDER (global coverage) with **proxied** tile-based imagery, timestamp resolution via `/api/slider-latest-times`, and automatic 404 retry
   - Supported SLIDER satellites: GOES-18/19 (CONUS/hemispheres), Himawari, Meteosat (0°/45.5°E), GK-2A (Full Disk, East Asia, Korea), JPSS (CONUS, hemispheres)
   - Switchable source selector in the satellite overlay header
+- **Earthquake tracking**:
+  - **USGS earthquakes** — real-time seismic events (M2.5+) from the US Geological Survey
+  - **NRCAN earthquakes** — real-time seismic events from Natural Resources Canada
+  - Combined US + Canada quake layer on the map with magnitude-colored markers (minor=green, light=yellow, moderate=orange, strong=dark orange, major=red, great=dark red)
+  - Circle size scales with magnitude
+  - Toggle overlay in map tools panel
 - **Performance optimizations:**
   - **Heatmap**: screen coordinate memoization + 4×4 interpolation grid (avoids O(pixels×samples) per frame)
   - **Wildfire hotspots**: color-bucket batching (3 draw calls vs N), spatial clustering at zoom < 7, frustum culling
@@ -84,6 +90,8 @@ The browser talks to same-origin `/api/*` routes. The proxy fetches and caches:
 - `https://mapservices.weather.noaa.gov` (SPC convective outlook contours)
 - `https://cwfis.cfs.nrcan.gc.ca/geoserver/wfs` (CWFIS wildfire hotspots + perimeters via WFS)
 - `https://firms.modaps.eosdis.nasa.gov` (NASA FIRMS hotspot CSV data, requires `FIRMS_MAP_KEY`)
+- `https://earthquake.usgs.gov` (USGS earthquake data)
+- `https://www.earthquakescanada.nrcan.gc.ca` (Natural Resources Canada seismic data)
 
 Map tiles and NOAA GOES animated GIFs load directly in the browser from:
 
@@ -160,6 +168,8 @@ img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov;
 | `/api/slider-catalog` | RAMMB/CIRA SLIDER | `satellite`, `sector` |
 | `/api/slider-image` | RAMMB/CIRA SLIDER | `satellite`, `sector`, `product`, `timestamp` |
 | `/api/slider-latest-times` | RAMMB/CIRA SLIDER | `satellite`, `sector`, `product` |
+| `/api/earthquakes-us` | USGS FDSNWS | `minMagnitude` |
+| `/api/earthquakes-ca` | Natural Resources Canada | `days` |
 
 ## Security Model
 

@@ -369,3 +369,17 @@ export interface ConePoint {
   centerLon: number;
   radius: number;
 }
+
+export interface Earthquake {
+  id: string;
+  magnitude: number;
+  depth: number;
+  latitude: number;
+  longitude: number;
+  place: string;
+  time: string;
+  source: "USGS" | "NRCAN";
+  tsunami: boolean;
+  status?: string;
+  detail_url?: string;
+}

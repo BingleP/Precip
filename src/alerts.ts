@@ -1,4 +1,4 @@
-import type { NwsAlert, AlertPolygon, SpcCollection, WildfireFeature, TropicalCyclone, StormTrackPoint, ConePoint } from "./types";
+import type { NwsAlert, AlertPolygon, SpcCollection, WildfireFeature, TropicalCyclone, StormTrackPoint, ConePoint, Earthquake } from "./types";
 import { NWS_SEVERITY_ORDER, TORNADO_EVENTS, ALERT_SEVERITY_COLORS, SPC_CATEGORIES, SPC_TORNADO_PROB } from "./config";
 import { pointInPolygon, projectToMapScreenFast } from "./geo";
 
@@ -56,6 +56,25 @@ export function clearStormData(): void {
   activeCyclones = [];
   stormForecasts.clear();
   stormCones.clear();
+}
+
+let earthquakes: Earthquake[] = [];
+export let showEarthquakes = true;
+
+export function setShowEarthquakes(value: boolean): void {
+  showEarthquakes = value;
+}
+
+export function getEarthquakes(): Earthquake[] {
+  return earthquakes;
+}
+
+export function setEarthquakes(eq: Earthquake[]): void {
+  earthquakes = eq;
+}
+
+export function clearEarthquakes(): void {
+  earthquakes = [];
 }
 
 interface WildfireHotspotEntry {
