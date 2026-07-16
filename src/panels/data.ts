@@ -322,8 +322,13 @@ function drawWildfireLayer(
   }
 
   // Cache miss: compute screen points
-  const hotspotCache: { x: number; y: number; radius: number; feature: WildfireFeature }[] = [];
+  const hotspotCache: { x: number; y: number; radius: number; colorBucket: 0 | 1 | 2; feature: WildfireFeature }[] = [];
   const perimeterCache: { points: { x: number; y: number }[]; feature: WildfireFeature }[] = [];
+
+  const now = Date.now();
+  const CLUSTER_ZOOM = 7;
+  const enableClustering = zoomRound < CLUSTER_ZOOM;
+  const clusterGrid = new Map<string, { x: number; y: number; count: number; colorBucket: 0 | 1 | 2; features: WildfireFeature[] }>();
 
   for (const f of features) {
     const g = f.geometry;
@@ -333,8 +338,37 @@ function drawWildfireLayer(
     if (g.type === "Point" && props.featureType === "hotspot") {
       const [lon, lat] = g.coordinates as number[];
       const { x, y } = projectToMapScreenFast(lat, lon, width, height, centerWorld, zoomRound);
+
+      // Frustum culling for hotspots
+      const hotspotMargin = 10;
+      if (x < -hotspotMargin || x > width + hotspotMargin || y < -hotspotMargin || y > height + hotspotMargin) {
+        continue;
+      }
+
+      const ageHours = props.date
+        ? (now - new Date(props.date).getTime()) / 3600000
+        : 999;
+      const colorBucket = (ageHours < 6 ? 0 : ageHours < 24 ? 1 : 2) as 0 | 1 | 2;
       const radius = Math.max(3, Math.min(8, 6 / Math.pow(2, zoomRound - 8)));
-      hotspotCache.push({ x, y, radius, feature: f });
+
+      if (enableClustering) {
+        // Cluster hotspots in grid cells
+        const cellSize = 50 * Math.pow(2, CLUSTER_ZOOM - zoomRound);
+        const cellX = Math.floor(x / cellSize);
+        const cellY = Math.floor(y / cellSize);
+        const cellKey = `${cellX},${cellY}`;
+        const existing = clusterGrid.get(cellKey);
+        if (existing) {
+          existing.count += 1;
+          existing.features.push(f);
+          // Use the most recent color bucket (lowest number = most recent)
+          if (colorBucket < existing.colorBucket) existing.colorBucket = colorBucket;
+        } else {
+          clusterGrid.set(cellKey, { x, y, count: 1, colorBucket, features: [f] });
+        }
+      } else {
+        hotspotCache.push({ x, y, radius, colorBucket, feature: f });
+      }
     } else if ((g.type === "Polygon" || g.type === "MultiPolygon") && props.featureType === "perimeter") {
       const allRings: number[][][] = [];
       if (g.type === "MultiPolygon") {
@@ -380,8 +414,29 @@ function drawWildfireLayer(
     }
   }
 
-  // Update hit-test caches
-  setWildfireHitCache(hotspotCache, perimeterCache);
+  // If clustering, convert clusters to hotspot cache
+  if (enableClustering) {
+    for (const cluster of clusterGrid.values()) {
+      const avgX = cluster.x;
+      const avgY = cluster.y;
+      const clusterRadius = Math.max(4, Math.min(12, 8 / Math.pow(2, zoomRound - 8)));
+      hotspotCache.push({
+        x: avgX,
+        y: avgY,
+        radius: clusterRadius,
+        colorBucket: cluster.colorBucket,
+        feature: cluster.features[0], // Use first feature for hit testing
+      });
+    }
+  }
+
+  // Update hit-test caches (use original unclustered for accurate hit testing)
+  setWildfireHitCache(
+    enableClustering
+      ? Array.from(clusterGrid.values()).map(c => ({ x: c.x, y: c.y, radius: Math.max(4, Math.min(12, 8 / Math.pow(2, zoomRound - 8))), feature: c.features[0] }))
+      : hotspotCache.map(h => ({ x: h.x, y: h.y, radius: h.radius, feature: h.feature })),
+    perimeterCache
+  );
 
   // Update memoization screen caches
   setWildfireScreenCache(hotspotCache, perimeterCache);

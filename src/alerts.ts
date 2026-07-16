@@ -20,6 +20,7 @@ let mapCenterWildfires: WildfireFeature[] | null = null;
 
 interface WildfireHotspotEntry {
   x: number; y: number; radius: number;
+  colorBucket: 0 | 1 | 2; // 0: <6h (red), 1: 6-24h (orange), 2: >24h (yellow)
   feature: WildfireFeature;
 }
 interface WildfirePerimeterEntry {
@@ -384,7 +385,14 @@ export function setWildfireHitCache(
   hotspots: { x: number; y: number; radius: number; feature: WildfireFeature }[],
   perimeters: { points: { x: number; y: number }[]; feature: WildfireFeature }[],
 ): void {
-  wildfireHotspotCache = hotspots;
+  const now = Date.now();
+  wildfireHotspotCache = hotspots.map((h) => {
+    const ageHours = h.feature.properties.date
+      ? (now - new Date(h.feature.properties.date).getTime()) / 3600000
+      : 999;
+    const colorBucket = ageHours < 6 ? 0 : ageHours < 24 ? 1 : 2;
+    return { ...h, colorBucket } as WildfireHotspotEntry;
+  });
   wildfirePerimeterCache = perimeters;
 }
 
@@ -445,20 +453,25 @@ export function drawCachedWildfires(
   hotspots: WildfireHotspotEntry[],
   perimeters: WildfirePerimeterEntry[],
 ): void {
-  for (const h of hotspots) {
-    ctx.beginPath();
-    ctx.arc(h.x, h.y, h.radius, 0, Math.PI * 2);
-    ctx.fillStyle = h.feature.properties.date
-      ? (() => {
-          const ageHours = (Date.now() - new Date(h.feature.properties.date).getTime()) / 3600000;
-          return ageHours < 6 ? "#ef4444" : ageHours < 24 ? "#f97316" : "#fbbf24";
-        })()
-      : "#fbbf24";
-    ctx.fill();
+  // Batch render hotspots by color bucket (3 draw calls instead of N)
+  const bucketColors = ["#ef4444", "#f97316", "#fbbf24"];
+  for (let bucket = 0; bucket < 3; bucket++) {
+    const bucketHotspots = hotspots.filter((h) => h.colorBucket === bucket);
+    if (!bucketHotspots.length) continue;
+
+    ctx.fillStyle = bucketColors[bucket];
     ctx.strokeStyle = "rgba(0,0,0,0.4)";
     ctx.lineWidth = 1;
-    ctx.stroke();
+
+    for (const h of bucketHotspots) {
+      ctx.beginPath();
+      ctx.arc(h.x, h.y, h.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
   }
+
+  // Render perimeters
   for (const p of perimeters) {
     const { points } = p;
     if (points.length < 3) continue;
