@@ -16,6 +16,9 @@ CACHE_TTLS = {
     "/api/slider-image": 300,
     "/api/slider-latest-times": 600,
     "/api/wildfires": 900,
+    "/api/nhc-active": 600,
+    "/api/nhc-forecast": 900,
+    "/api/nhc-cone": 900,
     "/api/earthquakes-us": 300,
     "/api/earthquakes-ca": 300,
 }

@@ -135,6 +135,7 @@ export interface Elements {
   satelliteHeadline: HTMLElement | null;
   alertsToggle: HTMLElement | null;
   wildfiresToggle: HTMLElement | null;
+  earthquakeAgeSelect: HTMLSelectElement | null;
 }
 
 export const elements: Elements = {
@@ -225,6 +226,7 @@ eventLog: document.querySelector("#event-log") as HTMLElement | null,
   satelliteHeadline: document.querySelector("#satellite-headline") as HTMLElement | null,
   alertsToggle: document.querySelector("#alerts-toggle") as HTMLElement | null,
   wildfiresToggle: document.querySelector("#wildfires-toggle") as HTMLElement | null,
+  earthquakeAgeSelect: document.querySelector("#earthquake-age-select") as HTMLSelectElement | null,
 };
 
 export const chartCanvas = document.querySelector("#weather-chart") as HTMLCanvasElement;

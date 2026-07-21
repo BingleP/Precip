@@ -1,5 +1,6 @@
 import concurrent.futures
 import csv
+import datetime
 import io
 import json
 import os
@@ -35,7 +36,6 @@ ALLOWED_ENDPOINTS = {
     "/api/nhc-active",
     "/api/nhc-forecast",
     "/api/nhc-cone",
-    "/api/nhc-windprob",
     "/api/earthquakes-us",
     "/api/earthquakes-ca",
     "/health",
@@ -153,28 +153,9 @@ def build_upstream(path, query):
         product = require(query, "product").strip()
         return f"{SLIDER_BASE}/data/json/{satellite}/{sector}/{product}/latest_times.json", "application/json"
 
-    if path == "/api/nhc-active":
-        return "https://www.nhc.noaa.gov/CurrentStorms.json", "application/json"
-
-    if path == "/api/nhc-forecast":
-        storm_id = require(query, "stormId").strip()
-        return f"https://www.nhc.noaa.gov/storms/{storm_id}-forecast.json", "application/json"
-
-    if path == "/api/nhc-cone":
-        storm_id = require(query, "stormId").strip()
-        return f"https://www.nhc.noaa.gov/storms/{storm_id}-cone.json", "application/json"
-
-    if path == "/api/nhc-windprob":
-        storm_id = require(query, "stormId").strip()
-        return f"https://www.nhc.noaa.gov/storms/{storm_id}-windprob.json", "application/json"
-
     if path == "/api/earthquakes-us":
         min_magnitude = float(query.get("minMagnitude", ["2.5"])[0])
         return f"https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude={min_magnitude}&eventtype=earthquake&orderby=magnitude", "application/json"
-
-    if path == "/api/earthquakes-ca":
-        days = int(query.get("days", ["30"])[0])
-        return f"https://www.earthquakescanada.nrcan.gc.ca/api/earthquakes/latest/{days}d/", "application/json"
 
     raise ValueError("unsupported endpoint")
 
@@ -529,44 +510,60 @@ FIRMS_BASE = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 FIRMS_SOURCES = ["VIIRS_NOAA20_NRT", "VIIRS_SNPP_NRT", "MODIS_NRT"]
 
 
-def _cwfis_query(type_names, bbox_str, sort_by=None):
-    """Query CWFIS WFS and return parsed GeoJSON.
-    Note: bbox filtering is done client-side; WFS bbox defaults to EPSG:3978."""
+def _cwfis_query(type_names, bbox_str, sort_by=None, max_features=500):
+    """Query CWFIS WFS with pagination and return features matching bbox.
+    Bbox filtering uses intersection (polygon-bbox overlap) rather than vertex containment."""
     sort_param = f"&sortBy={sort_by}" if sort_by else ""
-    url = (
-        f"{CWFIS_GEO}?request=GetFeature&service=WFS&version=2.0.0"
-        f"&typeNames={type_names}&outputFormat=application/json"
-        f"&srsName=EPSG:4326&count=500{sort_param}"
-    )
-    try:
-        data = fetch_json(url)
-        features = data.get("features") or []
-        west, south, east, north = (float(x) for x in bbox_str.split(","))
-        filtered = []
-        for f in features:
-            g = f.get("geometry")
-            if not g:
-                continue
-            if g["type"] == "Point":
-                coords = g["coordinates"]
-                if west <= coords[0] <= east and south <= coords[1] <= north:
-                    filtered.append(f)
-            elif g["type"] in ("Polygon", "MultiPolygon"):
-                rings = [g["coordinates"][0]] if g["type"] == "Polygon" else [p[0] for p in g["coordinates"]]
-                in_bbox = False
-                for ring in rings:
-                    for lon, lat in ring:
-                        if west <= lon <= east and south <= lat <= north:
-                            in_bbox = True
-                            break
-                    if in_bbox:
-                        break
-                if in_bbox:
-                    filtered.append(f)
-        return filtered
-    except Exception as exc:
-        print(f"CWFIS {type_names} query failed: {exc}", file=sys.stderr)
-        return []
+    west, south, east, north = (float(x) for x in bbox_str.split(","))
+    all_features = []
+    start_index = 0
+    count = min(max_features, 1000)
+    while True:
+        url = (
+            f"{CWFIS_GEO}?request=GetFeature&service=WFS&version=2.0.0"
+            f"&typeNames={type_names}&outputFormat=application/json"
+            f"&srsName=EPSG:4326&count={count}&startIndex={start_index}{sort_param}"
+        )
+        try:
+            data = fetch_json(url)
+            features = data.get("features") or []
+            number_matched = data.get("numberMatched")
+            all_features.extend(features)
+            if len(features) < count:
+                break
+            if number_matched is not None and len(all_features) >= int(number_matched):
+                break
+            if len(all_features) >= max_features:
+                break
+            start_index += count
+        except Exception as exc:
+            print(f"CWFIS {type_names} fetch failed at startIndex={start_index}: {exc}", file=sys.stderr)
+            break
+
+    filtered = []
+    for f in all_features:
+        g = f.get("geometry")
+        if not g:
+            continue
+        if g["type"] == "Point":
+            coords = g["coordinates"]
+            if west <= coords[0] <= east and south <= coords[1] <= north:
+                filtered.append(f)
+        elif g["type"] in ("Polygon", "MultiPolygon"):
+            rings = [g["coordinates"][0]] if g["type"] == "Polygon" else [p[0] for p in g["coordinates"]]
+            in_bbox = False
+            for ring in rings:
+                min_lon = min(p[0] for p in ring)
+                max_lon = max(p[0] for p in ring)
+                min_lat = min(p[1] for p in ring)
+                max_lat = max(p[1] for p in ring)
+                if max_lon < west or min_lon > east or max_lat < south or min_lat > north:
+                    continue
+                in_bbox = True
+                break
+            if in_bbox:
+                filtered.append(f)
+    return filtered
 
 
 def _fetch_cwfis_hotspots(bbox_str):
@@ -598,7 +595,7 @@ def _fetch_cwfis_hotspots(bbox_str):
 
 def _fetch_cwfis_perimeters(bbox_str):
     """Fetch CWFIS fire perimeter polygons and normalize to unified format."""
-    features = _cwfis_query("public:m3_polygons_current", bbox_str)
+    features = _cwfis_query("public:m3_polygons_current", bbox_str, max_features=2000)
     result = []
     for f in features:
         p = f.get("properties") or {}
@@ -761,6 +758,240 @@ def handle_ca_alerts(query):
     longitude = require(query, "longitude").strip()
     encoded = build_ca_alerts_payload(latitude, longitude)
     return encoded, "application/json"
+
+
+NHC_CONE_RADII_NM = {
+    0: 0, 12: 26, 24: 39, 36: 52, 48: 65, 60: 78, 72: 91, 96: 120, 120: 150,
+}
+
+STORM_TYPES = {
+    "DB": "Tropical Depression", "TD": "Tropical Depression",
+    "TS": "Tropical Storm", "HU": "Hurricane",
+    "TY": "Typhoon", "ST": "Super Typhoon", "TC": "Tropical Cyclone",
+    "SD": "Subtropical Depression", "SS": "Subtropical Storm",
+    "EX": "Extratropical", "LO": "Low", "WV": "Tropical Wave",
+    "IN": "Invest", "MD": "Monsoon Depression",
+}
+
+BASINS = {"al": "Atlantic", "ep": "Eastern Pacific", "cp": "Central Pacific"}
+
+
+def _interpolate_cone_radius(tau):
+    if tau in NHC_CONE_RADII_NM:
+        return NHC_CONE_RADII_NM[tau]
+    keys = sorted(NHC_CONE_RADII_NM.keys())
+    if tau <= keys[0]:
+        return NHC_CONE_RADII_NM[keys[0]]
+    if tau >= keys[-1]:
+        return NHC_CONE_RADII_NM[keys[-1]]
+    for i in range(len(keys) - 1):
+        if keys[i] <= tau <= keys[i + 1]:
+            frac = (tau - keys[i]) / (keys[i + 1] - keys[i])
+            return NHC_CONE_RADII_NM[keys[i]] + frac * (NHC_CONE_RADII_NM[keys[i + 1]] - NHC_CONE_RADII_NM[keys[i]])
+    return NHC_CONE_RADII_NM[keys[-1]]
+
+
+def _parse_atcf_lat(lat_str):
+    lat_str = lat_str.strip()
+    if not lat_str:
+        return 0.0
+    hemisphere = lat_str[-1].upper()
+    value = float(lat_str[:-1]) / 10.0
+    return -value if hemisphere == "S" else value
+
+
+def _parse_atcf_lon(lon_str):
+    lon_str = lon_str.strip()
+    if not lon_str:
+        return 0.0
+    hemisphere = lon_str[-1].upper()
+    value = float(lon_str[:-1]) / 10.0
+    return -value if hemisphere == "W" else value
+
+
+def _storm_category(max_wind):
+    if max_wind >= 137: return 5
+    if max_wind >= 113: return 4
+    if max_wind >= 96: return 3
+    if max_wind >= 83: return 2
+    if max_wind >= 64: return 1
+    return 0
+
+
+def _validate_storm_id(storm_id):
+    if not storm_id or not isinstance(storm_id, str):
+        raise ValueError("invalid storm id")
+    storm_id = storm_id.strip().lower()
+    if not (2 <= len(storm_id) <= 10) or not storm_id.isalnum():
+        raise ValueError("invalid storm id")
+    return storm_id
+
+
+def _fetch_atcf_text(storm_id, url_template):
+    url = url_template.format(storm_id=storm_id)
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+
+
+def _parse_ofcl_lines(text):
+    ofcl = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 11:
+            continue
+        if parts[4].upper() != "OFCL":
+            continue
+        ofcl.append(parts)
+    if not ofcl:
+        return []
+    max_init = max(p[2].strip() for p in ofcl)
+    return [p for p in ofcl if p[2].strip() == max_init]
+
+
+def build_earthquakes_ca_payload(days_str):
+    days = max(1, min(90, int(float(days_str))))
+    start = datetime.date.today() - datetime.timedelta(days=days)
+    url = f"https://www.earthquakescanada.nrcan.gc.ca/fdsnws/event/1/query?format=text&starttime={start.isoformat()}&minmagnitude=2.5"
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=25) as resp:
+        text = resp.read().decode("utf-8")
+    features = []
+    for line in text.splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        parts = line.split("|")
+        if len(parts) < 8:
+            continue
+        event_id = parts[0].strip()
+        time_str = parts[1].strip()
+        lat = float(parts[2].strip())
+        lon = float(parts[3].strip())
+        depth = float(parts[4].strip() or "0")
+        mag = float(parts[6].strip() or "0")
+        location = parts[7].strip()
+        if "/" in location:
+            location = location.split("/")[0].strip()
+        features.append({
+            "type": "Feature",
+            "id": event_id,
+            "geometry": {"type": "Point", "coordinates": [lon, lat, depth]},
+            "properties": {"magnitude": mag, "place": location, "time": time_str},
+        })
+    return json.dumps({"type": "FeatureCollection", "features": features}).encode("utf-8")
+
+
+def build_nhc_active_payload():
+    data = fetch_json("https://www.nhc.noaa.gov/CurrentStorms.json")
+    active = data.get("activeStorms") or []
+    storms = []
+    for s in active:
+        basin_code = (s.get("id") or "xx")[:2].lower()
+        basin = BASINS.get(basin_code, "Unknown")
+        classification = (s.get("classification") or "").upper()
+        storm_type = STORM_TYPES.get(classification, "Tropical Storm")
+        max_wind = float(s.get("intensity") or 0)
+        category = _storm_category(max_wind) if storm_type == "Hurricane" else 0
+        storms.append({
+            "id": s.get("id", ""),
+            "name": s.get("name", ""),
+            "stormType": storm_type,
+            "category": category or None,
+            "latitude": float(s.get("latitudeNumeric") or s.get("latitude") or 0),
+            "longitude": float(s.get("longitudeNumeric") or s.get("longitude") or 0),
+            "maxWindSpeed": max_wind,
+            "minPressure": float(s.get("pressure") or 0),
+            "movement": {
+                "direction": float(s.get("movementDir") or 0),
+                "speed": float(s.get("movementSpeed") or 0),
+            },
+            "lastUpdate": s.get("lastUpdate", ""),
+            "basin": basin,
+        })
+    return json.dumps({"activeStorms": storms}).encode("utf-8")
+
+
+def build_nhc_forecast_payload(storm_id):
+    storm_id = _validate_storm_id(storm_id)
+    text = _fetch_atcf_text(storm_id, "https://ftp.nhc.noaa.gov/atcf/fst/{storm_id}.fst")
+    if text is None:
+        return json.dumps({"track": []}).encode("utf-8")
+    ofcl_lines = _parse_ofcl_lines(text)
+    if not ofcl_lines:
+        return json.dumps({"track": []}).encode("utf-8")
+    seen_tau = set()
+    track = []
+    for parts in ofcl_lines:
+        try:
+            tau = int(parts[5].strip())
+        except (ValueError, IndexError):
+            continue
+        if tau in seen_tau:
+            continue
+        seen_tau.add(tau)
+        lat = _parse_atcf_lat(parts[6])
+        lon = _parse_atcf_lon(parts[7])
+        vmax = float(parts[8]) if len(parts) > 8 else 0
+        intensity = parts[10].strip().upper() if len(parts) > 10 else ""
+        storm_type = STORM_TYPES.get(intensity, "Tropical Storm")
+        try:
+            init_dt = datetime.datetime.strptime(parts[2].strip(), "%Y%m%d%H")
+            valid_time = (init_dt + datetime.timedelta(hours=tau)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        except (ValueError, TypeError):
+            valid_time = ""
+        track.append({
+            "validTime": valid_time,
+            "latitude": lat,
+            "longitude": lon,
+            "maxWindSpeed": vmax,
+            "stormType": storm_type,
+        })
+    track.sort(key=lambda p: p["validTime"])
+    return json.dumps({"track": track}).encode("utf-8")
+
+
+def build_nhc_cone_payload(storm_id):
+    storm_id = _validate_storm_id(storm_id)
+    text = _fetch_atcf_text(storm_id, "https://ftp.nhc.noaa.gov/atcf/fst/{storm_id}.fst")
+    if text is None:
+        return json.dumps({"cone": []}).encode("utf-8")
+    ofcl_lines = _parse_ofcl_lines(text)
+    if not ofcl_lines:
+        return json.dumps({"cone": []}).encode("utf-8")
+    seen_tau = set()
+    cone = []
+    for parts in ofcl_lines:
+        try:
+            tau = int(parts[5].strip())
+        except (ValueError, IndexError):
+            continue
+        if tau in seen_tau:
+            continue
+        seen_tau.add(tau)
+        lat = _parse_atcf_lat(parts[6])
+        lon = _parse_atcf_lon(parts[7])
+        radius = _interpolate_cone_radius(tau)
+        try:
+            init_dt = datetime.datetime.strptime(parts[2].strip(), "%Y%m%d%H")
+            valid_time = (init_dt + datetime.timedelta(hours=tau)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        except (ValueError, TypeError):
+            valid_time = ""
+        cone.append({
+            "validTime": valid_time,
+            "centerLat": lat,
+            "centerLon": lon,
+            "radius": radius,
+        })
+    cone.sort(key=lambda p: p["validTime"])
+    return json.dumps({"cone": cone}).encode("utf-8")
 
 
 def symbol_to_weather_code(symbol):

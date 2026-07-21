@@ -11,8 +11,9 @@ import { getAppSettings, saveAppSettings, getPreferredLocation, savePreferredLoc
 import { fetchNoaaSectorCatalog, fetchSliderCatalog, fetchLatestSliderTimestamps, fetchAllAlerts, fetchWildfires, fetchActiveCyclones, fetchStormForecast, fetchStormCone, fetchAllEarthquakes } from "./api";
 import { resolveLocation, searchLocationSuggestions, searchAlertSuggestions, getAlertCentroid, } from "./search";
 import { zoomMap, startMapDrag, moveMapDrag, endMapDrag, resetMapView, updateMapTooltip, hideMapTooltip, } from "./map";
+import { latLonToWorld, worldToLatLon } from "./geo";
 import { updateSatelliteForLocation, loadSatelliteSector, getNoaaSectorById, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, renderSatelliteProductOptions, renderSatelliteImage, updateSliderForLocation, loadSliderSector, setActiveSource, loadSliderImageWithFallback, resolveSliderSatellite, resolveSliderSector } from "./satellite";
-import { setMapCenterAlerts, setMapCenterWildfires, getAllAlerts, showStormTracks, setShowStormTracks, setActiveCyclones, setStormForecast, setStormCone, showEarthquakes, setShowEarthquakes, setEarthquakes } from "./alerts";
+import { setMapCenterAlerts, setMapCenterWildfires, getAllAlerts, showStormTracks, setShowStormTracks, setActiveCyclones, setStormForecast, setStormCone, showEarthquakes, setShowEarthquakes, setEarthquakes, setEarthquakeMaxAge } from "./alerts";
 import { selectTab, togglePanel, formatLocationLabel, normalizeSearchText, showToast } from "./ui";
 import { loadBrowseAlerts } from "./panels/alerts";
 import { exportSettingsPreset, importSettingsPreset, } from "./settings";
@@ -70,19 +71,24 @@ async function fetchMapCenterWildfires(): Promise<void> {
   const center = mapState.center;
   if (!center || !center.latitude || !center.longitude) return;
   const zoom = Math.round(mapState.zoom);
-  const viewSpan = Math.max(1, 360 / Math.pow(2, zoom));
+  const w = heatmapCanvas?.width || window.innerWidth;
+  const h = heatmapCanvas?.height || window.innerHeight;
+  const centerWorld = latLonToWorld(center.latitude, center.longitude, zoom);
+  const padFactor = 1.5;
+  const nw = worldToLatLon(centerWorld.x - (w / 2) * padFactor, centerWorld.y - (h / 2) * padFactor, zoom);
+  const se = worldToLatLon(centerWorld.x + (w / 2) * padFactor, centerWorld.y + (h / 2) * padFactor, zoom);
   const bbox = {
-    west: center.longitude - viewSpan,
-    south: center.latitude - viewSpan,
-    east: center.longitude + viewSpan,
-    north: center.latitude + viewSpan,
+    west: Math.max(-180, Math.min(180, nw.longitude)),
+    south: Math.max(-85, Math.min(85, se.latitude)),
+    east: Math.max(-180, Math.min(180, se.longitude)),
+    north: Math.max(-85, Math.min(85, nw.latitude)),
   };
+  if (bbox.west >= bbox.east || bbox.south >= bbox.north) return;
   try {
     const features = await fetchWildfires(bbox);
     setMapCenterWildfires(features);
     renderHeatmap(latestHeatmap, activeHeatmapLayer);
   } catch {
-    setMapCenterWildfires(null);
     renderHeatmap(latestHeatmap, activeHeatmapLayer);
   }
 }
@@ -644,6 +650,14 @@ document.querySelector("#earthquakes-toggle")?.addEventListener("click", () => {
   renderHeatmap(latestHeatmap, activeHeatmapLayer);
 });
 
+elements.earthquakeAgeSelect?.addEventListener("change", () => {
+  const val = elements.earthquakeAgeSelect!.value;
+  const hours = val ? parseInt(val, 10) : null;
+  setEarthquakeMaxAge(hours);
+  saveAppSettings({ earthquakeMaxAgeHours: hours });
+  renderHeatmap(latestHeatmap, activeHeatmapLayer);
+});
+
 // Satellite map toggle button
 document.querySelector("#satellite-toggle")?.addEventListener("click", () => {
   toggleSatelliteOverlay();
@@ -849,6 +863,10 @@ setActiveHeatmapLayer(initialSettings.mapLayer);
 setActiveMapHourOffset(initialSettings.mapHourOffset);
 setShowAlerts(initialSettings.showAlerts);
 setShowWildfires(initialSettings.showWildfires);
+setEarthquakeMaxAge(initialSettings.earthquakeMaxAgeHours);
+if (elements.earthquakeAgeSelect) {
+  elements.earthquakeAgeSelect.value = initialSettings.earthquakeMaxAgeHours !== null ? String(initialSettings.earthquakeMaxAgeHours) : "";
+}
 syncOverlayToggles();
 if (elements.satelliteSectorSelect) elements.satelliteSectorSelect.value = NOAA_SECTORS[0].id;
 if (elements.satelliteProductSelect) {

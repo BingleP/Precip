@@ -622,6 +622,24 @@ a {
   font-size: 11px;
 }
 
+.map-tools-row .map-tools-label {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 28px;
+  white-space: nowrap;
+}
+
+.map-tools-row .map-tools-select {
+  font-size: 10px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  min-height: 24px;
+}
+
 .map-tools-layers {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;

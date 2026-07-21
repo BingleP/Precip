@@ -181,9 +181,9 @@ export async function fetchAllAlerts(): Promise<NwsAlert[]> {
   allAlertsRequest = (async () => {
     try {
       const url = buildApiUrl("/all-alerts");
-      const response = await fetch(url, { cache: "no-store" });
-      if (!response.ok) return [];
-      const body = await response.json();
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`wildfire fetch ${response.status}`);
+    const body = await response.json();
       const alerts = body.features || [];
       allAlertsCache = { savedAt: Date.now(), data: alerts };
       return alerts;
@@ -480,7 +480,7 @@ export async function fetchAllEarthquakes(minMagnitude = 2.5): Promise<Earthquak
   earthquakesRequest = (async () => {
     const [us, ca] = await Promise.all([
       fetchEarthquakesUS(minMagnitude),
-      fetchEarthquakesCA(minMagnitude),
+      fetchEarthquakesCA(),
     ]);
     const all = [...us, ...ca];
     all.sort((a, b) => b.magnitude - a.magnitude);

@@ -75,6 +75,8 @@ export function getAppSettings(): AppSettings {
     useImperial: parsed?.useImperial === true,
     showAlerts: parsed?.showAlerts !== false,
     showWildfires: parsed?.showWildfires !== false,
+    earthquakeMaxAgeHours: typeof parsed?.earthquakeMaxAgeHours === "number" && parsed.earthquakeMaxAgeHours > 0
+      ? parsed.earthquakeMaxAgeHours : null,
   };
 }
 
@@ -85,6 +87,8 @@ export function saveAppSettings(partial: Partial<AppSettings>): AppSettings {
   };
   next.mapLayer = normalizeMapLayer(next.mapLayer) as AppSettings["mapLayer"];
   next.mapHourOffset = normalizeMapHourOffset(next.mapHourOffset);
+  next.earthquakeMaxAgeHours = typeof next.earthquakeMaxAgeHours === "number" && next.earthquakeMaxAgeHours > 0
+    ? next.earthquakeMaxAgeHours : null;
   writeCookieJSON(SETTINGS_KEY, next);
   return next;
 }

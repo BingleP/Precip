@@ -39,6 +39,7 @@ export const DEFAULT_APP_SETTINGS = {
   useImperial: false,
   showAlerts: true,
   showWildfires: true,
+  earthquakeMaxAgeHours: null as number | null,
 };
 
 export const NOAA_SECTORS: NoaaSector[] = [

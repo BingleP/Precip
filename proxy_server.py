@@ -17,6 +17,10 @@ from proxy_upstream import (
     build_upstream, build_geocode_payload, build_ca_alerts_payload,
     build_us_alerts_payload, build_all_alerts_payload,
     build_wildfires_payload, fetch_slider_image,
+    build_earthquakes_ca_payload,
+    build_nhc_active_payload,
+    build_nhc_forecast_payload,
+    build_nhc_cone_payload,
     aggregate_daily, symbol_to_weather_code,
 )
 from proxy_estimators import (
@@ -278,6 +282,49 @@ class Handler(BaseHTTPRequestHandler):
                 body, content_type = fetch_slider_image(satellite, sector, product, timestamp)
                 self.send_response(200)
                 self.send_common_headers(content_type, len(body))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/nhc-active":
+                body = build_nhc_active_payload()
+                cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
+                self.send_response(200)
+                self.send_common_headers("application/json; charset=utf-8", len(body))
+                self.send_header("X-Precip-Cache", "MISS")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/nhc-forecast":
+                storm_id = require(query, "stormId").strip()
+                body = build_nhc_forecast_payload(storm_id)
+                cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
+                self.send_response(200)
+                self.send_common_headers("application/json; charset=utf-8", len(body))
+                self.send_header("X-Precip-Cache", "MISS")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/nhc-cone":
+                storm_id = require(query, "stormId").strip()
+                body = build_nhc_cone_payload(storm_id)
+                cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
+                self.send_response(200)
+                self.send_common_headers("application/json; charset=utf-8", len(body))
+                self.send_header("X-Precip-Cache", "MISS")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/earthquakes-ca":
+                days = query.get("days", ["30"])[0]
+                body = build_earthquakes_ca_payload(days)
+                cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
+                self.send_response(200)
+                self.send_common_headers("application/json; charset=utf-8", len(body))
+                self.send_header("X-Precip-Cache", "MISS")
                 self.end_headers()
                 self.wfile.write(body)
                 return

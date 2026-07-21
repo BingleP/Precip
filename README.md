@@ -43,9 +43,15 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
 - **Earthquake tracking**:
   - **USGS earthquakes** — real-time seismic events (M2.5+) from the US Geological Survey
   - **NRCAN earthquakes** — real-time seismic events from Natural Resources Canada
-  - Combined US + Canada quake layer on the map with magnitude-colored markers (minor=green, light=yellow, moderate=orange, strong=dark orange, major=red, great=dark red)
-  - Circle size scales with magnitude
-  - Toggle overlay in map tools panel
+   - Combined US + Canada quake layer on the map with magnitude-colored markers (minor=green, light=yellow, moderate=orange, strong=dark orange, major=red, great=dark red)
+   - Circle size scales with magnitude
+   - Toggle overlay in map tools panel
+   - **Age filter** in map tools panel to limit quakes by recency (1h, 6h, 12h, 24h, 48h, 72h, or all)
+- **Hurricane tracking**:
+   - **Active storms** — current-season storms from NHC (TC advisory locations, wind radii, motion, pressure)
+   - **Forecast track** — official NHC forecast (OFCL) for a given storm, parsed from ATCF text advisories
+   - **Cone of uncertainty** — 2–5 day track cone built from NHC forecast track + hardcoded radii table (per-season)
+   - All NHC data is fetched, parsed, and cached by the proxy (storm list: 10 min, forecast + cone: 15 min)
 - **Performance optimizations:**
   - **Heatmap**: screen coordinate memoization + 4×4 interpolation grid (avoids O(pixels×samples) per frame)
   - **Wildfire hotspots**: color-bucket batching (3 draw calls vs N), spatial clustering at zoom < 7, frustum culling
@@ -92,6 +98,7 @@ The browser talks to same-origin `/api/*` routes. The proxy fetches and caches:
 - `https://firms.modaps.eosdis.nasa.gov` (NASA FIRMS hotspot CSV data, requires `FIRMS_MAP_KEY`)
 - `https://earthquake.usgs.gov` (USGS earthquake data)
 - `https://www.earthquakescanada.nrcan.gc.ca` (Natural Resources Canada seismic data)
+- `https://www.nhc.noaa.gov` (NHC active storms, ATCF forecast text, storm data)
 
 Map tiles and NOAA GOES animated GIFs load directly in the browser from:
 
@@ -100,7 +107,7 @@ Map tiles and NOAA GOES animated GIFs load directly in the browser from:
 
 SLIDER global satellite imagery is **proxied** through the cache server (`/api/slider-image` for tiles, `/api/slider-latest-times` for timestamps) to bypass CSP restrictions on slider.cira.colostate.edu.
 
-Cache TTLs vary by endpoint (5 min for alerts, 10 min for forecasts/SPC/SLIDER latest-times, 15 min for heatmap/wildfires/SLIDER images, 24 h for geocoding and zone geometry).
+Cache TTLs vary by endpoint (5 min for alerts, 10 min for forecasts/SPC/SLIDER latest-times/NHC active storms, 15 min for heatmap/wildfires/SLIDER images/NHC forecast+cone, 24 h for geocoding and zone geometry).
 
 User state is stored in browser cookies. No app data is written to the server.
 
@@ -170,6 +177,9 @@ img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov;
 | `/api/slider-latest-times` | RAMMB/CIRA SLIDER | `satellite`, `sector`, `product` |
 | `/api/earthquakes-us` | USGS FDSNWS | `minMagnitude` |
 | `/api/earthquakes-ca` | Natural Resources Canada | `days` |
+| `/api/nhc-active` | NHC CurrentStorms.json | none |
+| `/api/nhc-forecast` | NHC ATCF text | `stormId` (e.g. `al022026`) |
+| `/api/nhc-cone` | NHC ATCF text (same as forecast) | `stormId` |
 
 ## Security Model
 

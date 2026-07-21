@@ -269,6 +269,7 @@ export interface AppSettings {
   useImperial: boolean;
   showAlerts: boolean;
   showWildfires: boolean;
+  earthquakeMaxAgeHours: number | null;
 }
 
 export interface StormRisk {

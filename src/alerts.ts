@@ -59,14 +59,28 @@ export function clearStormData(): void {
 }
 
 let earthquakes: Earthquake[] = [];
+let earthquakeMaxAge: number | null = null;
 export let showEarthquakes = true;
 
 export function setShowEarthquakes(value: boolean): void {
   showEarthquakes = value;
 }
 
+export function setEarthquakeMaxAge(hours: number | null): void {
+  earthquakeMaxAge = hours;
+}
+
+export function getEarthquakeMaxAge(): number | null {
+  return earthquakeMaxAge;
+}
+
 export function getEarthquakes(): Earthquake[] {
-  return earthquakes;
+  if (earthquakeMaxAge === null || earthquakeMaxAge <= 0) return earthquakes;
+  const cutoff = Date.now() - earthquakeMaxAge * 3600000;
+  return earthquakes.filter((eq) => {
+    const t = new Date(eq.time).getTime();
+    return !isNaN(t) && t >= cutoff;
+  });
 }
 
 export function setEarthquakes(eq: Earthquake[]): void {
