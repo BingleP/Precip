@@ -217,6 +217,11 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
 
   drawMapPlaces(ctx, width, height, activeLocation, mapState, centerWorld);
 
+  // While panning, only the tiles and the location marker are redrawn. Alert
+  // polygons, wildfire perimeters, quakes and storm tracks are expensive to
+  // reproject for every pointer frame, so they are restored on pointerup.
+  if (mapState.drag) return;
+
   if (showAlerts) {
     const alertPolygons = drawMapAlertPolygons(ctx, width, height, centerWorld, zoomRound, getMapCenterAlerts());
     setAlertPolygonsCache(alertPolygons);

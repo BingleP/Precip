@@ -297,6 +297,153 @@ def build_geocode_payload(name, count):
     }).encode("utf-8")
 
 
+ALERT_DESCRIPTION_LIMIT = 500
+ALERT_COORD_DECIMALS = 4
+ALERT_SIMPLIFY_TOLERANCE = 0.005  # degrees, ~550 m
+ALERT_MAX_POINTS_PER_FEATURE = 3000
+
+
+def _rdp(points, tolerance):
+    """Ramer-Douglas-Peucker simplification in lon/lat degrees."""
+    if len(points) < 4:
+        return points
+    keep = [False] * len(points)
+    keep[0] = keep[-1] = True
+    tol_sq = tolerance * tolerance
+    stack = [(0, len(points) - 1)]
+    while stack:
+        start, end = stack.pop()
+        if end <= start + 1:
+            continue
+        ax, ay = points[start][0], points[start][1]
+        bx, by = points[end][0], points[end][1]
+        dx = bx - ax
+        dy = by - ay
+        seg_len_sq = dx * dx + dy * dy
+        max_dist_sq = -1.0
+        max_index = -1
+        for i in range(start + 1, end):
+            px, py = points[i][0], points[i][1]
+            if seg_len_sq == 0:
+                dist_sq = (px - ax) ** 2 + (py - ay) ** 2
+            else:
+                t = ((px - ax) * dx + (py - ay) * dy) / seg_len_sq
+                t = 0.0 if t < 0 else (1.0 if t > 1 else t)
+                proj_x = ax + t * dx
+                proj_y = ay + t * dy
+                dist_sq = (px - proj_x) ** 2 + (py - proj_y) ** 2
+            if dist_sq > max_dist_sq:
+                max_dist_sq = dist_sq
+                max_index = i
+        if max_index != -1 and max_dist_sq > tol_sq:
+            keep[max_index] = True
+            stack.append((start, max_index))
+            stack.append((max_index, end))
+    return [point for index, point in enumerate(points) if keep[index]]
+
+
+def _simplify_ring(ring, tolerance):
+    """Round, decimate and close a single polygon ring."""
+    points = []
+    for coord in ring or []:
+        if isinstance(coord, (list, tuple)) and len(coord) >= 2:
+            try:
+                points.append([float(coord[0]), float(coord[1])])
+            except (TypeError, ValueError):
+                continue
+    if len(points) < 4:
+        return None
+
+    closed = points[0] == points[-1]
+    body = points[:-1] if closed else points
+    # Very dense rings make RDP quadratic; pre-decimate them first.
+    if len(body) > 2500:
+        step = max(1, len(body) // 2500)
+        body = body[::step]
+    if len(body) > 3:
+        body = _rdp(body + [body[0]], tolerance)[:-1]
+    if len(body) < 3:
+        return None
+
+    rounded = [[round(p[0], ALERT_COORD_DECIMALS), round(p[1], ALERT_COORD_DECIMALS)] for p in body]
+    rounded.append(list(rounded[0]))
+    return rounded
+
+
+def _cap_rings(rings, max_points):
+    """Trim rings evenly so one feature cannot dominate the payload."""
+    total = sum(len(ring) for ring in rings)
+    if total <= max_points or total == 0:
+        return rings
+    factor = max_points / total
+    capped = []
+    for ring in rings:
+        target = max(4, int(len(ring) * factor))
+        step = max(1, len(ring) // target)
+        reduced = ring[::step]
+        if reduced[-1] != reduced[0]:
+            reduced.append(ring[0])
+        if len(reduced) >= 4:
+            capped.append(reduced)
+    return capped
+
+
+def _simplify_alert_geometry(geometry):
+    """Reduce alert polygon precision/point count for map rendering."""
+    if not isinstance(geometry, dict):
+        return None
+    geometry_type = geometry.get("type")
+
+    if geometry_type == "Polygon":
+        rings = []
+        for ring in geometry.get("coordinates") or []:
+            simplified = _simplify_ring(ring, ALERT_SIMPLIFY_TOLERANCE)
+            if simplified:
+                rings.append(simplified)
+        rings = _cap_rings(rings, ALERT_MAX_POINTS_PER_FEATURE)
+        if not rings:
+            return None
+        return {"type": "Polygon", "coordinates": rings}
+
+    if geometry_type == "MultiPolygon":
+        polygons = []
+        for polygon in geometry.get("coordinates") or []:
+            rings = []
+            for ring in polygon or []:
+                simplified = _simplify_ring(ring, ALERT_SIMPLIFY_TOLERANCE)
+                if simplified:
+                    rings.append(simplified)
+            if rings:
+                polygons.append(rings)
+        if not polygons:
+            return None
+        per_polygon_cap = max(200, ALERT_MAX_POINTS_PER_FEATURE // len(polygons))
+        polygons = [_cap_rings(rings, per_polygon_cap) for rings in polygons]
+        return {"type": "MultiPolygon", "coordinates": polygons}
+
+    return None
+
+
+def _slim_alert_feature(feature, source=None):
+    """Keep only the fields the client renders, with simplified geometry."""
+    props = feature.get("properties") or {}
+    slim = {
+        "type": "Feature",
+        "properties": {
+            "id": props.get("id") or feature.get("id"),
+            "event": props.get("event") or "Weather alert",
+            "headline": props.get("headline") or "",
+            "description": (props.get("description") or "")[:ALERT_DESCRIPTION_LIMIT],
+            "severity": props.get("severity") or "Unknown",
+            "source": source or props.get("source") or "NWS",
+        },
+    }
+    geometry = _simplify_alert_geometry(feature.get("geometry"))
+    if geometry:
+        slim["geometry"] = geometry
+    return slim
+
+
 def build_ca_alerts_payload(latitude, longitude):
     half_span = 1.0
     raw_north = float(latitude) + half_span
@@ -335,7 +482,11 @@ def build_ca_alerts_payload(latitude, longitude):
                 "source": "ECCC",
             },
         })
-    return json.dumps({"type": "FeatureCollection", "features": normalized}).encode("utf-8")
+    slimmed = [_slim_alert_feature(f, "ECCC") for f in normalized]
+    return json.dumps(
+        {"type": "FeatureCollection", "features": slimmed},
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 
 def _enrich_zone_geometries(features):
@@ -436,7 +587,11 @@ def build_all_alerts_payload():
         if "properties" in f and "source" not in f["properties"]:
             f["properties"]["source"] = "NWS"
     all_features.extend(us_features)
-    return json.dumps({"type": "FeatureCollection", "features": all_features}).encode("utf-8")
+    slimmed = [_slim_alert_feature(f) for f in all_features]
+    return json.dumps(
+        {"type": "FeatureCollection", "features": slimmed},
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 
 def _fetch_zone_geometry(zone_url):
@@ -502,7 +657,8 @@ def build_us_alerts_payload(latitude, longitude):
                 else:
                     f["geometry"] = {"type": "MultiPolygon", "coordinates": zone_polys}
 
-    return json.dumps(data).encode("utf-8")
+    data["features"] = [_slim_alert_feature(f, "NWS") for f in features]
+    return json.dumps(data, separators=(",", ":")).encode("utf-8")
 
 
 CWFIS_GEO = "https://cwfis.cfs.nrcan.gc.ca/geoserver/wfs"

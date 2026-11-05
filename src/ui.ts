@@ -79,8 +79,13 @@ export function roundedRect(
 
 export function selectTab(tabId: string): void {
   document.querySelectorAll(".tab-button").forEach((btn) => {
-    btn.classList.toggle("active", (btn as HTMLElement).dataset.tab === tabId);
-    btn.setAttribute("aria-selected", String((btn as HTMLElement).dataset.tab === tabId));
+    const isActive = (btn as HTMLElement).dataset.tab === tabId;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", String(isActive));
+    if (isActive && btn instanceof HTMLElement) {
+      // Keep the active tab visible when the tab strip scrolls on phones.
+      btn.scrollIntoView({ inline: "nearest", block: "nearest" });
+    }
   });
   document.querySelectorAll(".data-section").forEach((section) => {
     section.classList.toggle("active", (section as HTMLElement).dataset.section === tabId);
@@ -104,9 +109,17 @@ export function prepareCanvas(
   context: CanvasRenderingContext2D,
 ): { width: number; height: number } {
   const rect = canvas.getBoundingClientRect();
-  const pixelRatio = window.devicePixelRatio || 1;
   const width = Math.max(320, Math.round(rect.width));
   const height = Math.max(260, Math.round(rect.height));
+
+  // Full devicePixelRatio on a 3x phone means a multi-megapixel canvas that is
+  // redrawn on every pan frame. Cap the backing store so redraw cost stays
+  // predictable without a visible quality loss for a map.
+  const rawRatio = window.devicePixelRatio || 1;
+  const MAX_BACKING_PIXELS = 3_000_000;
+  const budgetRatio = Math.sqrt(MAX_BACKING_PIXELS / Math.max(1, width * height));
+  const pixelRatio = Math.max(1, Math.min(rawRatio, 2, budgetRatio));
+
   const scaledWidth = Math.round(width * pixelRatio);
   const scaledHeight = Math.round(height * pixelRatio);
 

@@ -33,6 +33,7 @@ const INTERPOLATION_GRID_STEP = 4; // Sample every 4th pixel for grid
 
 // Tile filter pre-compositing cache
 const filteredTileCache = new Map<string, HTMLCanvasElement>();
+const FILTERED_TILE_CACHE_MAX = 320;
 const TILE_FILTER = "brightness(0.48) saturate(0.6) contrast(1.25)";
 
 // Label position memoization cache
@@ -132,6 +133,13 @@ function getFilteredTile(
     const fctx = filtered.getContext("2d")!;
     fctx.filter = TILE_FILTER;
     fctx.drawImage(image, 0, 0, MAP_TILE_SIZE, MAP_TILE_SIZE);
+    if (filteredTileCache.size >= FILTERED_TILE_CACHE_MAX) {
+      const removeCount = Math.round(FILTERED_TILE_CACHE_MAX * 0.25);
+      const keys = [...filteredTileCache.keys()];
+      for (let i = 0; i < removeCount && i < keys.length; i++) {
+        filteredTileCache.delete(keys[i]);
+      }
+    }
     filteredTileCache.set(key, filtered);
   }
   return filtered;

@@ -322,7 +322,13 @@ if (heatmapCanvas) {
   heatmapCanvas.addEventListener("pointerup", (event) => {
     endMapDrag(
       event, mapState, activePointers, pinchState,
-      () => { scheduleHeatmapRefresh(); scheduleMapCenterAlertFetch(); scheduleWildfireFetch(); },
+      () => {
+        // Restore the full layer stack that was skipped during the drag.
+        renderHeatmap(latestHeatmap, activeHeatmapLayer);
+        scheduleHeatmapRefresh();
+        scheduleMapCenterAlertFetch();
+        scheduleWildfireFetch();
+      },
       (lat, lon) => selectMapLocation(lat, lon),
     );
   });
@@ -330,7 +336,7 @@ if (heatmapCanvas) {
   heatmapCanvas.addEventListener("pointercancel", (event) => {
     endMapDrag(
       event, mapState, activePointers, pinchState,
-      () => {},
+      () => { renderHeatmap(latestHeatmap, activeHeatmapLayer); },
       () => {},
     );
   });
@@ -834,7 +840,10 @@ document.querySelectorAll(".tab-button").forEach((btn) => {
 document.querySelector("#panel-collapse")?.addEventListener("click", togglePanel);
 document.querySelector("#panel-expand")?.addEventListener("click", togglePanel);
 document.querySelector("#drawer-peek")?.addEventListener("click", () => {
-  document.querySelector("#data-panel")?.classList.remove("collapsed");
+  const panel = document.querySelector("#data-panel");
+  if (!panel) return;
+  const collapsed = panel.classList.toggle("collapsed");
+  document.querySelector(".app-shell")?.classList.toggle("panel-expanded", !collapsed);
 });
 document.querySelector("#map-tools-toggle")?.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -856,7 +865,16 @@ document.addEventListener("click", (e) => {
 
 // --- Init ---
 selectTab("now");
-document.querySelector(".app-shell")?.classList.add("panel-expanded");
+const appShell = document.querySelector(".app-shell");
+const dataPanel = document.querySelector("#data-panel");
+appShell?.classList.add("panel-expanded");
+
+// Phones render the data panel as a bottom sheet. Start it collapsed so the
+// map is usable on first paint; tapping a tab or the peek handle opens it.
+if (window.matchMedia("(max-width: 768px)").matches) {
+  dataPanel?.classList.add("collapsed");
+  appShell?.classList.remove("panel-expanded");
+}
 
 const initialSettings = getAppSettings();
 setActiveHeatmapLayer(initialSettings.mapLayer);
