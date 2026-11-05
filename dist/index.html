@@ -6,29 +6,42 @@
     <title>Precip Weather Operations</title>
     <link rel="icon" href="/assets/tab-DiPa0YlR.png?v=2" type="image/png" />
     <link rel="preconnect" href="https://tile.openstreetmap.org" />
-    <script type="module" crossorigin src="/assets/main-C7_HxutM.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/ui-B1En5RgL.js">
-    <link rel="stylesheet" crossorigin href="/assets/ui-5qnM4XOn.css">
+    <script type="module" crossorigin src="/assets/main-BqPTnLPR.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/ui-gUFXuN2f.js">
+    <link rel="stylesheet" crossorigin href="/assets/ui-65lur2NA.css">
   </head>
   <body>
     <div class="app-shell">
 
-      <!-- Top Tab Bar -->
+      <!-- Top Bar: brand + section dropdown -->
       <nav class="top-tabs">
         <a class="tab-brand" href="#" aria-label="Precip dashboard home">
           <img class="brand-mark" src="/assets/precip-BJo7iggY.png" alt="" />
         </a>
-        <div class="tab-list" role="tablist">
-          <button class="tab-button active" role="tab" aria-selected="true" data-tab="now">Now</button>
-          <button class="tab-button" role="tab" aria-selected="false" data-tab="hourly">Hourly</button>
-          <button class="tab-button" role="tab" aria-selected="false" data-tab="outlook">Outlook</button>
-          <button class="tab-button" role="tab" aria-selected="false" data-tab="storm">Storm</button>
-          <button class="tab-button" role="tab" aria-selected="false" data-tab="alerts">Alerts</button>
-          <button class="tab-button" role="tab" aria-selected="false" data-tab="air">Air</button>
-          <button class="tab-button" role="tab" aria-selected="false" data-tab="trends">Trends</button>
-          <button class="tab-button" role="tab" aria-selected="false" data-tab="pins">Pins</button>
-          <button class="tab-button" role="tab" aria-selected="false" data-tab="tropical">Tropical</button>
-          <button class="tab-button" role="tab" aria-selected="false" data-tab="settings">Settings</button>
+        <div class="tab-menu">
+          <button
+            class="tab-menu-toggle"
+            id="tab-menu-toggle"
+            type="button"
+            aria-haspopup="true"
+            aria-expanded="false"
+            aria-controls="tab-menu-list"
+          >
+            <span class="tab-menu-label" id="tab-menu-label">Now</span>
+            <span class="tab-menu-caret" aria-hidden="true"></span>
+          </button>
+          <div class="tab-list" id="tab-menu-list" role="tablist" aria-label="Dashboard sections">
+            <button class="tab-button active" role="tab" aria-selected="true" data-tab="now">Now</button>
+            <button class="tab-button" role="tab" aria-selected="false" data-tab="hourly">Hourly</button>
+            <button class="tab-button" role="tab" aria-selected="false" data-tab="outlook">Outlook</button>
+            <button class="tab-button" role="tab" aria-selected="false" data-tab="storm">Storm</button>
+            <button class="tab-button" role="tab" aria-selected="false" data-tab="alerts">Alerts</button>
+            <button class="tab-button" role="tab" aria-selected="false" data-tab="air">Air</button>
+            <button class="tab-button" role="tab" aria-selected="false" data-tab="trends">Trends</button>
+            <button class="tab-button" role="tab" aria-selected="false" data-tab="pins">Pins</button>
+            <button class="tab-button" role="tab" aria-selected="false" data-tab="tropical">Tropical</button>
+            <button class="tab-button" role="tab" aria-selected="false" data-tab="settings">Settings</button>
+          </div>
         </div>
       </nav>
 

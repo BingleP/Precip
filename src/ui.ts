@@ -82,11 +82,16 @@ export function selectTab(tabId: string): void {
     const isActive = (btn as HTMLElement).dataset.tab === tabId;
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-selected", String(isActive));
-    if (isActive && btn instanceof HTMLElement) {
-      // Keep the active tab visible when the tab strip scrolls on phones.
-      btn.scrollIntoView({ inline: "nearest", block: "nearest" });
-    }
   });
+
+  // Keep the dropdown's toggle label in sync with the selected section.
+  const menuLabel = document.querySelector("#tab-menu-label");
+  if (menuLabel) {
+    menuLabel.textContent = tabId.charAt(0).toUpperCase() + tabId.slice(1);
+  }
+  document.querySelector("#tab-menu-list")?.classList.remove("open");
+  document.querySelector("#tab-menu-toggle")?.setAttribute("aria-expanded", "false");
+
   document.querySelectorAll(".data-section").forEach((section) => {
     section.classList.toggle("active", (section as HTMLElement).dataset.section === tabId);
   });

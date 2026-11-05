@@ -148,6 +148,10 @@ function toggleSatelliteOverlay(show?: boolean): void {
 
   if (targetState) {
     overlay.hidden = false;
+    // The tools menu sits above the map; dismiss it so it cannot cover the
+    // satellite panel that was just opened from it.
+    document.querySelector("#map-tools-popover")?.classList.remove("open");
+    document.querySelector("#map-tools-toggle")?.classList.remove("active");
     if (activeLocation && !isSatelliteTabLoaded()) {
       setSatelliteTabLoaded(true);
       const source = elements.satelliteSourceSelect?.value || "noaa";
@@ -823,11 +827,39 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+// Section dropdown
+const tabMenuToggle = document.querySelector<HTMLButtonElement>("#tab-menu-toggle");
+const tabMenuList = document.querySelector<HTMLElement>("#tab-menu-list");
+
+function setTabMenuOpen(open: boolean): void {
+  tabMenuList?.classList.toggle("open", open);
+  tabMenuToggle?.setAttribute("aria-expanded", String(open));
+}
+
+tabMenuToggle?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setTabMenuOpen(!tabMenuList?.classList.contains("open"));
+});
+
+document.addEventListener("click", (event) => {
+  if (!tabMenuList?.classList.contains("open")) return;
+  const target = event.target as Node;
+  if (tabMenuToggle?.contains(target) || tabMenuList.contains(target)) return;
+  setTabMenuOpen(false);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !tabMenuList?.classList.contains("open")) return;
+  setTabMenuOpen(false);
+  tabMenuToggle?.focus();
+});
+
 // Tab clicks (satellite handled separately)
 document.querySelectorAll(".tab-button").forEach((btn) => {
   btn.addEventListener("click", () => {
     const tabId = (btn as HTMLElement).dataset.tab || "";
     selectTab(tabId);
+    setTabMenuOpen(false);
     if (tabId === "alerts") {
       void loadBrowseAlerts();
     }
