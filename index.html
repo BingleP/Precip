@@ -106,8 +106,6 @@
               </div>
             </div>
 
-            <div class="map-hover-indicator" id="map-hover-indicator" aria-hidden="true"></div>
-            <div class="map-tooltip" id="map-tooltip" role="status" aria-live="polite"></div>
             <a class="map-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>
 
             <div class="heatmap-legend" id="heatmap-legend"></div>
@@ -117,6 +115,12 @@
               <input id="map-hour-slider" type="range" min="0" max="23" value="0" />
             </div>
           </div>
+
+          <!-- Hover feedback is positioned in canvas coordinates, so it must live
+               outside .map-overlays (which is shifted right when the side panel
+               is open on desktop) or it drifts away from the pointer. -->
+          <div class="map-hover-indicator" id="map-hover-indicator" aria-hidden="true"></div>
+          <div class="map-tooltip" id="map-tooltip" role="status" aria-live="polite"></div>
         </article>
 
         <!-- Floating Search Bar -->

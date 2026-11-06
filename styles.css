@@ -484,6 +484,7 @@ a {
   z-index: 12;
   display: none;
   min-width: 0;
+  pointer-events: none;
   max-width: min(200px, calc(100% - 24px));
   padding: 8px 10px;
   border: 1px solid var(--border);
