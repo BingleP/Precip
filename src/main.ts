@@ -333,7 +333,18 @@ if (heatmapCanvas) {
         scheduleMapCenterAlertFetch();
         scheduleWildfireFetch();
       },
-      (lat, lon) => selectMapLocation(lat, lon),
+      (lat, lon, tapEvent) => {
+        // Touch has no hover: a tap inspects the point instead of moving the
+        // selected location. The tooltip's action button handles relocation.
+        if (tapEvent.pointerType === "touch") {
+          updateMapTooltip(tapEvent, heatmapCanvas, mapState, activeHeatmapLayer, activeMapHourOffset, {
+            mapTooltip: elements.mapTooltip,
+            mapHoverIndicator: elements.mapHoverIndicator,
+          });
+          return;
+        }
+        selectMapLocation(lat, lon);
+      },
     );
   });
 
@@ -345,9 +356,22 @@ if (heatmapCanvas) {
     );
   });
 
-  heatmapCanvas.addEventListener("pointerleave", () => {
+  heatmapCanvas.addEventListener("pointerleave", (event) => {
+    // A touch pointer leaves right after pointerup; keep the tooltip that the
+    // tap just opened so it stays readable with the finger off the screen.
+    if (event.pointerType === "touch") return;
     if (tooltipRaf !== null) { cancelAnimationFrame(tooltipRaf); tooltipRaf = null; }
     hideMapTooltip({ mapTooltip: elements.mapTooltip, mapHoverIndicator: elements.mapHoverIndicator });
+  });
+
+  elements.mapTooltip?.addEventListener("click", (event) => {
+    const button = (event.target as Element | null)?.closest<HTMLButtonElement>(".map-tooltip-action");
+    if (!button) return;
+    const latitude = Number(button.dataset.lat);
+    const longitude = Number(button.dataset.lon);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+    hideMapTooltip({ mapTooltip: elements.mapTooltip, mapHoverIndicator: elements.mapHoverIndicator });
+    selectMapLocation(latitude, longitude);
   });
 
   heatmapCanvas.addEventListener(

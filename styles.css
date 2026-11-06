@@ -514,6 +514,37 @@ a {
   line-height: 1.25;
 }
 
+.map-tooltip-action {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 40px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Touch devices cannot hover, so tapping opens the tooltip and the action
+   button becomes the way to move the selected location. */
+@media (hover: none) and (pointer: coarse) {
+  .map-tooltip {
+    pointer-events: auto;
+  }
+
+  .map-tooltip-action {
+    display: inline-flex;
+  }
+}
+
 .tooltip-alert {
   margin-top: 4px;
   padding-top: 4px;

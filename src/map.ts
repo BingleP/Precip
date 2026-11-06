@@ -562,6 +562,11 @@ export function updateMapTooltip(
     }
   }
 
+  // Touch devices have no hover, so a tap opens the tooltip and this button is
+  // the explicit way to move the selected location there. Hidden on hover
+  // devices, where clicking the map still selects the location directly.
+  tooltipHTML += `<button class="map-tooltip-action" type="button" data-lat="${location.latitude.toFixed(5)}" data-lon="${location.longitude.toFixed(5)}">Use this location</button>`;
+
   if (elements.mapTooltip) {
     elements.mapTooltip.innerHTML = tooltipHTML;
     elements.mapTooltip.classList.add("visible");
@@ -731,7 +736,7 @@ export function endMapDrag(
   activePointers: Map<number, { x: number; y: number }>,
   pinchState: { startDist: number; startZoom: number },
   onScheduleRefresh: () => void,
-  onMapClick: (latitude: number, longitude: number) => void,
+  onMapClick: (latitude: number, longitude: number, event: PointerEvent) => void,
 ): void {
   activePointers.delete(event.pointerId);
   if (activePointers.size < 2) {
@@ -748,7 +753,7 @@ export function endMapDrag(
 
   if (!drag.moved) {
     const location = screenToMapLocation(drag.canvasX, drag.canvasY, drag.width, drag.height, mapState.center.latitude, mapState.center.longitude, drag.zoom);
-    onMapClick(location.latitude, location.longitude);
+    onMapClick(location.latitude, location.longitude, event);
     return;
   }
 
