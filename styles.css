@@ -872,6 +872,9 @@ a {
 
 .search-mode {
   flex-shrink: 0;
+  /* Native select width is computed from the untransformed text, so the
+     uppercase label needs explicit breathing room or it clips. */
+  min-width: 118px;
   padding: 8px 30px 8px 14px;
   border: 0;
   border-radius: var(--radius-sm);
@@ -2779,6 +2782,8 @@ a {
   }
 
   .search-mode {
+    /* Smaller font/padding on phones, so the base minimum can shrink too. */
+    min-width: 104px;
     padding: 8px 24px 8px 10px;
     font-size: 11px;
   }
