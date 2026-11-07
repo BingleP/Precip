@@ -1,6 +1,6 @@
 import type { HeatmapSample, MapState } from "./types";
 import { MAP_TILE_SIZE, MAP_MIN_ZOOM, MAP_MAX_ZOOM, MAP_DEFAULT_ZOOM, HEATMAP_SCALE, INITIAL_MAP_CENTER } from "./config";
-import { latLonToWorld, projectToMapScreen, projectToMapScreenFast, screenToMapLocation, setMapCenterFromWorld, clampMapZoom } from "./geo";
+import { latLonToWorld, worldToLatLon, projectToMapScreen, projectToMapScreenFast, screenToMapLocation, setMapCenterFromWorld, clampMapZoom } from "./geo";
 import { normalizeValue, formatHeatmapValue, getHeatmapTitle } from "./weather";
 import { isInsideAlertPolygonSpatial, getWildfireAtPoint, getEarthquakes, showEarthquakes } from "./alerts";
 import { getEarthquakeAtPoint } from "./earthquakes";
@@ -9,6 +9,7 @@ import { getLayer, type MapLayer } from "./map-layers";
 import { drawRadarLayer, formatRadarRelativeTime, type RadarStatus } from "./radar";
 import { drawCloudLayer, type CloudStatus } from "./cloud";
 import { drawForecastRasterLayer, type ForecastRasterStatus } from "./forecast-raster";
+import type { FieldData } from "./field";
 
 const TILE_CACHE_MAX = 500;
 
@@ -457,6 +458,364 @@ function interpolateColor(colors: [number, number, number][], value: number): [n
     Math.round(start[1] + (end[1] - start[1]) * mix),
     Math.round(start[2] + (end[2] - start[2]) * mix),
   ];
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 scalar field rendering: bilinear interpolation + per-layer LUT,
+// marching-squares isotherms/isobars, wind streamlines.
+// ---------------------------------------------------------------------------
+
+type LUTStops = ReadonlyArray<readonly [number, number, number, number]>; // [pos, r, g, b]
+type LUT = Uint8ClampedArray; // 256 * 3
+
+interface FieldLUTSpec {
+  stops: LUTStops;
+  /** Data value that normalizes to 0 / 1. */
+  low: number;
+  high: number;
+  /** Alpha scales with the normalized value (precip, cloud). */
+  alphaByValue?: boolean;
+}
+
+const TEMPERATURE_STOPS: LUTStops = [
+  [0, 90, 60, 170], [0.2, 90, 130, 230], [0.35, 80, 190, 220],
+  [0.5, 90, 200, 130], [0.65, 240, 210, 80], [0.8, 240, 140, 50],
+  [1, 210, 50, 50],
+];
+const WIND_STOPS: LUTStops = [
+  [0, 40, 150, 160], [0.35, 80, 190, 150], [0.55, 160, 200, 100],
+  [0.75, 240, 160, 60], [1, 210, 60, 60],
+];
+
+const FIELD_LUTS: Record<string, FieldLUTSpec> = {
+  temperature: { stops: TEMPERATURE_STOPS, low: -15, high: 35 },
+  feels: { stops: TEMPERATURE_STOPS, low: -15, high: 35 },
+  dewpoint: { stops: TEMPERATURE_STOPS, low: -15, high: 30 },
+  humidity: {
+    stops: [[0, 235, 225, 200], [0.4, 150, 190, 220], [0.7, 80, 140, 220], [1, 50, 90, 200]],
+    low: 0, high: 100,
+  },
+  precipitation: {
+    stops: [
+      [0, 20, 20, 160], [0.15, 0, 0, 230], [0.3, 60, 160, 230],
+      [0.45, 60, 230, 230], [0.6, 120, 230, 110], [0.75, 240, 230, 50],
+      [0.87, 240, 110, 30], [1, 160, 10, 10],
+    ],
+    low: 0, high: 12, alphaByValue: true,
+  },
+  precipProbability: {
+    stops: [[0, 220, 225, 210], [0.4, 140, 190, 200], [0.7, 90, 160, 150], [1, 200, 80, 80]],
+    low: 0, high: 100,
+  },
+  wind: { stops: WIND_STOPS, low: 0, high: 90 },
+  gusts: { stops: WIND_STOPS, low: 0, high: 110 },
+  pressure: { stops: TEMPERATURE_STOPS, low: 978, high: 1042 },
+  cloud: {
+    stops: [[0, 110, 115, 125], [0.5, 165, 172, 182], [1, 235, 240, 245]],
+    low: 0, high: 100, alphaByValue: true,
+  },
+  visibility: {
+    stops: [[0, 200, 60, 60], [0.3, 240, 140, 60], [0.6, 200, 200, 110], [1, 90, 210, 130]],
+    low: 0, high: 25000,
+  },
+  cape: {
+    stops: [[0, 190, 195, 200], [0.4, 120, 200, 140], [0.65, 230, 210, 90], [0.85, 230, 130, 60], [1, 200, 80, 160]],
+    low: 0, high: 2500,
+  },
+};
+
+const fieldLUTCache = new Map<string, LUT>();
+
+function getFieldLUT(layer: string): LUT {
+  const cached = fieldLUTCache.get(layer);
+  if (cached) return cached;
+  const spec = FIELD_LUTS[layer] ?? { stops: TEMPERATURE_STOPS, low: 0, high: 1 };
+  const lut = new Uint8ClampedArray(256 * 3);
+  const stops = spec.stops;
+  for (let i = 0; i < 256; i++) {
+    const pos = i / 255;
+    let seg = 0;
+    while (seg < stops.length - 2 && pos > stops[seg + 1][0]) seg++;
+    const a = stops[seg];
+    const b = stops[seg + 1];
+    const mix = b[0] === a[0] ? 0 : Math.min(1, Math.max(0, (pos - a[0]) / (b[0] - a[0])));
+    lut[i * 3] = Math.round(a[1] + (b[1] - a[1]) * mix);
+    lut[i * 3 + 1] = Math.round(a[2] + (b[2] - a[2]) * mix);
+    lut[i * 3 + 2] = Math.round(a[3] + (b[3] - a[3]) * mix);
+  }
+  fieldLUTCache.set(layer, lut);
+  return lut;
+}
+
+/** Bilinear sample of a row-major field array at fractional grid coords. */
+function sampleBilinear(
+  array: (number | null)[],
+  cols: number,
+  rows: number,
+  fx: number,
+  fy: number,
+): number | null {
+  if (fx < 0 || fy < 0 || fx > cols - 1 || fy > rows - 1) return null;
+  const x0 = Math.min(cols - 2, Math.floor(fx));
+  const y0 = Math.min(rows - 2, Math.floor(fy));
+  const v00 = array[y0 * cols + x0];
+  const v10 = array[y0 * cols + x0 + 1];
+  const v01 = array[(y0 + 1) * cols + x0];
+  const v11 = array[(y0 + 1) * cols + x0 + 1];
+  if (v00 == null || v10 == null || v01 == null || v11 == null) return null;
+  const tx = fx - x0;
+  const ty = fy - y0;
+  const top = v00 + (v10 - v00) * tx;
+  const bottom = v01 + (v11 - v01) * tx;
+  return top + (bottom - top) * ty;
+}
+
+let fieldCanvas: HTMLCanvasElement | null = null;
+let fieldCtx: CanvasRenderingContext2D | null = null;
+
+/**
+ * Draw the crisp Phase 5 field: per-pixel bilinear + LUT into an offscreen
+ * buffer, upscaled with smoothing, then isotherms/isobars (temperature,
+ * pressure) or wind streamlines (wind) on top.
+ */
+export function drawFieldOverlay(
+  ctx: CanvasRenderingContext2D,
+  field: FieldData,
+  width: number,
+  height: number,
+  mapState: MapState,
+  zoom: number,
+  opacity: number,
+): void {
+  const { cols, rows, values, lats, lons } = field;
+  if (cols < 2 || rows < 2 || lats.length !== rows || lons.length !== cols) return;
+  if (!fieldCanvas || !fieldCtx) {
+    fieldCanvas = document.createElement("canvas");
+    fieldCtx = fieldCanvas.getContext("2d")!;
+  }
+  const scaleFactor = 0.75;
+  const renderW = Math.max(64, Math.round(width * scaleFactor));
+  const renderH = Math.max(64, Math.round(height * scaleFactor));
+  if (fieldCanvas.width !== renderW || fieldCanvas.height !== renderH) {
+    fieldCanvas.width = renderW;
+    fieldCanvas.height = renderH;
+  }
+
+  const spec = FIELD_LUTS[field.layer] ?? { stops: TEMPERATURE_STOPS, low: 0, high: 1 };
+  const lut = getFieldLUT(field.layer);
+  const span = Math.max(1e-9, spec.high - spec.low);
+  const baseAlpha = Math.max(0.1, Math.min(1, opacity)) * 255;
+
+  const imageData = fieldCtx.createImageData(renderW, renderH);
+  const data = imageData.data;
+
+  // Grid nodes sit at the bbox edges; pixel x is linear in lon, and row
+  // latitude is evaluated per scanline (Mercator rows are not linear).
+  const centerWorld = latLonToWorld(
+    mapState.center.latitude, mapState.center.longitude, zoom,
+  );
+  const geoToGridX = (lon: number) => ((lon - lons[0]) / (lons[cols - 1] - lons[0])) * (cols - 1);
+  const geoToGridY = (lat: number) => ((lats[0] - lat) / (lats[0] - lats[rows - 1])) * (rows - 1);
+  const topLeftX = centerWorld.x - width / 2;
+  const topLeftY = centerWorld.y - height / 2;
+  // Screen x is linear in longitude and scanline latitude depends only on
+  // screen y (Web Mercator), so per-pixel work is one multiply + bilinear.
+  const worldSize = MAP_TILE_SIZE * 2 ** zoom;
+  const lonOfX = (x: number) => ((topLeftX + x / scaleFactor) / worldSize) * 360 - 180;
+  const lonStep = (1 / scaleFactor / worldSize) * 360;
+  fieldCtx.canvas.width = renderW; // no-op, sized above
+  for (let y = 0; y < renderH; y += 1) {
+    const worldY = topLeftY + (y + 0.5) / scaleFactor;
+    const lat = worldToLatLon(centerWorld.x, worldY, zoom).latitude;
+    const fy = Math.max(0, Math.min(rows - 1.0001, geoToGridY(lat)));
+    const row0 = Math.floor(fy);
+    const ty = fy - row0;
+    let lon = lonOfX(0);
+    for (let x = 0; x < renderW; x += 1) {
+      const fx = geoToGridX(lon);
+      const value = sampleBilinear(values, cols, rows, fx, row0 + ty);
+      const offset = (y * renderW + x) * 4;
+      if (value == null) {
+        data[offset + 3] = 0;
+        lon += lonStep;
+        continue;
+      }
+      const normalized = Math.max(0, Math.min(1, (value - spec.low) / span));
+      const lutIndex = Math.round(normalized * 255) * 3;
+      data[offset] = lut[lutIndex];
+      data[offset + 1] = lut[lutIndex + 1];
+      data[offset + 2] = lut[lutIndex + 2];
+      data[offset + 3] = Math.round(baseAlpha * (spec.alphaByValue ? Math.sqrt(normalized) : 1));
+      lon += lonStep;
+    }
+  }
+  fieldCtx.putImageData(imageData, 0, 0);
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(fieldCanvas, 0, 0, width, height);
+  ctx.restore();
+
+  // Grid-node screen positions (for contours / streamlines).
+  const nodeCenterWorld = latLonToWorld(
+    mapState.center.latitude, mapState.center.longitude, zoom,
+  );
+  const nodeX = new Float32Array(cols * rows);
+  const nodeY = new Float32Array(cols * rows);
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      const p = projectToMapScreenFast(lats[r], lons[c], width, height, nodeCenterWorld, zoom);
+      nodeX[r * cols + c] = p.x;
+      nodeY[r * cols + c] = p.y;
+    }
+  }
+
+  if (field.layer === "temperature" || field.layer === "pressure") {
+    drawFieldContours(ctx, field, nodeX, nodeY);
+  }
+  if (field.layer === "wind" && field.u && field.v) {
+    drawFieldStreamlines(ctx, field, nodeX, nodeY);
+  }
+}
+
+/** Marching-squares isotherms (2 °C) / isobars (4 hPa) on the grid. */
+function drawFieldContours(
+  ctx: CanvasRenderingContext2D,
+  field: FieldData,
+  nodeX: Float32Array,
+  nodeY: Float32Array,
+): void {
+  const { cols, rows, values } = field;
+  const step = field.layer === "pressure" ? 4 : 2;
+  let min = Infinity;
+  let max = -Infinity;
+  for (const value of values) {
+    if (value == null) continue;
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+  ctx.save();
+  ctx.strokeStyle = field.layer === "pressure" ? "rgba(15, 25, 45, 0.4)" : "rgba(255, 255, 255, 0.55)";
+  ctx.lineWidth = 1;
+  for (let level = Math.ceil(min / step) * step; level <= max; level += step) {
+    ctx.beginPath();
+    for (let r = 0; r < rows - 1; r += 1) {
+      for (let c = 0; c < cols - 1; c += 1) {
+        const vA = values[r * cols + c];
+        const vB = values[r * cols + c + 1];
+        const vC = values[(r + 1) * cols + c + 1];
+        const vD = values[(r + 1) * cols + c];
+        if (vA == null || vB == null || vC == null || vD == null) continue;
+        let code = 0;
+        if (vA >= level) code |= 1;
+        if (vB >= level) code |= 2;
+        if (vC >= level) code |= 4;
+        if (vD >= level) code |= 8;
+        if (code === 0 || code === 15) continue;
+        const xA = nodeX[r * cols + c], yA = nodeY[r * cols + c];
+        const xB = nodeX[r * cols + c + 1], yB = nodeY[r * cols + c + 1];
+        const xC = nodeX[(r + 1) * cols + c + 1], yC = nodeY[(r + 1) * cols + c + 1];
+        const xD = nodeX[(r + 1) * cols + c], yD = nodeY[(r + 1) * cols + c];
+        // Edge crossing points (top AB, right BC, bottom CD, left DA).
+        const edge = (v0: number, v1: number, x0: number, y0: number, x1: number, y1: number): [number, number] => {
+          const t = (level - v0) / ((v1 - v0) || 1e-9);
+          return [x0 + (x1 - x0) * t, y0 + (y1 - y0) * t];
+        };
+        const pts = {
+          T: edge(vA, vB, xA, yA, xB, yB),
+          R: edge(vB, vC, xB, yB, xC, yC),
+          B: edge(vC, vD, xC, yC, xD, yD),
+          L: edge(vD, vA, xD, yD, xA, yA),
+        };
+        const SEGMENTS: Record<number, [keyof typeof pts, keyof typeof pts][]> = {
+          1: [["L", "T"]], 2: [["T", "R"]], 3: [["L", "R"]], 4: [["R", "B"]],
+          5: [["L", "T"], ["R", "B"]], 6: [["T", "B"]], 7: [["L", "B"]],
+          8: [["L", "B"]], 9: [["T", "B"]], 10: [["L", "T"], ["R", "B"]],
+          11: [["R", "B"]], 12: [["L", "R"]], 13: [["T", "R"]], 14: [["L", "T"]],
+        };
+        for (const [p, q] of SEGMENTS[code] ?? []) {
+          ctx.moveTo(pts[p][0], pts[p][1]);
+          ctx.lineTo(pts[q][0], pts[q][1]);
+        }
+      }
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** RK2 wind streamlines seeded on the grid, alpha-faded tails. */
+function drawFieldStreamlines(
+  ctx: CanvasRenderingContext2D,
+  field: FieldData,
+  nodeX: Float32Array,
+  nodeY: Float32Array,
+): void {
+  const { cols, rows, u, v } = field;
+  if (!u || !v) return;
+  const sample = (fx: number, fy: number, arr: (number | null)[]) =>
+    sampleBilinear(arr, cols, rows, fx, fy);
+  const toScreen = (fx: number, fy: number): [number, number] => {
+    const c = Math.max(0, Math.min(cols - 1.0001, fx));
+    const r = Math.max(0, Math.min(rows - 1.0001, fy));
+    const r0 = Math.floor(r);
+    const c0 = Math.floor(c);
+    const tx = c - c0;
+    const ty = r - r0;
+    const i = r0 * cols + c0;
+    const x = nodeX[i] + (nodeX[i + 1] - nodeX[i]) * tx + (nodeX[i + cols] - nodeX[i]) * ty;
+    const y = nodeY[i] + (nodeY[i + 1] - nodeY[i]) * tx + (nodeY[i + cols] - nodeY[i]) * ty;
+    return [x, y];
+  };
+  const step = 0.35; // grid cells per integration step
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.45)";
+  ctx.lineWidth = 1.2;
+  ctx.lineCap = "round";
+  for (let r = 1; r < rows - 1; r += 2) {
+    for (let c = 1; c < cols - 1; c += 2) {
+      let fx = c + ((r * 7 + c * 13) % 3 - 1) * 0.3;
+      let fy = r + ((r * 5 + c * 11) % 3 - 1) * 0.3;
+      let u0 = sample(fx, fy, u);
+      let v0 = sample(fx, fy, v);
+      if (u0 == null || v0 == null) continue;
+      const speed = Math.hypot(u0, v0);
+      if (speed < 2) continue; // dead calm: no line
+      ctx.beginPath();
+      // Trace backwards and forwards so lines pass through the seed.
+      for (const dir of [-1, 1]) {
+        fx = c + ((r * 7 + c * 13) % 3 - 1) * 0.3;
+        fy = r + ((r * 5 + c * 11) % 3 - 1) * 0.3;
+        let uu: number | null = u0;
+        let vv: number | null = v0;
+        const start = toScreen(fx, fy);
+        ctx.moveTo(start[0], start[1]);
+        for (let i = 0; i < 46; i += 1) {
+          if (uu == null || vv == null) break;
+          const len = Math.hypot(uu, vv) || 1;
+          const ux = (uu / len) * step * dir;
+          const uy = (vv / len) * step * dir;
+          // RK2 midpoint step.
+          const mx = fx + ux / 2;
+          const my = fy + uy / 2;
+          const mu = sample(mx, my, u);
+          const mv = sample(mx, my, v);
+          if (mu == null || mv == null) break;
+          const mlen = Math.hypot(mu, mv) || 1;
+          fx += (mu / mlen) * step * dir;
+          fy += (mv / mlen) * step * dir;
+          if (fx < 0.5 || fy < 0.5 || fx > cols - 1.5 || fy > rows - 1.5) break;
+          const p = toScreen(fx, fy);
+          ctx.lineTo(p[0], p[1]);
+          uu = sample(fx, fy, u);
+          vv = sample(fx, fy, v);
+        }
+      }
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 }
 
 export function updateMapTooltip(

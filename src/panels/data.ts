@@ -17,6 +17,7 @@ import {
   renderMapReadout, renderLayerLegend, renderRadarLegend, renderRadarReadout,
   renderCloudLegend, renderCloudReadout,
   renderForecastRasterLegend, renderForecastRasterReadout,
+  drawFieldOverlay,
   updateMapHourLabel,
   hideMapTooltip,
 } from "../map";
@@ -27,6 +28,7 @@ import {
 } from "../radar";
 import { registerCloudRedrawHandler, startCloudRefresh, getCloudStatus } from "../cloud";
 import { registerForecastRasterRedrawHandler, getForecastRasterStatus, prefetchAdjacentHours } from "../forecast-raster";
+import { registerFieldRedrawHandler, buildFieldRequest, requestField, getCachedField } from "../field";
 
 registerRadarRedrawHandler(() => {
   queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
@@ -35,6 +37,9 @@ registerCloudRedrawHandler(() => {
   queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
 });
 registerForecastRasterRedrawHandler(() => {
+  queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
+});
+registerFieldRedrawHandler(() => {
   queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
 });
 
@@ -334,7 +339,16 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
       const min = Math.min(...finiteValues);
       const max = Math.max(...finiteValues);
       if (!mapState.drag) {
-        drawHeatmapOverlay(ctx, points, values, layer || activeHeatmapLayer, min, max, width, height, mapState, mapState.center, zoomRound, activeMapLayerOpacity);
+        // Phase 5 crisp field when cached; legacy fog overlay until then.
+        const scalarLayerId = layer || activeHeatmapLayer;
+        const fieldReq = buildFieldRequest(scalarLayerId, activeMapHourOffset, mapState, zoomRound, width, height);
+        requestField(fieldReq);
+        const field = getCachedField(fieldReq);
+        if (field) {
+          drawFieldOverlay(ctx, field, width, height, mapState, zoomRound, activeMapLayerOpacity);
+        } else {
+          drawHeatmapOverlay(ctx, points, values, scalarLayerId, min, max, width, height, mapState, mapState.center, zoomRound, activeMapLayerOpacity);
+        }
         renderMapReadout(layer || activeHeatmapLayer, min, max, latestHeatmapMeta, elements.mapReadout);
         // The legend follows the active weather layer: an overlay raster when
         // one is set, otherwise the primary scalar field.

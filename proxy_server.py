@@ -21,6 +21,7 @@ from proxy_upstream import (
     build_nhc_active_payload,
     build_nhc_forecast_payload,
     build_nhc_cone_payload,
+    build_field_payload,
     aggregate_daily, symbol_to_weather_code,
 )
 from proxy_estimators import (
@@ -333,6 +334,16 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/earthquakes-ca":
                 days = query.get("days", ["30"])[0]
                 body = build_earthquakes_ca_payload(days)
+                cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
+                self.send_response(200)
+                self.send_common_headers("application/json; charset=utf-8", len(body))
+                self.send_header("X-Precip-Cache", "MISS")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/field":
+                body = build_field_payload(query)
                 cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
                 self.send_response(200)
                 self.send_common_headers("application/json; charset=utf-8", len(body))

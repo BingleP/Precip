@@ -20,6 +20,7 @@ CACHE_TTLS = {
     "/api/nhc-active": 600,
     "/api/nhc-forecast": 900,
     "/api/nhc-cone": 900,
+    "/api/field": 600,
     "/api/earthquakes-us": 300,
     "/api/earthquakes-ca": 300,
     "/api/radar-index": 300,

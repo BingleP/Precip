@@ -48,6 +48,7 @@ ALLOWED_ENDPOINTS = {
     "/api/radar-wms",
     "/api/forecast-wms",
     "/api/satellite-tile",
+    "/api/field",
     "/health",
 }
 
@@ -1459,6 +1460,155 @@ def build_nhc_cone_payload(storm_id):
         })
     cone.sort(key=lambda p: p["validTime"])
     return json.dumps({"cone": cone}).encode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Scalar field (Phase 5). The proxy fans one Open-Meteo request per 100 grid
+# points and reshapes the result into a compact row-major grid the client can
+# bilinearly interpolate. Values are SI; the client handles display units.
+# ---------------------------------------------------------------------------
+
+FIELD_LAYER_VARS = {
+    "temperature": ["temperature_2m"],
+    "feels": ["apparent_temperature"],
+    "dewpoint": ["dew_point_2m"],
+    "humidity": ["relative_humidity_2m"],
+    "precipitation": ["precipitation"],
+    "precipProbability": ["precipitation_probability"],
+    "wind": ["wind_speed_10m", "wind_direction_10m"],
+    "gusts": ["wind_gusts_10m"],
+    "pressure": ["pressure_msl"],
+    "cloud": ["cloud_cover"],
+    "visibility": ["visibility"],
+    "cape": ["cape"],
+}
+
+FIELD_LAYER_UNITS = {
+    "temperature": "°C",
+    "feels": "°C",
+    "dewpoint": "°C",
+    "humidity": "%",
+    "precipitation": "mm/h",
+    "precipProbability": "%",
+    "wind": "km/h",
+    "gusts": "km/h",
+    "pressure": "hPa",
+    "cloud": "%",
+    "visibility": "m",
+    "cape": "J/kg",
+}
+
+FIELD_CHUNK = 100
+
+
+def _field_fetch_points(lats, lons, fields):
+    """Fetch hourly values for grid points in chunks of FIELD_CHUNK."""
+    points = []
+    for start in range(0, len(lats), FIELD_CHUNK):
+        chunk_lats = lats[start:start + FIELD_CHUNK]
+        chunk_lons = lons[start:start + FIELD_CHUNK]
+        params = {
+            "latitude": ",".join(f"{v:.4f}" for v in chunk_lats),
+            "longitude": ",".join(f"{v:.4f}" for v in chunk_lons),
+            "hourly": ",".join(fields),
+            "forecast_hours": "24",
+        }
+        url = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(params)
+        data = fetch_json(url)
+        rows = data if isinstance(data, list) else [data]
+        if len(rows) != len(chunk_lats):
+            raise ValueError("upstream grid chunk size mismatch")
+        points.extend(rows)
+    return points
+
+
+def build_field_payload(query):
+    layer = require(query, "layer").strip()
+    fields = FIELD_LAYER_VARS.get(layer)
+    if fields is None:
+        raise ValueError("unknown field layer")
+    hour = _require_int(query, "hour", 0, 23)
+    cols = _require_int(query, "cols", 4, 28)
+    rows = _require_int(query, "rows", 4, 22)
+
+    bbox_raw = require(query, "bbox").strip()
+    parts = bbox_raw.split(",")
+    if len(parts) != 4:
+        raise ValueError("bbox must have west,south,east,north")
+    try:
+        west, south, east, north = (float(p) for p in parts)
+    except ValueError:
+        raise ValueError("bbox must have west,south,east,north")
+    if not (-180.0 <= west <= 180.0 and -180.0 <= east <= 180.0):
+        raise ValueError("bbox longitude out of range")
+    if not (-90.0 <= south <= 90.0 and -90.0 <= north <= 90.0):
+        raise ValueError("bbox latitude out of range")
+    west, south, east, north = (round(v, 4) for v in (west, south, east, north))
+    if not (west < east and south < north):
+        raise ValueError("bbox is empty")
+    # Antimeridian-spanning viewports are handed back unwrapped: refuse.
+    if east - west > 180.0:
+        raise ValueError("bbox too wide")
+
+    # Row 0 is the north edge; the client expects row-major from the top.
+    lats = []
+    lons = []
+    row_lat = []
+    col_lon = []
+    for r in range(rows):
+        lat = north if rows == 1 else north - (north - south) * (r / (rows - 1))
+        row_lat.append(round(lat, 4))
+    for c in range(cols):
+        lon = west if cols == 1 else west + (east - west) * (c / (cols - 1))
+        col_lon.append(round(lon, 4))
+    for r in range(rows):
+        for c in range(cols):
+            lats.append(row_lat[r])
+            lons.append(col_lon[c])
+
+    points = _field_fetch_points(lats, lons, fields)
+    values = []
+    uvalues = [] if layer == "wind" else None
+    vvalues = [] if layer == "wind" else None
+    valid_time = ""
+    import math as _math
+    for point in points:
+        hourly = (point or {}).get("hourly") or {}
+        series = hourly.get(fields[0]) or []
+        value = series[hour] if hour < len(series) else None
+        values.append(value if isinstance(value, (int, float)) and _math.isfinite(value) else None)
+        if layer == "wind":
+            speeds = hourly.get("wind_speed_10m") or []
+            dirs = hourly.get("wind_direction_10m") or []
+            speed = speeds[hour] if hour < len(speeds) else None
+            direction = dirs[hour] if hour < len(dirs) else None
+            if isinstance(speed, (int, float)) and isinstance(direction, (int, float)):
+                rad = _math.radians(direction)
+                uvalues.append(-speed * _math.sin(rad))
+                vvalues.append(-speed * _math.cos(rad))
+            else:
+                uvalues.append(None)
+                vvalues.append(None)
+        times = hourly.get("time") or []
+        if not valid_time and hour < len(times):
+            valid_time = times[hour]
+
+    payload = {
+        "layer": layer,
+        "hour": hour,
+        "cols": cols,
+        "rows": rows,
+        "lats": row_lat,
+        "lons": col_lon,
+        "values": values,
+        "validTime": valid_time,
+        "unit": FIELD_LAYER_UNITS[layer],
+        "source": "open-meteo",
+    }
+    if uvalues is not None:
+        payload["u"] = uvalues
+        payload["v"] = vvalues
+    return json.dumps(payload).encode("utf-8")
 
 
 def symbol_to_weather_code(symbol):

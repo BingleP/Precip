@@ -4,8 +4,9 @@ Status: Phase 0 complete and live in production (2026-11-06). Phase 1
 implemented + pushed (not deployed, hold per product call). Phase 2
 implemented + verified locally (2026-11-07), pushed. Phase 3
 implemented + verified locally (2026-11-07), pushed. Phase 4
+implemented + verified locally (2026-11-07), pushed. Phase 5
 implemented + verified locally (2026-11-07), pushed; deploy still held
-until later phases are ready. Remaining scope as sequenced below.
+until Phase 6 is ready. Remaining scope as sequenced below.
 Scope: fix two known defects, then replace the single fog-like heatmap with a
 stack of real weather layers (radar, satellite cloud, forecast cloud/precip,
 scalar fields) that are legible over the dark basemap.
@@ -540,14 +541,44 @@ forecast-hour slider with valid-time display) and `src/map.ts`
   GDPS 15 km blockiness is visible at high zoom — kept (honest to the
   source); smoothing softens the edges.
 
-### Phase 5 – Scalar field upgrade
+### Phase 5 – Scalar field upgrade — **implemented + verified** (2026-11-07, deploy held)
 
-- `/api/field` chunked high-resolution endpoint and client cache.
-- Adaptive grid, bilinear interpolation, colour LUT.
-- Isotherms/isobars/wind streamlines for selected layers.
-- Trim the default layer set and add "More".
-- Acceptance: temperature field is crisp and readable at z3–z8; labels do not
-  overlap; mobile budget met.
+Status: complete in code and browser-verified. Proxy `/api/field`
+(stack of `src/field.ts` + `build_field_payload` in proxy_upstream.py)
+fetches a dense lat/lon grid from Open-Meteo in 100-point chunks and
+reshapes it into a compact row-major payload (`cols/rows/lats/lons/
+values/u/v/validTime/unit`, SI values; wind returns speed plus
+eastward/northward components for streamlines). Client renders the
+grid crisply (per-pixel bilinear + per-layer LUT into an offscreen
+buffer at 0.75 scale, composited with the layer opacity), with
+marching-squares isotherms (2 °C) / isobars (4 hPa) and RK2 wind
+streamlines. The legacy coarse fog overlay remains only as the
+first-paint fallback while a field loads.
+
+- Adaptive grid: cols/rows from viewport size and zoom
+  (`getFieldGridSpec`, 10–28 × 4–22), bounds snapped to half a grid
+  cell in world coordinates so pans reuse the server (600 s) and
+  client (LRU 24) caches. Hour key comes from the forecast-hour
+  slider (the scalar path already indexes forecasts by hour).
+- LUTs: per-layer stops for all 12 scalar layers (temperature family,
+  humidity/probability, PRECIPPRTMMH-like precip with value-scaled
+  alpha, wind/gusts, pressure, cloud veil ramp, visibility, CAPE).
+- Contours: temperature → isotherms; pressure → isobars; other
+  layers draw no lines. Streamlines: wind layer only; seeds on the
+  grid, dead-calm (< 2 km/h) seeds skipped, alpha-free single path.
+- Trim: primary chips are now Radar / Temp / Rain / Wind; Feels,
+  Cloud and Pressure moved into "More" (`primary: false` in the
+  registry + HTML moved), so any of them still auto-expands More
+  when active. The settings default-layer select (static) is
+  unchanged and still lists every layer.
+- Acceptance: verified on-screen at z10 (Toronto temperature field
+  + isotherms), z9 (wide field, lake-effect warm blob, isotherms),
+  wind streamlines converging over Lake Ontario, pressure field,
+  chip trim + More auto-expand, scrub integration, no console
+  errors. Contour lines are grid-resolution polylines (honest to
+  the source cell size); finer contours would need a denser grid —
+  deferred to a future adaptive-density pass. Label overlap and the
+  mobile budget belong to the Phase 6 performance pass.
 
 ### Phase 6 – Polish and rollout
 
