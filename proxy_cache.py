@@ -25,6 +25,7 @@ CACHE_TTLS = {
     "/api/radar-index": 300,
     "/api/radar-tile": 120,
     "/api/radar-wms": 120,
+    "/api/satellite-tile": 300,
 }
 
 MAX_CACHE_ENTRIES = 500

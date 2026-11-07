@@ -2,9 +2,9 @@
 
 Status: Phase 0 complete and live in production (2026-11-06). Phase 1
 implemented + pushed (not deployed, hold per product call). Phase 2
-implemented + verified locally (2026-11-07), commit pending with Phase 1;
-marketing deploy still held until both are on the server together. Remaining
-scope as sequenced below.
+implemented + verified locally (2026-11-07), pushed. Phase 3
+implemented + verified locally (2026-11-07), pushed; deploy still held
+until later phases are ready. Remaining scope as sequenced below.
 Scope: fix two known defects, then replace the single fog-like heatmap with a
 stack of real weather layers (radar, satellite cloud, forecast cloud/precip,
 scalar fields) that are legible over the dark basemap.
@@ -431,13 +431,58 @@ behaviour unchanged):
   sends `Access-Control-Allow-Origin: *`), which keeps the map canvas
   untainted so `getImageData` works in dev and for future pixel features.
 
-### Phase 3 – Satellite cloud
+### Phase 3 – Satellite cloud — **implemented + verified** (2026-11-07, deploy held)
 
-- Proxy endpoint for GIBS WMTS with layer/time whitelist.
-- IR→alpha processing, day/night handling, GeoColor option.
-- Optional secondary overlay (radar + cloud) with opacity.
-- Acceptance: cloud veil looks like cloud, not a colour wash; no CSP errors;
-  imagery time is shown and gaps fall back cleanly.
+Status: complete in code and browser-verified. Client in `src/cloud.ts`
+(provider auto-select by center longitude — Himawari at lon ≥ 90 or < −170,
+GOES-West at lon < −135, else GOES-East; raw + processed tile caches;
+offscreen composite; 80%-fail one-shot switch to the neighbouring disk;
+five-minute "latest" refresh while the tab is visible), wiring in
+`src/panels/data.ts` (cloud-primary/overlay branches, timeline shows
+"Observed · Latest imagery", single frame — slider max 0, no loop) and
+`src/map.ts` (`drawRasterWeatherLayer` dispatches on `layer.id`,
+`renderCloudLegend`, `renderCloudReadout`).
+
+- Proxy endpoint `/api/satellite-tile` for GIBS WMTS with layer/time
+  whitelist (`goes-east`, `goes-west`, `himawari` → the Band 13 clean-IR
+  products, GoogleMapsCompatible_Level6, zoom cap 6). URL shape is
+  `.../{LAYER}/default/{TIME}/...` where `default` is the STYLE and
+  `TIME` is `default` (newest granule) or `YYYY-MM-DD` (404 outside the
+  granule retention window). Verified 200 for all three providers;
+  invalid layer/date/zoom/missing params return clean 400s.
+- IR→alpha processing: the false-colour clean-IR product puts warm ground
+  near luminance 145–162 and cold cloud tops at 180+, so the veil uses
+  LOW 148 / HIGH 205 with a sub-unity gamma (0.85, max alpha 230) and a
+  neutral grey→white tint (not blue, so it can't be confused with radar
+  colours). Tuned against live tiles: LOW 112 washed the ground; the
+  final curve keeps clear land transparent while cloud texture reads
+  clearly. (Visual tuning note: at zoom ≥ 7 the z6 tiles upscale
+  smoothly, which reads as soft cloud — acceptable.)
+- Provider-boundary bug caught during verification: the first pick used
+  −55° as the GOES-West edge, which put the Great Lakes on GOES-West —
+  outside that disk, so tiles came back blank. The disk reaches ~85°W;
+  the boundary is now −135° (GOES-East looks straight on well past it),
+  and the failover switches east↔west unconditionally.
+- Timeline semantics: `isRadarActive()` is radar-only; new
+  `isSatCloudActive()` (primary `satCloud` only) forces the single-frame
+  timeline. A scalar primary with a cloud overlay keeps the forecast-hours
+  timeline and shows the cloud legend.
+- Overlay mode: "Clouds" is selectable in the Weather overlay dropdown
+  and as a chip in the "More" layers row; `satCloud` is a normal registry
+  entry (`src/map-layers.ts`) so persistence/opacity/More-open-state all
+  work. The tap-to-inspect tooltip shows "Satellite cloud · observed"
+  for raster primaries (radar included).
+- Acceptance: verified on-screen at Toronto (GOES-East, cloud system over
+  Lake Ontario paints as a neutral-white veil), Paris (GOES-East, cloud
+  west of the city), Tokyo (Himawari, requests via `layer=himawari`),
+  scalar+overlay mode, and a radar-primary regression (ECCC GeoMet frames,
+  "Observed · 2 min ago"); no CSP errors; 5-min refresh uses the same
+  redraw path. GOES-East/West outside their disks are no longer a thing
+  (boundary fix above); a truly blank disk (e.g. mid-Pacific on an edge
+  case) renders nothing, which is the correct fallback.
+- Deferred: GeoColor (`GOES-*_ABI_GeoColor`, Level7) for day-time true
+  colour — it needs its own matrix/zoom cap and alpha handling (the PNG
+  already carries alpha), so it is a follow-up, not a Phase 3 blocker.
 
 ### Phase 4 – Forecast cloud and precipitation
 

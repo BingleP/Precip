@@ -7,6 +7,7 @@ import { getEarthquakeAtPoint } from "./earthquakes";
 import { escapeHTML } from "./ui";
 import { getLayer, type MapLayer } from "./map-layers";
 import { drawRadarLayer, formatRadarRelativeTime, type RadarStatus } from "./radar";
+import { drawCloudLayer, type CloudStatus } from "./cloud";
 
 const TILE_CACHE_MAX = 500;
 
@@ -522,8 +523,12 @@ export function updateMapTooltip(
   const alertPoly = isInsideAlertPolygonSpatial(pointerX, pointerY);
   const wildfire = getWildfireAtPoint(pointerX, pointerY);
 
+  const primaryLayerForTooltip = getLayer(activeHeatmapLayer);
+  const rasterPrimaryTooltip = primaryLayerForTooltip?.kind === "raster";
   let tooltipHTML =
-    `<strong>${formatHeatmapValue(layerValue ?? undefined, activeHeatmapLayer)}</strong>` +
+    (rasterPrimaryTooltip
+      ? `<strong>${escapeHTML(primaryLayerForTooltip!.label)} · observed</strong>`
+      : `<strong>${formatHeatmapValue(layerValue ?? undefined, activeHeatmapLayer)}</strong>`) +
     `<span>${location.latitude.toFixed(3)}, ${location.longitude.toFixed(3)}</span>` +
     `<span>Temp: ${formatHeatmapValue(temperature ?? undefined, "temperature")}</span>` +
     `<span>Rain: ${formatHeatmapValue(precipitation ?? undefined, "precipitation")}</span>` +
@@ -624,13 +629,17 @@ export function renderMapReadout(
  */
 export function drawRasterWeatherLayer(
   ctx: CanvasRenderingContext2D,
-  _layer: MapLayer,
+  layer: MapLayer,
   width: number,
   height: number,
   mapState: MapState,
   zoom: number,
   opacity: number,
 ): void {
+  if (layer.id === "satCloud" && layer.kind === "raster") {
+    drawCloudLayer(ctx, width, height, mapState, zoom, opacity);
+    return;
+  }
   drawRadarLayer(ctx, width, height, mapState, zoom, opacity);
 }
 
@@ -668,6 +677,42 @@ export function renderRadarReadout(
     <span>Weather radar</span>
     <strong>Observed · ${escapeHTML(status.providerLabel)}</strong>
     <small>${formatRadarRelativeTime(status.frameTime)} · ${status.frames.length} frames</small>
+  `;
+}
+
+/** Legend for the satellite cloud layer (IR veil is a luminance ramp). */
+export function renderCloudLegend(
+  status: Pick<CloudStatus, "providerLabel" | "attribution" | "attributionUrl"> | null,
+  el: HTMLElement | null,
+): void {
+  if (!el) return;
+  if (!status) {
+    el.innerHTML = `<div class="heatmap-legend-head"><strong>Satellite cloud</strong><span class="legend-badge legend-badge-observed">Observed</span></div><small>Loading imagery…</small>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="heatmap-legend-head"><strong>Satellite cloud</strong><span class="legend-badge legend-badge-observed">Observed</span></div>
+    <div class="heatmap-gradient cloud-gradient"></div>
+    <div class="heatmap-legend-range"><span>Low</span><span>Mid</span><span>Deep</span></div>
+    <small>${escapeHTML(status.providerLabel)} · infrared</small>
+    <small>Latest imagery · 10 min cadence</small>
+    <small><a class="legend-attribution" href="${escapeHTML(status.attributionUrl)}" target="_blank" rel="noreferrer">${escapeHTML(status.attribution)}</a></small>
+  `;
+}
+
+export function renderCloudReadout(
+  status: Pick<CloudStatus, "providerLabel"> | null,
+  el: HTMLElement | null,
+): void {
+  if (!el) return;
+  if (!status) {
+    el.innerHTML = `<span>Satellite cloud</span><strong>Loading…</strong><small>Fetching latest imagery</small>`;
+    return;
+  }
+  el.innerHTML = `
+    <span>Satellite cloud</span>
+    <strong>Observed · ${escapeHTML(status.providerLabel)}</strong>
+    <small>Latest imagery · 10 min cadence</small>
   `;
 }
 

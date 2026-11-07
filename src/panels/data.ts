@@ -14,7 +14,8 @@ import { addLog, spinner, escapeHTML, showToast, prepareCanvas } from "../ui";
 import {
   drawMapTiles, drawMapOverlayText, drawHeatmapOverlay, drawRasterWeatherLayer,
   drawMapPlaces, queueMapRender,
-  renderMapReadout, renderLayerLegend, renderRadarLegend, renderRadarReadout, updateMapHourLabel,
+  renderMapReadout, renderLayerLegend, renderRadarLegend, renderRadarReadout,
+  renderCloudLegend, renderCloudReadout, updateMapHourLabel,
   hideMapTooltip,
 } from "../map";
 import { getLayer } from "../map-layers";
@@ -22,8 +23,12 @@ import {
   registerRadarRedrawHandler, setRadarFrame, setRadarLoop, isRadarLoopPlaying,
   getRadarFrames, getRadarFrameIndex, getRadarStatus, formatRadarRelativeTime,
 } from "../radar";
+import { registerCloudRedrawHandler, startCloudRefresh, getCloudStatus } from "../cloud";
 
 registerRadarRedrawHandler(() => {
+  queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
+});
+registerCloudRedrawHandler(() => {
   queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
 });
 
@@ -31,7 +36,12 @@ registerRadarRedrawHandler(() => {
 export function isRadarActive(): boolean {
   const primary = getLayer(activeHeatmapLayer);
   const overlay = activeMapOverlayLayer ? getLayer(activeMapOverlayLayer) : null;
-  return (primary?.kind === "raster") || (overlay?.kind === "raster");
+  return (primary?.id === "radar") || (overlay?.id === "radar");
+}
+
+/** Is the satellite cloud layer driving the map timeline? */
+export function isSatCloudActive(): boolean {
+  return activeHeatmapLayer === "satCloud";
 }
 
 /**
@@ -41,6 +51,14 @@ export function isRadarActive(): boolean {
  */
 export function syncTimelineUI(): void {
   if (!elements.mapHourSlider || !elements.mapHourLabel) return;
+  if (isSatCloudActive()) {
+    // Satellite imagery has a single "latest" frame — no loop, no frames.
+    elements.mapHourSlider.max = "0";
+    elements.mapHourSlider.value = "0";
+    elements.mapHourLabel.textContent = "Observed · Latest imagery";
+    syncPlayButton();
+    return;
+  }
   if (isRadarActive()) {
     const frames = getRadarFrames();
     elements.mapHourSlider.max = String(Math.max(0, frames.length - 1));
@@ -60,13 +78,18 @@ export function syncTimelineUI(): void {
 
 function syncPlayButton(): void {
   if (!elements.mapPlayButton) return;
-  const playing = isRadarActive() ? isRadarLoopPlaying() : mapAnimationPlaying;
+  const playing = isRadarActive() && !isSatCloudActive() ? isRadarLoopPlaying() : mapAnimationPlaying;
   elements.mapPlayButton.classList.toggle("playing", playing);
   elements.mapPlayButton.innerHTML = playing ? "&#10074;&#10074;" : "&#9654;";
 }
 
 /** Route timeline slider input to radar frames or forecast hours. */
 export function setTimelineValue(value: number): void {
+  if (isSatCloudActive()) {
+    // Single "latest" frame — nothing to scrub.
+    syncTimelineUI();
+    return;
+  }
   if (isRadarActive()) {
     setRadarFrame(value);
     syncTimelineUI();
@@ -260,20 +283,30 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
 
   const primaryLayer = getLayer(layer || activeHeatmapLayer);
   const overlayLayer = activeMapOverlayLayer ? getLayer(activeMapOverlayLayer) : null;
-  const radarPrimary = !!primaryLayer && primaryLayer.kind === "raster";
-  const radarOverlay = overlayLayer?.kind === "raster";
+  const rasterPrimary = !!primaryLayer && primaryLayer.kind === "raster";
+  const rasterOverlay = overlayLayer?.kind === "raster";
 
   // Raster weather layers sit between the basemap and the scalar field.
-  if (radarOverlay && overlayLayer) {
+  if (rasterOverlay && overlayLayer) {
     drawRasterWeatherLayer(ctx, overlayLayer, width, height, mapState, zoomRound, activeMapLayerOpacity);
   }
 
-  if (radarPrimary && primaryLayer) {
+  if (rasterPrimary && primaryLayer) {
     drawRasterWeatherLayer(ctx, primaryLayer, width, height, mapState, zoomRound, activeMapLayerOpacity);
     if (!mapState.drag) {
-      const status = getRadarStatus(mapState.center);
-      renderRadarLegend(status, elements.heatmapLegend);
-      renderRadarReadout(status, elements.mapReadout);
+      if (primaryLayer.id === "satCloud") {
+        // Satellite imagery: start the five-minute refresh on first paint.
+        startCloudRefresh(() => {
+          queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
+        });
+        const status = getCloudStatus(mapState.center);
+        renderCloudLegend(status, elements.heatmapLegend);
+        renderCloudReadout(status, elements.mapReadout);
+      } else {
+        const status = getRadarStatus(mapState.center);
+        renderRadarLegend(status, elements.heatmapLegend);
+        renderRadarReadout(status, elements.mapReadout);
+      }
       syncTimelineUI();
     }
   } else if (!points?.length) {
@@ -292,8 +325,15 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
         renderMapReadout(layer || activeHeatmapLayer, min, max, latestHeatmapMeta, elements.mapReadout);
         // The legend follows the active weather layer: an overlay raster when
         // one is set, otherwise the primary scalar field.
-        if (radarOverlay && overlayLayer) {
-          renderRadarLegend(getRadarStatus(mapState.center), elements.heatmapLegend);
+        if (rasterOverlay && overlayLayer) {
+          if (overlayLayer.id === "satCloud") {
+            startCloudRefresh(() => {
+              queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
+            });
+            renderCloudLegend(getCloudStatus(mapState.center), elements.heatmapLegend);
+          } else {
+            renderRadarLegend(getRadarStatus(mapState.center), elements.heatmapLegend);
+          }
         } else {
           renderLayerLegend(layer || activeHeatmapLayer, min, max, elements.heatmapLegend, {
             validTimeLabel: activeMapHourOffset ? `Forecast +${activeMapHourOffset}h` : "Current conditions",
@@ -550,6 +590,11 @@ export function setActiveMapHourOffset(offset: number, options: { persist?: bool
 }
 
 export function toggleMapAnimation(): void {
+  // Single-frame imagery has no time dimension to animate.
+  if (isSatCloudActive()) {
+    syncPlayButton();
+    return;
+  }
   if (isRadarActive()) {
     setRadarLoop(!isRadarLoopPlaying());
     syncPlayButton();

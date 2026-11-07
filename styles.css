@@ -861,6 +861,12 @@ a {
   background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 44%, var(--accent-3) 72%, var(--danger) 100%);
 }
 
+/* Satellite cloud veil: cool grey low cloud building to bright white tops. */
+.map-gradient.cloud-gradient,
+.heatmap-gradient.cloud-gradient {
+  background: linear-gradient(90deg, rgba(205, 211, 222, 0.35) 0%, rgba(226, 231, 238, 0.8) 55%, #ffffff 100%);
+}
+
 .map-tools-layers-more[hidden] {
   display: none;
 }

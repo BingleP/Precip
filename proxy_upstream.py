@@ -46,6 +46,7 @@ ALLOWED_ENDPOINTS = {
     "/api/radar-index",
     "/api/radar-tile",
     "/api/radar-wms",
+    "/api/satellite-tile",
     "/health",
 }
 
@@ -95,6 +96,24 @@ def _valid_radar_path(path):
     return bool(suffix) and all(c in "0123456789abcdefABCDEF" for c in suffix)
 
 
+# GIBS satellite imagery is published up to Web-Mercator zoom 6
+# (GoogleMapsCompatible_Level6 matrix).
+GIBS_MAX_ZOOM = 6
+
+
+def _valid_gibs_date(text):
+    """GIBS granule dates are YYYY-MM-DD (UTC), within the retention window."""
+    try:
+        year, month, day = text.split("-")
+        if len(text) != 10 or len(year) != 4 or len(month) != 2 or len(day) != 2:
+            return False
+        from datetime import date as _date
+        _date(int(year), int(month), int(day))
+    except Exception:
+        return False
+    return True
+
+
 def build_upstream(path, query):
     if path == "/api/radar-index":
         return "https://api.rainviewer.com/public/weather-maps.json", "application/json"
@@ -122,6 +141,36 @@ def build_upstream(path, query):
                 "image/png",
             )
         raise ValueError("unknown radar tile source")
+
+    if path == "/api/satellite-tile":
+        # NASA GIBS WMTS imagery (satellite cloud). Layer ids are whitelisted;
+        # the whitelisted products are Web-Mercator GoogleMapsCompatible_Level6
+        # rasters of full-disk GOES-East/West and Himawari imagery.
+        _GIBS_LAYERS = {
+            "goes-east": "GOES-East_ABI_Band13_Clean_Infrared",
+            "goes-west": "GOES-West_ABI_Band13_Clean_Infrared",
+            "himawari": "Himawari_AHI_Band13_Clean_Infrared",
+        }
+        layer = require(query, "layer").strip().lower()
+        layer_id = _GIBS_LAYERS.get(layer)
+        if layer_id is None:
+            raise ValueError("unknown satellite layer")
+        zoom = _require_int(query, "z", 0, GIBS_MAX_ZOOM)
+        tile_count = 2 ** zoom
+        x = _require_int(query, "x", 0, tile_count - 1)
+        y = _require_int(query, "y", 0, tile_count - 1)
+        date = query.get("date", [""])[0].strip()
+        if date and not _valid_gibs_date(date):
+            raise ValueError("invalid satellite date")
+        # The time segment (after the "default" style): "default" serves the
+        # newest available granule; an explicit date must exist (GIBS answers
+        # 404 outside the granule retention window).
+        time_segment = date if date else "default"
+        return (
+            "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/"
+            f"{layer_id}/default/{time_segment}/GoogleMapsCompatible_Level6/{zoom}/{y}/{x}.png",
+            "image/png",
+        )
 
     if path == "/api/radar-wms":
         bbox_raw = require(query, "bbox").strip()
