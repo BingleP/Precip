@@ -74,6 +74,16 @@ export function normalizeMapHourOffset(value: number): number {
   return Math.max(0, Math.min(23, Math.round(value)));
 }
 
+/**
+ * Cookie → app value for the hazard max-age filters. 0 means the user
+ * chose "All" (null); anything else absent/junk resolves to the default.
+ */
+function normalizeStoredMaxAge(value: unknown, fallback: number | null): number | null {
+  if (typeof value === "number" && value > 0) return value;
+  if (value === 0) return null;
+  return fallback;
+}
+
 export function getAppSettings(): AppSettings {
   const parsed = readCookieJSON<Partial<AppSettings>>(SETTINGS_KEY);
   return {
@@ -84,16 +94,12 @@ export function getAppSettings(): AppSettings {
     useImperial: parsed?.useImperial === true,
     showAlerts: parsed?.showAlerts !== false,
     showWildfires: parsed?.showWildfires !== false,
-    // Absent (never saved) → one-week default; an explicit null means the
-    // user deliberately widened the filter to "All".
-    earthquakeMaxAgeHours: parsed?.earthquakeMaxAgeHours === undefined
-      ? DEFAULT_APP_SETTINGS.earthquakeMaxAgeHours
-      : typeof parsed.earthquakeMaxAgeHours === "number" && parsed.earthquakeMaxAgeHours > 0
-        ? parsed.earthquakeMaxAgeHours : null,
-    wildfireMaxAgeHours: parsed?.wildfireMaxAgeHours === undefined
-      ? DEFAULT_APP_SETTINGS.wildfireMaxAgeHours
-      : typeof parsed.wildfireMaxAgeHours === "number" && parsed.wildfireMaxAgeHours > 0
-        ? parsed.wildfireMaxAgeHours : null,
+    // One-week default for both hazard age filters (recent-only by
+    // default, per user request). In the cookie, 0 encodes an explicit
+    // "All" choice; anything absent/junk (including a legacy null from
+    // before the setting existed) falls back to the default.
+    earthquakeMaxAgeHours: normalizeStoredMaxAge(parsed?.earthquakeMaxAgeHours, DEFAULT_APP_SETTINGS.earthquakeMaxAgeHours),
+    wildfireMaxAgeHours: normalizeStoredMaxAge(parsed?.wildfireMaxAgeHours, DEFAULT_APP_SETTINGS.wildfireMaxAgeHours),
   };
 }
 
@@ -110,7 +116,13 @@ export function saveAppSettings(partial: Partial<AppSettings>): AppSettings {
     ? next.earthquakeMaxAgeHours : null;
   next.wildfireMaxAgeHours = typeof next.wildfireMaxAgeHours === "number" && next.wildfireMaxAgeHours > 0
     ? next.wildfireMaxAgeHours : null;
-  writeCookieJSON(SETTINGS_KEY, next);
+  // An explicit "All" (null) is written as 0 so it survives the default
+  // applied on read; absence stays absent until the user touches it.
+  writeCookieJSON(SETTINGS_KEY, {
+    ...next,
+    earthquakeMaxAgeHours: next.earthquakeMaxAgeHours ?? 0,
+    wildfireMaxAgeHours: next.wildfireMaxAgeHours ?? 0,
+  });
   return next;
 }
 
