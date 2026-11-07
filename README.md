@@ -77,7 +77,7 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
 - `precip.png` - site mark in the tab bar
 - `tab.png` - browser tab icon
 - `vite.config.ts` - Vite build configuration
-- `deploy/deploy.sh` - copy dist/ to nginx web root, install proxy + .py files, reload nginx
+- `deploy/deploy.sh` - production deploy: copy dist/ to the live root, copy the proxy files into `~/docker/precip`, rebuild + recreate the container
 - `deploy/precip.kerrick.ca.conf` - nginx config for `precip.kerrick.ca`
 - `deploy/precip-proxy.service` - systemd unit for the cache proxy (reads `FIRMS_MAP_KEY` from `/opt/precip/.env`)
 
@@ -133,24 +133,31 @@ cd /home/bingle/Projects/precip
 ```
 
 That script:
-1. copies the static site bundle into `/var/www/precip`
-2. installs the proxy server into `/opt/precip`
-3. installs the nginx and systemd service configs
-4. enables/restarts the proxy service
-5. validates nginx config
-6. reloads nginx
+1. pulls the latest `main`
+2. copies the static site bundle into `/var/www/precip` (bind-mounted into the container)
+3. copies the proxy `.py` files into `~/docker/precip`
+4. rebuilds and recreates the `precip` Docker container (`precip-site:latest`)
+5. verifies the container proxy and the public site respond
 
-The proxy also requires all four `.py` files to be present at `/opt/precip/` (the deploy script handles this).
+Production layout:
+
+| Path | What |
+|---|---|
+| `~/Projects/precip` | This repo (git checkout used for building) |
+| `/var/www/precip` | Static site root, bind-mounted read-only into the container |
+| `~/docker/precip` | Dockerfile, compose file, `nginx.conf`, `entrypoint.sh`, proxy `.py` files |
+
+The proxy `.py` files are baked into the image at build time, so they must be
+copied into `~/docker/precip` before rebuilding. `docker compose` is not
+available to root without `DOCKER_CONFIG=/home/bingle/.docker` (the script
+handles this).
 
 ### FIRMS API Key
 
-To enable NASA FIRMS hotspot data on the wildfire overlay, create `/opt/precip/.env` with:
-
-```
-FIRMS_MAP_KEY=your_key_here
-```
-
-Get a key at https://firms.modaps.eosdis.nasa.gov/api/map_key/. The deploy script creates a template `.env` if one doesn't exist. The `.env` file is never committed to the repo.
+The FIRMS key is set as the `FIRMS_MAP_KEY` environment variable in
+`~/docker/precip/docker-compose.yml`. Get a key at
+https://firms.modaps.eosdis.nasa.gov/api/map_key/. The later weather-radar
+layers use ECCC GeoMet, which needs no key.
 
 ### Nginx CSP for imagery
 

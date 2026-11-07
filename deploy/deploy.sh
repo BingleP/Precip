@@ -1,30 +1,33 @@
-#!/usr/bin/env sh
+#!/bin/sh
+# Deploy Precip (server: bingle@10.0.0.25, nginx+python proxy in a Docker container)
+#
+# Production layout:
+#   ~/Projects/precip     - git checkout used for building (this repo)
+#   /var/www/precip       - static site root, bind-mounted read-only into the container
+#   ~/docker/precip       - Dockerfile + compose + proxy sources, image precip-site:latest
+#
+# This script runs ON the server from inside ~/Projects/precip:
+#   sh deploy/deploy.sh
 set -eu
 
 cd "$(dirname "$0")/.."
 
-sudo rm -rf /var/www/precip
-sudo cp -r dist /var/www/precip
-sudo install -d -m 755 /opt/precip
-sudo install -m 644 proxy_server.py proxy_cache.py proxy_upstream.py proxy_estimators.py /opt/precip/
-sudo install -m 644 deploy/precip.kerrick.ca.conf /etc/nginx/sites-available/precip.conf
-sudo install -m 644 deploy/precip-proxy.service /etc/systemd/system/precip-proxy.service
+git pull --ff-only
 
-if [ ! -f /opt/precip/.env ]; then
-  cat > /opt/precip/.env << 'EOF'
-# FIRMS_MAP_KEY is required for NASA FIRMS hotspot data
-# Get yours at https://firms.modaps.eosdis.nasa.gov/api/map_key/
-# FIRMS_MAP_KEY=your_key_here
-EOF
-  echo "Created /opt/precip/.env — add FIRMS_MAP_KEY=... to enable FIRMS wildfire data"
-fi
+# Static site: copy the built dist/ into the live root (preserve the directory
+# itself; the container bind-mounts it read-only).
+sudo cp -a dist/. /var/www/precip/
 
-if [ ! -e /etc/nginx/sites-enabled/precip.conf ]; then
-  sudo ln -s /etc/nginx/sites-available/precip.conf /etc/nginx/sites-enabled/precip.conf
-fi
+# Proxy: the Python sources are baked into the image at build time.
+cp -a proxy_server.py proxy_cache.py proxy_upstream.py proxy_estimators.py ~/docker/precip/
 
-sudo systemctl daemon-reload
-sudo systemctl enable --now precip-proxy.service
-sudo nginx -t
-sudo systemctl restart precip-proxy.service
-sudo systemctl reload nginx
+# Rebuild + recreate the container. `docker compose` is not available to root
+# without DOCKER_CONFIG.
+cd ~/docker/precip
+sudo env DOCKER_CONFIG=/home/bingle/.docker docker compose build
+sudo env DOCKER_CONFIG=/home/bingle/.docker docker compose up -d
+
+echo "Deployed. Verifying..."
+sleep 2
+curl -sf -o /dev/null "http://127.0.0.1:8093/health" && echo "Container proxy OK"
+curl -sf -o /dev/null "https://precip.kerrick.ca/" && echo "Site OK"
