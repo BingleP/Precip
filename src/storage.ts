@@ -88,7 +88,12 @@ export function getAppSettings(): AppSettings {
   const parsed = readCookieJSON<Partial<AppSettings>>(SETTINGS_KEY);
   return {
     mapLayer: normalizeMapLayer(parsed?.mapLayer),
-    mapOverlayLayer: normalizeMapOverlayLayer(parsed?.mapOverlayLayer),
+    // Absent (never saved) → default overlay ("fcastPrecip"). A cookie ""
+    // is an explicit "None"; a legacy null (written by older code for
+    // never-chosen) also resolves to the default.
+    mapOverlayLayer: parsed?.mapOverlayLayer === undefined || parsed?.mapOverlayLayer === null
+      ? DEFAULT_APP_SETTINGS.mapOverlayLayer
+      : normalizeMapOverlayLayer(parsed.mapOverlayLayer),
     mapLayerOpacity: normalizeMapLayerOpacity(parsed?.mapLayerOpacity),
     mapHourOffset: normalizeMapHourOffset(parsed?.mapHourOffset ?? DEFAULT_APP_SETTINGS.mapHourOffset),
     useImperial: parsed?.useImperial === true,
@@ -116,10 +121,11 @@ export function saveAppSettings(partial: Partial<AppSettings>): AppSettings {
     ? next.earthquakeMaxAgeHours : null;
   next.wildfireMaxAgeHours = typeof next.wildfireMaxAgeHours === "number" && next.wildfireMaxAgeHours > 0
     ? next.wildfireMaxAgeHours : null;
-  // An explicit "All" (null) is written as 0 so it survives the default
-  // applied on read; absence stays absent until the user touches it.
+  // Explicit choices are written with sentinels that survive the read-side
+  // defaults: "" = overlay "None", 0 = hazard age "All".
   writeCookieJSON(SETTINGS_KEY, {
     ...next,
+    mapOverlayLayer: next.mapOverlayLayer ?? "",
     earthquakeMaxAgeHours: next.earthquakeMaxAgeHours ?? 0,
     wildfireMaxAgeHours: next.wildfireMaxAgeHours ?? 0,
   });

@@ -137,7 +137,7 @@ export const MAP_LAYERS: MapLayer[] = [
   scalar("cape", "CAPE", "CAPE", "CAPE", "J/kg"),
 ];
 
-export const DEFAULT_LAYER_ID = "temperature";
+export const DEFAULT_LAYER_ID = "wind";
 export const MAX_RASTER_LAYERS = 2;
 
 const layerById = new Map(MAP_LAYERS.map((layer) => [layer.id, layer]));

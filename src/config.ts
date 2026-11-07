@@ -34,9 +34,9 @@ export const PREFERRED_LOCATION_KEY = "precip.preferredLocation.v1";
 export const SETTINGS_KEY = "precip.settings.v1";
 
 export const DEFAULT_APP_SETTINGS = {
-  mapLayer: "temperature" as const,
-  mapOverlayLayer: null as string | null,
-  mapLayerOpacity: 0.52,
+  mapLayer: "wind" as const,
+  mapOverlayLayer: "fcastPrecip" as string | null,
+  mapLayerOpacity: 0.5,
   mapHourOffset: 0,
   useImperial: false,
   showAlerts: true,

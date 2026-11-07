@@ -101,9 +101,9 @@
                 <span class="map-tools-section-label">Layers</span>
                 <div class="map-tools-layers">
                   <button class="heatmap-button" type="button" data-layer="radar" aria-pressed="false">Radar</button>
-                  <button class="heatmap-button active" type="button" data-layer="temperature" aria-pressed="true">Temp</button>
+                  <button class="heatmap-button" type="button" data-layer="temperature" aria-pressed="false">Temp</button>
                   <button class="heatmap-button" type="button" data-layer="precipitation" aria-pressed="false">Rain</button>
-                  <button class="heatmap-button" type="button" data-layer="wind" aria-pressed="false">Wind</button>
+                  <button class="heatmap-button active" type="button" data-layer="wind" aria-pressed="true">Wind</button>
                   <button class="heatmap-button layers-more-toggle" type="button" id="layers-more-toggle" aria-expanded="false" aria-controls="layers-more-row">More ▾</button>
                   <div class="map-tools-layers-more" id="layers-more-row" hidden>
                     <button class="heatmap-button" type="button" data-layer="feels" aria-pressed="false">Feels</button>
@@ -129,13 +129,13 @@
                     <option value="radar">Radar</option>
                     <option value="satCloud">Clouds</option>
                     <option value="fcastCloud">Forecast cloud</option>
-                    <option value="fcastPrecip">Forecast rain</option>
+                    <option value="fcastPrecip" selected>Forecast rain</option>
                   </select>
                 </div>
                 <div class="map-tools-row map-tools-row-spaced map-tools-opacity">
                   <label class="map-tools-label" for="map-opacity-slider">Layer opacity</label>
-                  <input id="map-opacity-slider" class="map-tools-range" type="range" min="10" max="100" step="1" value="52" />
-                  <span id="map-opacity-label" class="map-tools-opacity-value">52%</span>
+                  <input id="map-opacity-slider" class="map-tools-range" type="range" min="10" max="100" step="1" value="50" />
+                  <span id="map-opacity-label" class="map-tools-opacity-value">50%</span>
                 </div>
               </div>
             </div>
