@@ -272,6 +272,7 @@ export interface AppSettings {
   showAlerts: boolean;
   showWildfires: boolean;
   earthquakeMaxAgeHours: number | null;
+  wildfireMaxAgeHours: number | null;
 }
 
 export interface StormRisk {

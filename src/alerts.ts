@@ -157,11 +157,50 @@ export function setAllAlerts(alerts: NwsAlert[] | null): void {
 }
 
 export function getMapCenterWildfires(): WildfireFeature[] | null {
-  return mapCenterWildfires;
+  return filteredWildfires();
 }
 
 export function setMapCenterWildfires(features: WildfireFeature[] | null): void {
   mapCenterWildfires = features;
+  filteredWildfiresCache.data = null; // invalidate memoized filter
+}
+
+// Wildfire recency (mirrors the earthquake max-age filter). Hotspots filter
+// on their detection date, perimeters on last activity; features without a
+// parseable date always pass through so un-dated data is never hidden.
+let wildfireMaxAge: number | null = null;
+const filteredWildfiresCache: { ref: WildfireFeature[] | null; age: number | null; data: WildfireFeature[] | null } = {
+  ref: null, age: null, data: null,
+};
+
+export function setWildfireMaxAge(hours: number | null): void {
+  wildfireMaxAge = hours;
+  filteredWildfiresCache.data = null;
+}
+
+export function getWildfireMaxAge(): number | null {
+  return wildfireMaxAge;
+}
+
+function filteredWildfires(): WildfireFeature[] | null {
+  const raw = mapCenterWildfires;
+  if (raw === null) return null;
+  if (filteredWildfiresCache.ref === raw && filteredWildfiresCache.age === wildfireMaxAge) {
+    return filteredWildfiresCache.data;
+  }
+  let result = raw;
+  if (wildfireMaxAge !== null && wildfireMaxAge > 0) {
+    const cutoff = Date.now() - wildfireMaxAge * 3600000;
+    result = raw.filter((feature) => {
+      const dateText = feature.properties.lastDate ?? feature.properties.date ?? feature.properties.firstDate;
+      const time = dateText ? new Date(dateText).getTime() : NaN;
+      return !Number.isNaN(time) && time >= cutoff;
+    });
+  }
+  filteredWildfiresCache.ref = raw;
+  filteredWildfiresCache.age = wildfireMaxAge;
+  filteredWildfiresCache.data = result;
+  return result;
 }
 
 export function updateNwsAlerts(

@@ -140,6 +140,7 @@ export interface Elements {
   alertsToggle: HTMLElement | null;
   wildfiresToggle: HTMLElement | null;
   earthquakeAgeSelect: HTMLSelectElement | null;
+  wildfireAgeSelect: HTMLSelectElement | null;
   mapOverlaySelect: HTMLSelectElement | null;
   mapOpacitySlider: HTMLInputElement | null;
   mapOpacityLabel: HTMLElement | null;
@@ -236,6 +237,7 @@ eventLog: document.querySelector("#event-log") as HTMLElement | null,
   alertsToggle: document.querySelector("#alerts-toggle") as HTMLElement | null,
   wildfiresToggle: document.querySelector("#wildfires-toggle") as HTMLElement | null,
   earthquakeAgeSelect: document.querySelector("#earthquake-age-select") as HTMLSelectElement | null,
+  wildfireAgeSelect: document.querySelector("#wildfire-age-select") as HTMLSelectElement | null,
   mapOverlaySelect: document.querySelector("#map-overlay-select") as HTMLSelectElement | null,
   mapOpacitySlider: document.querySelector("#map-opacity-slider") as HTMLInputElement | null,
   mapOpacityLabel: document.querySelector("#map-opacity-label") as HTMLElement | null,

@@ -13,7 +13,7 @@ import { resolveLocation, searchLocationSuggestions, searchAlertSuggestions, get
 import { zoomMap, startMapDrag, moveMapDrag, endMapDrag, resetMapView, updateMapTooltip, hideMapTooltip, } from "./map";
 import { latLonToWorld, worldToLatLon } from "./geo";
 import { updateSatelliteForLocation, loadSatelliteSector, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, updateSliderForLocation, loadSliderSector, setActiveSource, resolveSliderSatellite, resolveSliderSector } from "./satellite";
-import { setMapCenterAlerts, setMapCenterWildfires, getAllAlerts, showStormTracks, setShowStormTracks, setActiveCyclones, setStormForecast, setStormCone, showEarthquakes, setShowEarthquakes, setEarthquakes, setEarthquakeMaxAge } from "./alerts";
+import { setMapCenterAlerts, setMapCenterWildfires, getAllAlerts, showStormTracks, setShowStormTracks, setActiveCyclones, setStormForecast, setStormCone, showEarthquakes, setShowEarthquakes, setEarthquakes, setEarthquakeMaxAge, setWildfireMaxAge } from "./alerts";
 import { selectTab, togglePanel, formatLocationLabel, normalizeSearchText, showToast } from "./ui";
 import { loadBrowseAlerts } from "./panels/alerts";
 import { exportSettingsPreset, importSettingsPreset, } from "./settings";
@@ -260,6 +260,27 @@ document.addEventListener("click", (event) => {
   if (elements.locationForm && !elements.locationForm.contains(event.target as Node)) {
     if (elements.locationSuggestions) elements.locationSuggestions.classList.remove("visible");
   }
+});
+
+// "Show on map" buttons in the alert and tropical panels: recenter the map
+// on the event (no weather reload), then refresh the viewport overlays.
+document.addEventListener("click", (event) => {
+  const button = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-goto-map]");
+  if (!button) return;
+  const latitude = Number(button.dataset.lat);
+  const longitude = Number(button.dataset.lon);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+  mapState.center = { latitude, longitude };
+  if (mapState.selected) {
+    // Keep the floating marker label honest about the jump target.
+    mapState.selected = { ...mapState.selected, latitude, longitude, name: "Event location", admin: "", country: "" };
+  }
+  mapState.zoom = MAP_DEFAULT_ZOOM;
+  hideMapTooltip({ mapTooltip: elements.mapTooltip, mapHoverIndicator: elements.mapHoverIndicator });
+  renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  scheduleHeatmapRefresh();
+  scheduleMapCenterAlertFetch();
+  scheduleWildfireFetch();
 });
 
 elements.refreshButton?.addEventListener("click", () => {
@@ -654,6 +675,14 @@ elements.earthquakeAgeSelect?.addEventListener("change", () => {
   renderHeatmap(latestHeatmap, activeHeatmapLayer);
 });
 
+elements.wildfireAgeSelect?.addEventListener("change", () => {
+  const val = elements.wildfireAgeSelect!.value;
+  const hours = val ? parseInt(val, 10) : null;
+  setWildfireMaxAge(hours);
+  saveAppSettings({ wildfireMaxAgeHours: hours });
+  renderHeatmap(latestHeatmap, activeHeatmapLayer);
+});
+
 // Satellite map toggle button
 document.querySelector("#satellite-toggle")?.addEventListener("click", () => {
   toggleSatelliteOverlay();
@@ -904,6 +933,10 @@ setShowWildfires(initialSettings.showWildfires);
 setEarthquakeMaxAge(initialSettings.earthquakeMaxAgeHours);
 if (elements.earthquakeAgeSelect) {
   elements.earthquakeAgeSelect.value = initialSettings.earthquakeMaxAgeHours !== null ? String(initialSettings.earthquakeMaxAgeHours) : "";
+}
+setWildfireMaxAge(initialSettings.wildfireMaxAgeHours);
+if (elements.wildfireAgeSelect) {
+  elements.wildfireAgeSelect.value = initialSettings.wildfireMaxAgeHours !== null ? String(initialSettings.wildfireMaxAgeHours) : "";
 }
 syncOverlayToggles();
 if (elements.satelliteSectorSelect) elements.satelliteSectorSelect.value = NOAA_SECTORS[0].id;

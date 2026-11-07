@@ -41,7 +41,10 @@ export const DEFAULT_APP_SETTINGS = {
   useImperial: false,
   showAlerts: true,
   showWildfires: true,
-  earthquakeMaxAgeHours: null as number | null,
+  // Map hazard recency defaults: only the last week is shown unless the
+  // user explicitly widens the filter (EQ / wildfires).
+  earthquakeMaxAgeHours: 168 as number | null,
+  wildfireMaxAgeHours: 168 as number | null,
 };
 
 export const NOAA_SECTORS: NoaaSector[] = [

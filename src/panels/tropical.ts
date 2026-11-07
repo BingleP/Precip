@@ -90,6 +90,7 @@ function renderStormCard(storm: TropicalCyclone): string {
         </div>
         ` : ""}
       </div>
+      <button class="alert-goto storm-goto" type="button" data-goto-map data-lat="${storm.latitude.toFixed(4)}" data-lon="${storm.longitude.toFixed(4)}">Show on map</button>
       <a class="storm-link" href="https://www.nhc.noaa.gov/" target="_blank" rel="noreferrer">
         NHC Advisory ↗
       </a>

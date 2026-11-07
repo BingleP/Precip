@@ -2,6 +2,7 @@ import type { NwsAlert } from "../types";
 import { NWS_SEVERITY_ORDER } from "../config";
 import { fetchAllAlerts } from "../api";
 import { setAllAlerts, getAllAlerts } from "../alerts";
+import { getAlertCentroid } from "../search";
 
 export function renderLocalAlerts(alerts: NwsAlert[]): void {
   const grid = document.querySelector("#alerts-local-grid");
@@ -27,6 +28,7 @@ function renderAlertCard(alert: NwsAlert): string {
   const headline = p.headline || "";
   const description = (p.description || "").slice(0, 500);
 
+  const centroid = getAlertCentroid(alert);
   return `
     <article class="alert-card severity-${severity}">
       <span class="alert-severity-badge severity-${severity}"></span>
@@ -36,6 +38,7 @@ function renderAlertCard(alert: NwsAlert): string {
       </div>
       ${headline ? `<div class="alert-headline">${escapeHtml(headline)}</div>` : ""}
       ${description ? `<div class="alert-description">${escapeHtml(description)}</div>` : ""}
+      ${centroid ? `<button class="alert-goto" type="button" data-goto-map data-lat="${centroid.lat.toFixed(4)}" data-lon="${centroid.lon.toFixed(4)}">Show on map</button>` : ""}
     </article>
   `;
 }

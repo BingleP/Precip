@@ -84,8 +84,16 @@ export function getAppSettings(): AppSettings {
     useImperial: parsed?.useImperial === true,
     showAlerts: parsed?.showAlerts !== false,
     showWildfires: parsed?.showWildfires !== false,
-    earthquakeMaxAgeHours: typeof parsed?.earthquakeMaxAgeHours === "number" && parsed.earthquakeMaxAgeHours > 0
-      ? parsed.earthquakeMaxAgeHours : null,
+    // Absent (never saved) → one-week default; an explicit null means the
+    // user deliberately widened the filter to "All".
+    earthquakeMaxAgeHours: parsed?.earthquakeMaxAgeHours === undefined
+      ? DEFAULT_APP_SETTINGS.earthquakeMaxAgeHours
+      : typeof parsed.earthquakeMaxAgeHours === "number" && parsed.earthquakeMaxAgeHours > 0
+        ? parsed.earthquakeMaxAgeHours : null,
+    wildfireMaxAgeHours: parsed?.wildfireMaxAgeHours === undefined
+      ? DEFAULT_APP_SETTINGS.wildfireMaxAgeHours
+      : typeof parsed.wildfireMaxAgeHours === "number" && parsed.wildfireMaxAgeHours > 0
+        ? parsed.wildfireMaxAgeHours : null,
   };
 }
 
@@ -100,6 +108,8 @@ export function saveAppSettings(partial: Partial<AppSettings>): AppSettings {
   next.mapHourOffset = normalizeMapHourOffset(next.mapHourOffset);
   next.earthquakeMaxAgeHours = typeof next.earthquakeMaxAgeHours === "number" && next.earthquakeMaxAgeHours > 0
     ? next.earthquakeMaxAgeHours : null;
+  next.wildfireMaxAgeHours = typeof next.wildfireMaxAgeHours === "number" && next.wildfireMaxAgeHours > 0
+    ? next.wildfireMaxAgeHours : null;
   writeCookieJSON(SETTINGS_KEY, next);
   return next;
 }

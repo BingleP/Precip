@@ -1490,6 +1490,29 @@ a {
   contain-intrinsic-size: auto 150px;
 }
 
+/* "Show on map" jump buttons (alerts + tropical cards). */
+.alert-goto {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-top: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.alert-goto:hover {
+  background: rgba(14, 165, 233, 0.12);
+}
+
+.storm-card .alert-goto {
+  margin-top: 0;
+}
+
 .alert-card.severity-Extreme { border-left-color: rgba(201, 106, 110, 0.9); }
 .alert-card.severity-Severe { border-left-color: rgba(217, 144, 74, 0.9); }
 .alert-card.severity-Moderate { border-left-color: rgba(201, 180, 88, 0.9); }
