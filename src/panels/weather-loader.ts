@@ -1,7 +1,7 @@
 import type { Location } from "../types";
 import { elements, mapState } from "../state";
 import { getAppSettings } from "../storage";
-import { fetchForecast, fetchAirQuality, fetchAlerts, fetchSpcOutlook } from "../api";
+import { fetchForecast, fetchAirQuality, fetchAlerts, fetchSpcOutlook, getLastAlertNote } from "../api";
 import { fetchHeatmap } from "../heatmap";
 import { resolveLocation, reverseGeocodeLocation } from "../search";
 import { updateNwsAlerts, setLatestAlerts, setLatestSpcCat, setLatestSpcTorn, renderSpcOutlook, setMapCenterAlerts } from "../alerts";
@@ -131,6 +131,8 @@ export async function hydrateSupplementalWeather(location: Location, requestId: 
     } else {
       setLatestAlerts(null);
       renderLocalAlerts([]);
+      const alertNote = getLastAlertNote();
+      if (alertNote) addLog(alertNote, elements.eventLog);
       const alertBadge = document.querySelector('.tab-button[data-tab="now"] .alert-badge');
       if (alertBadge) alertBadge.remove();
       if (latestForecast) updateWeatherWarning(latestForecast);

@@ -2,6 +2,7 @@ import type { Forecast, AirQuality, NwsAlert, SpcCollection, NoaaCatalog, NoaaSe
 import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, ALERT_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES } from "./config";
 import { getCachedApiResponse, setCachedApiResponse } from "./storage";
 import { worldToLatLon } from "./geo";
+import { getAlertRegion } from "./location";
 
 const API_BASE_URL = getApiBaseUrl();
 
@@ -150,9 +151,22 @@ export async function fetchAirQuality(location: Location): Promise<AirQuality> {
   });
 }
 
+let lastAlertNote: string | null = null;
+
+/** Human-readable reason the last alerts call returned no data, if applicable. */
+export function getLastAlertNote(): string | null {
+  return lastAlertNote;
+}
+
 export async function fetchAlerts(location: Location): Promise<NwsAlert[]> {
-  const isCanada = location.countryCode === "CA";
-  const endpoint = isCanada ? "/ca-alerts" : "/alerts";
+  const region = getAlertRegion(location);
+  if (!region) {
+    lastAlertNote = "Alerts are available for the US and Canada.";
+    return [];
+  }
+  lastAlertNote = null;
+
+  const endpoint = region === "CA" ? "/ca-alerts" : "/alerts";
   const cacheKey = `${location.latitude.toFixed(2)},${location.longitude.toFixed(2)}:${endpoint}`;
   const cached = alertCache.get(cacheKey);
   if (cached && Date.now() - cached.savedAt < ALERT_CACHE_TTL_MS) {

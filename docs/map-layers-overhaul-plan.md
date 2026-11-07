@@ -1,0 +1,484 @@
+# Map Layers Overhaul Plan
+
+Status: Phase 0 implemented; plan approved and sequenced as below.
+Scope: fix two known defects, then replace the single fog-like heatmap with a
+stack of real weather layers (radar, satellite cloud, forecast cloud/precip,
+scalar fields) that are legible over the dark basemap.
+
+---
+
+## 1. Fix the two known defects first
+
+These are small, independent, and should land before the map overhaul so the
+baseline is clean.
+
+### 1.1 Production CSP blocks inline styles
+
+**Symptom**
+
+On production only, the console reports:
+
+```
+Applying inline style violates the following Content Security Policy directive
+'style-src 'self''
+```
+
+(nix `styles.css` is same-origin, so no violation there.)
+
+**Root causes**
+
+Inline `style="..."` attributes in generated markup and in static HTML:
+
+- `src/alerts.ts` – three SPC/toolkit cards use
+  `style="color:${cat.color}"`, `style="color:${prob.color}"`,
+  `style="color:#c96a6e"`.
+- `src/panels/tropical.ts` – storm card uses
+  `style="border-left: 4px solid ${catColor}"`.
+- `index.html` – two map-tools rows use `style="margin-top:4px"`.
+
+The production CSP is `style-src 'self'`, so the browser drops all of them.
+
+**Fix**
+
+- Move the SPC risk and tornado-probability colours into a small fixed set of
+  CSS classes (`.spc-risk-*`, `.spc-torn-*`) in `styles.css`; the source data
+  already maps to a fixed categorical palette.
+- Move storm category colours to `.storm-cat-0` … `.storm-cat-5`.
+- Replace the two `margin-top:4px` inline styles with a utility class
+  (`.map-tools-row-spaced` or a gap on the parent).
+- Add a guardrail: a small script or CI grep that fails on
+  `style="` in `src/` and `index.html`. CSSOM assignments such as
+  `el.style.left = ...` are allowed and must stay allowed.
+- If dynamic colours are ever unavoidable, create the element and assign
+  `el.style.color = ...` (CSSOM). Do **not** build `style="..."` strings.
+
+**Verification**
+
+- Local: `bun run typecheck && bun run build`.
+- Production: reload with DevTools, assert zero CSP violations on first load
+  and after opening the Alerts, Storm, and Tropical tabs.
+- Regression check that SPC cards still show their colours.
+
+### 1.2 `/api/alerts` returns 400 for non-US points
+
+**Symptom**
+
+```
+GET /api/alerts?latitude=43.7000&longitude=-79.4200 -> 400
+```
+
+**Root cause**
+
+`fetchAlerts` chooses the endpoint with
+`location.countryCode === "CA"`. If `countryCode` is missing (legacy cookie,
+manually supplied coordinates, some reverse-geocode results), a Canadian point
+is sent to the US NWS `point=` endpoint, which rejects out-of-coverage points
+with 400.
+
+**Fix (client)**
+
+- Treat a location as Canadian when
+  `countryCode === "CA"` **or** `country` matches `Canada` case-insensitively.
+- Only call `/api/alerts` when the country is the US (`countryCode === "US"` or
+  country `United States`).
+- For every other country, return `[]` and set a clear status note
+  ("Alerts are available for the US and Canada") instead of firing a request
+  that is guaranteed to fail.
+- Backfill `countryCode` when saving/loading preferred locations and watchlist
+  entries so old cookies heal themselves. Keep a country-name fallback for
+  entries that cannot be healed.
+
+**Fix (proxy)**
+
+- In `build_us_alerts_payload`, catch upstream HTTP 400/404 and return an empty
+  `FeatureCollection` instead of propagating the error. Border/coastal points
+  can still fall outside NWS coverage even with a correct country.
+- Validate `latitude`/`longitude` ranges before calling upstream (return 400
+  for truly invalid input, but not for valid non-US points).
+
+**Verification**
+
+- Toronto (CA), Buffalo (US), and a point in Mexico/Europe: no console error;
+  US/CA alerts still render.
+- Add a browser audit step for a Canadian and a US location.
+
+---
+
+## 2. Current state and why it feels like "just colours"
+
+- One `<canvas id="heatmap-canvas">` draws dark OSM tiles, then a 5×4 grid of
+  Open-Meteo point forecasts, smoothed with inverse-distance weighting, blurred,
+  and painted at ~52% alpha.
+- 12 flat layer buttons (Temp, Feels, Dew, Humidity, Rain, Chance, Wind, Gusts,
+  Pressure, Cloud, Visibility, CAPE) all use the same four-colour ramp with
+  only a tiny palette variation.
+- The result is a low-resolution colour fog. It does not look like cloud, rain,
+  or a real weather field, and it hides the basemap detail.
+- The only true imagery today is the separate Satellite overlay (NOAA/SLIDER),
+  which is an animation panel, not a map layer.
+
+Target: a weather map where cloud looks like cloud, rain looks like rain, and
+scalar fields are crisp enough to read values from.
+
+### 2.1 Files to touch
+
+| Area | Files |
+|---|---|
+| Layer registry / types | `src/config.ts` or new `src/map-layers.ts`, `src/types.ts` |
+| Renderer | `src/map.ts`, `src/panels/data.ts`, `src/heatmap.ts`, `src/geo.ts` |
+| Fetch / cache | `src/api.ts`, `src/storage.ts`, `src/state.ts` |
+| Controls / styles | `index.html`, `styles.css`, `src/main.ts` |
+| Proxy | `proxy_upstream.py`, `proxy_server.py`, `proxy_cache.py` |
+| Documentation | `README.md`, this file |
+
+---
+
+## 3. Target design
+
+### 3.1 Layer model
+
+Introduce a typed registry instead of a flat list of button values:
+
+```ts
+type LayerKind = "scalar" | "raster" | "vector";
+
+interface LayerDefinition {
+  id: string;
+  kind: LayerKind;
+  group: "observations" | "forecast" | "impacts";
+  label: string;
+  unit?: string;
+  source?: "rainviewer" | "geomet" | "iem" | "gibs" | "open-meteo";
+  timeMode?: "observed" | "forecast" | "latest";
+  legend?: LegendDefinition;
+  renderer: "field" | "tiles" | "wms" | "vector";
+  defaultOpacity: number;
+  attribution?: string;
+}
+```
+
+- One registry in `src/config.ts` (or a new `src/map-layers.ts`) drives the UI,
+  the renderer, the legend, and persistence.
+- `AppSettings` stores `mapLayer`, optional `mapOverlayLayers`, and per-layer
+  opacity.
+- Existing vector toggles (Alerts, Fires, Tracks, Quakes) stay as overlays, not
+  weather layers.
+
+### 3.2 Layer groups
+
+**Observations**
+- Radar – RainViewer (global) / ECCC GeoMet (Canada high-res) / IEM (US)
+- Satellite cloud – GOES-East/West infrared (day/night) or GeoColor (day)
+- Lightning – future, not in v1
+
+**Forecast**
+- Cloud cover – GDPS 15 km total cloud (global), CAPS 3 km for Canada
+- Precipitation rate – GDPS 15 km / CAPS 3 km
+- Rain / snow type – GDPS precip type (legend only in v1)
+- Scalars – temperature, feels like, dew point, humidity, wind, gusts,
+  pressure, visibility, CAPE
+
+**Impacts (existing)**
+- Alerts, wildfires, storm tracks, earthquakes, satellite panel
+
+### 3.3 Render order
+
+1. Base OSM tiles (existing dark filter)
+2. Observed rasters (radar, satellite cloud)
+3. Forecast rasters (cloud, precip)
+4. Scalar field (if selected)
+5. Vector overlays (alerts, fires, tracks, quakes)
+6. Labels, location marker, tooltips
+
+Hard cap: one scalar field + up to two raster weather layers at a time. More
+than that becomes mud and destroys mobile frame rate.
+
+---
+
+## 4. Data sources (all verified reachable)
+
+| Layer | Source | Endpoint / layer | Coverage | Cadence | Notes |
+|---|---|---|---|---|---|
+| Radar (global) | RainViewer | `api.rainviewer.com/public/weather-maps.json` + `tilecache.rainviewer.com` XYZ 512 px | Global radar networks | ~5 min, 13 past frames | Transparent PNG; free for personal/educational use; attribution "Weather data by RainViewer" required; no key |
+| Radar (Canada) | ECCC GeoMet WMS | `RADAR_1KM_RRAI`, `RADAR_1KM_RSNO` | Canada | 6 min | 1 km, transparent, high quality |
+| Radar (US) | IEM | `mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png` | US | ~5 min | Good fallback for RainViewer gaps; credit Iowa Environmental Mesonet |
+| Satellite cloud | NASA GIBS WMTS | `GOES-East_ABI_Band13_Clean_Infrared` (Level 6), `GOES-East_ABI_GeoColor` (Level 7), same for West, plus `Himawari_AHI_Band13_Clean_Infrared` | GOES East/West + Himawari disks | 10 min | RGBA PNG; IR works day/night; GeoColor day only; no key |
+| Forecast cloud | ECCC GeoMet WMS | `GDPS_15km_TotalCloudCover` (global), `CAPS_3km_TotalCloudCover` (Canada) | Global / N. America | Hourly | Grayscale with alpha; global; supports `TIME` |
+| Forecast precip | ECCC GeoMet WMS | `GDPS_15km_PrecipRate`, `CAPS_3km_PrecipRate` | Global / N. America | Hourly | Same WMS path as cloud |
+| Scalars | Open-Meteo | existing `/api/forecast` multi-point | Global | Hourly | Raise grid resolution; chunk through proxy |
+| Satellite animation | NOAA STAR / SLIDER | existing | Sector / global | 5–10 min | Keep as the current overlay panel |
+
+Implementation notes:
+
+- All imagery must go through the same-origin proxy. No CSP changes are needed
+  for radar/cloud if they are proxied.
+- Do not fetch GeoMet `GetCapabilities` at runtime (≈40 MB). Hardcode the
+  whitelisted layer names, dimensions, and styles. Refresh metadata manually
+  when ECCC changes layers.
+- RainViewer is free for personal/educational use and this site qualifies, but
+  attribution is mandatory. Add a visible "Weather data by RainViewer" link in
+  the legend/attribution area. Cache aggressively (the terms ask for it).
+- GIBS GOES products occasionally have gaps or stale frames. Check the latest
+  timestamp before drawing, and fall back West/East, Himawari, or GeoMet cloud
+  when a tile set is empty.
+- Attribution summary: RainViewer (radar), NASA GIBS (satellite), ECCC GeoMet
+  (radar/cloud/forecast), Iowa Environmental Mesonet (US radar), OpenStreetMap
+  (basemap). Put all of these in the map attribution control.
+- A GeoMet `TIME` request has been spot-checked: `now+6h` returns a valid and
+  different cloud image, so the forecast-hour slider can drive the WMS layer
+  directly.
+
+---
+
+## 5. Rendering strategy
+
+### 5.1 Projection and compositing
+
+- Keep the existing custom Web Mercator canvas and `prepareCanvas` DPR cap.
+- Tile sources (RainViewer, IEM, GIBS) use the same tile math as OSM, so they
+  align by construction.
+- WMS sources (GeoMet) get one `GetMap` per viewport in `EPSG:3857`, using the
+  exact canvas BBOX converted from world pixels to metres. Draw the returned
+  image across the canvas. Snap the BBOX to a coarse grid (≈0.05°) so cache
+  keys are reusable.
+- Draw rasters with `globalAlpha` and, where useful, `globalCompositeOperation`
+  (`screen` for bright cloud IR, source-over for radar). Never use `filter:
+  blur()` on the full canvas for these layers.
+- Cross-fade layer changes over 150–250 ms; while a raster is loading, keep the
+  previous frame or the lower-zoom parent tile visible.
+
+### 5.2 Radar
+
+- Radar tiles are already transparent and colour-coded. Draw them directly.
+- Add a proper dBZ legend (light rain → heavy rain) and an "Observed" badge.
+- Loop the last 2 hours: index → frame list → prefetch ±2 frames. Pause the
+  loop when the tab is hidden.
+- Choose the provider by coverage: GeoMet inside Canada, IEM inside the US,
+  RainViewer elsewhere. If the active provider has no tiles for the viewport,
+  fall back to RainViewer.
+
+### 5.3 Satellite cloud
+
+- Default: GIBS Band 13 clean infrared, which works day and night.
+- Convert IR luminance to a cloud mask: bright cloud tops get high alpha and a
+  cool white tint; dark ground/ocean gets near-zero alpha. Do this in an
+  offscreen canvas at modest resolution, then upscale smoothly.
+- Optional "GeoColor" style for daytime, drawn at reduced opacity with a
+  slight desaturation so the basemap still reads.
+- Cache by `layer/z/x/y/time`; prefetch the next frame in the loop.
+
+### 5.4 Forecast cloud and precipitation
+
+- Use GeoMet WMS with `TIME = now_utc_rounded_to_hour + activeMapHourOffset`.
+- Cloud: grayscale + alpha is already close; tint it slightly blue-white,
+  apply an opacity curve so 0–30% cover is invisible and 70–100% is a clear
+  veil. This is the "actual cloud cover" layer.
+- Precip: use the ECCC rate layer (mm/h) with a radar-like palette, or keep the
+  existing Open-Meteo precip field rendered as discrete cells. Prefer the WMS
+  raster because it looks like a real field and is cheap.
+- For snow, switch to the snow rate/type layer when the model says snow.
+
+### 5.5 Scalar fields (temperature, wind, etc.)
+
+- Raise the Open-Meteo grid from 5×4 to an adaptive ~25×15 on desktop and
+  ~15×9 on mobile. Add a chunked proxy endpoint (`/api/field`) that batches
+  points and caches the result.
+- Replace inverse-distance weighting with bilinear interpolation plus a light
+  edge-preserving smoothing pass. Render from a colour LUT, not per-pixel
+  branching.
+- Do not blur the whole canvas. Keep the field crisp and lower its alpha over
+  the basemap.
+- Add value legibility:
+  - Temperature: isotherm contours every 5 °C with sparse labels.
+  - Pressure: isobars every 4 hPa.
+  - Wind: speed ramp + animated particle streamlines (phase 5, optional).
+  - CAPE: contours + hatch pattern.
+- Trim the default layer list to the six most useful (Temp, Feels, Rain, Wind,
+  Cloud, Pressure) and move the rest behind "More". Fewer, better layers.
+
+### 5.6 Vectors and labels
+
+- Keep the current alert polygons, wildfire perimeters, storm tracks, quakes,
+  place labels, and tap tooltip.
+- Ensure raster weather layers are drawn **below** vectors so warnings stay
+  readable.
+- Tooltip: show the layer name, value with unit, source, and valid time.
+
+---
+
+## 6. UI / UX
+
+- Replace the 12 flat buttons with a grouped "Weather layers" panel:
+  - Primary layer select, grouped by Observations / Forecast.
+  - Optional secondary overlay select (radar or satellite cloud).
+  - Opacity slider for the active weather layer (persisted).
+  - Legend card: colour ramp / cloud key, units, source, valid time,
+    Observed/Forecast badge, attribution link.
+- Keep the quick layer chips for the top 6, with a "More layers" entry.
+- Timeline behaviour follows the layer:
+  - Observed radar: "Past 2 h" loop with frame ticks.
+  - Satellite: latest frame or last hour.
+  - Forecast layers: existing +0…+24 h slider, labelled "Forecast".
+- Switching from an observed layer to a forecast layer keeps the same area and
+  resets the time control to "Now" with a visible mode change.
+- Mobile: the layer panel becomes a bottom sheet; opacity and timeline stay
+  reachable; no horizontal overflow at 390 px.
+- Persist `mapLayer`, overlay choice, opacity, and hour offset in app settings.
+- Accessibility: legend text uses real units, not just colour; layer buttons
+  have `aria-pressed`; the map canvas gets an updated `aria-label`.
+
+---
+
+## 7. Performance and resilience
+
+- Proxy TTLs: radar 120 s, satellite 300 s, forecast cloud/precip 900 s,
+  scalar field 600 s; stale-while-revalidate for upstream failures.
+- Cache keys round BBOX and time to avoid cache explosion.
+- Client caches: LRU per source (256 tiles), decoded via `createImageBitmap`
+  where available; abort in-flight requests on pan/zoom.
+- Request coalescing: one in-flight request per layer/bbox.
+- Fallback chain: GeoMet → IEM → RainViewer for radar; GIBS East → West →
+  GeoMet cloud for satellite; Open-Meteo → met.no for scalars.
+- Do not draw weather rasters during active drag; redraw on pointer-up with the
+  cached frame, same as vectors today.
+- Mobile budgets: ≤30 fps minimum while panning, ≤150 MB JS heap, no more than
+  two raster layers active.
+
+---
+
+## 8. Implementation phases
+
+### Phase 0 – Baseline fixes (small) ✅ implemented 2026-11-06
+
+- CSP inline-style cleanup (alerts, tropical, index.html). Done: class-based
+  colours (`.spc-risk-*`, `.spc-torn-*`, `.spc-alert-active`,
+  `.storm-border-0…5`, `.map-tools-row-spaced`); guardrail
+  `scripts/check-no-inline-styles.py` wired into `bun run check-inline-styles`
+  and CI.
+- Alerts country detection (`src/location.ts` + name fallback, cookie healing)
+  + proxy 400 hardening (empty FeatureCollection on upstream 400/404, input
+  range validation). Verified locally: Toronto/Buffalo/Mexico City/Sydney
+  return 200; malformed input returns 400.
+- Correct the deployment documentation to match the actual Docker setup
+  (`~/docker/precip` + `precip-site:latest`), or add a working
+  `deploy/deploy.sh` equivalent.
+- Acceptance: production console has zero CSP violations; no `/api/alerts` 400
+  for CA/US/other test points.
+
+### Phase 1 – Layer foundation
+
+- Add `MapLayer` registry, layer grouping, settings persistence.
+- Refactor `renderHeatmap` into a `MapRenderer` that draws ordered layers.
+- Add raster cache, cross-fade, DPR-aware offscreen compositing.
+- New UI shell (grouped picker, opacity, legend card) with existing scalar
+  layers still rendered by the old code path.
+- Acceptance: no visual regression; layer switch and persistence work.
+
+### Phase 2 – Radar (headline feature)
+
+- Proxy endpoints for RainViewer index/tiles, GeoMet radar, IEM tiles.
+- Radar layer with provider selection, loop, dBZ legend, attribution.
+- Time control switches to "Observed / Past 2 h".
+- Acceptance: radar aligns with coastlines and known precipitation; loop
+  plays smoothly; mobile frame rate holds.
+
+### Phase 3 – Satellite cloud
+
+- Proxy endpoint for GIBS WMTS with layer/time whitelist.
+- IR→alpha processing, day/night handling, GeoColor option.
+- Optional secondary overlay (radar + cloud) with opacity.
+- Acceptance: cloud veil looks like cloud, not a colour wash; no CSP errors;
+  imagery time is shown and gaps fall back cleanly.
+
+### Phase 4 – Forecast cloud and precipitation
+
+- GeoMet proxy for `GDPS_15km_TotalCloudCover`, `GDPS_15km_PrecipRate`,
+  `CAPS_3km_*`; time-offset requests.
+- Cloud opacity curve and precip palette.
+- Integrate with the forecast hour slider; prefetch adjacent hours.
+- Acceptance: +0…+24 h slider changes the raster; legend shows the valid time;
+  forecast layers do not block the basemap.
+
+### Phase 5 – Scalar field upgrade
+
+- `/api/field` chunked high-resolution endpoint and client cache.
+- Adaptive grid, bilinear interpolation, colour LUT.
+- Isotherms/isobars/wind streamlines for selected layers.
+- Trim the default layer set and add "More".
+- Acceptance: temperature field is crisp and readable at z3–z8; labels do not
+  overlap; mobile budget met.
+
+### Phase 6 – Polish and rollout
+
+- Mobile bottom sheet, accessibility pass, tooltip content.
+- Performance profiling (pan, zoom, layer switch, memory).
+- README/API docs, production deploy, live verification.
+- Acceptance: all criteria below pass on desktop and a 390×844 touch device.
+
+---
+
+## 9. Verification and acceptance criteria
+
+**Functional**
+
+- Radar, satellite cloud, forecast cloud, and forecast precip each render in
+  the right place at z3–z10 (coastline alignment within 1–2 px).
+- Observed vs forecast is obvious in the UI and legend.
+- Time slider matches the active layer type and changes the raster/texture.
+- Opacity control affects only the active weather layer.
+- Existing overlays (alerts, fires, tracks, quakes), satellite panel, drag,
+  resize, and mobile tap tooltip still work.
+
+**Quality**
+
+- Cloud looks like cloud and rain looks like rain; no rainbow fog.
+- Scalar fields are crisp, with units and values readable on hover.
+- Legends include source, units, valid time, and attribution.
+- No CSP violations on production first load or after opening alert/storm tabs.
+- No 400s for Canadian, US, or unsupported-country locations.
+
+**Performance**
+
+- Desktop: ≥45 fps while panning with one raster layer; layer switch <500 ms
+  when cached.
+- Mobile 390×844: ≥30 fps panning; no horizontal overflow; memory within
+  budget.
+- No request storms on rapid pan/zoom (coalescing verified in the network log).
+
+**Deployment**
+
+- `bun run typecheck && bun run build` pass.
+- Proxy modules compile; Docker image rebuild + container recreate succeeds.
+- Production asset hashes match the build; `/api` endpoints return 200 and the
+  expected payload shape.
+
+---
+
+## 10. Risks and open decisions
+
+**Risks**
+
+- RainViewer is best-effort (no availability guarantee) and adds an external
+  dependency; GeoMet/IEM remain the fallback. Attribution is mandatory.
+- GIBS GOES data can be stale or gapped; ECCC GOES composites and SLIDER are
+  fallbacks.
+- WMS time dimensions and model run changes can produce 404/empty images;
+  validate with a nearest-time probe and cache the resolved time.
+- High-resolution scalar grids can hit Open-Meteo rate limits; chunking,
+  caching, and the met.no fallback must be in place before raising density.
+- Stacked translucent layers can become unreadable; enforce the two-raster cap.
+- Canvas 2D may not be enough for smooth wind streamlines; keep that phase
+  optional and consider WebGL only if profiling demands it.
+
+**Decisions confirmed (2026-11-06)**
+
+1. **First release focus**: **observations first** (radar + satellite cloud).
+   Forecast fields and sharper scalars follow in later phases.
+2. **Stacking**: **one primary + one optional overlay**.
+3. **Scalar list**: **6 primary + "More"** (Temp, Feels, Rain, Wind, Cloud,
+   Pressure visible; the rest behind More).
+4. **RainViewer**: **accepted** — free for personal/educational use; add a
+   visible "Weather data by RainViewer" credit. GeoMet/IEM remain fallbacks.
+5. **Satellite relationship**: **keep separate** — the Satellite animation
+   panel stays its own feature; the map gets a static/looping cloud raster
+   layer.

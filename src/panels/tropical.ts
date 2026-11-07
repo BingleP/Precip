@@ -37,18 +37,16 @@ function getStormCategoryName(stormType: string, category?: number): string {
   return stormType;
 }
 
-function getStormColor(category?: number): string {
-  const colors = ["#00ff00", "#ffa500", "#ff8c00", "#ff4500", "#ff0000", "#8b0000"];
-  return colors[Math.min(category || 0, 5)];
+function getStormBorderClass(category?: number): string {
+  return `storm-border-${Math.min(Math.max(category || 0, 0), 5)}`;
 }
 
 function renderStormCard(storm: TropicalCyclone): string {
   const forecast = getStormForecast(storm.id);
   const cone = getStormCone(storm.id);
-  const catColor = getStormColor(storm.category);
 
   return `
-    <article class="storm-card" style="border-left: 4px solid ${catColor}">
+    <article class="storm-card ${getStormBorderClass(storm.category)}">
       <div class="storm-header">
         <div class="storm-name-section">
           <strong class="storm-name">${escapeHtml(storm.name)}</strong>

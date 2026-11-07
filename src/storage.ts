@@ -1,5 +1,6 @@
 import type { Location, AppSettings, ForecastSnapshot } from "./types";
 import { SETTINGS_KEY, PREFERRED_LOCATION_KEY, WATCHLIST_KEY, HISTORY_KEY, MAX_HISTORY_ITEMS, DEFAULT_APP_SETTINGS } from "./config";
+import { withNormalizedCountryCode } from "./location";
 
 export function getCookieValue(name: string): string | null {
   const row = document.cookie
@@ -94,11 +95,15 @@ export function saveAppSettings(partial: Partial<AppSettings>): AppSettings {
 }
 
 export function getPreferredLocation(): Location | null {
-  return readCookieJSON<Location>(PREFERRED_LOCATION_KEY);
+  const location = readCookieJSON<Location>(PREFERRED_LOCATION_KEY);
+  if (!location) return null;
+  const healed = withNormalizedCountryCode(location);
+  if (healed !== location) writeCookieJSON(PREFERRED_LOCATION_KEY, healed);
+  return healed;
 }
 
 export function savePreferredLocation(location: Location): void {
-  writeCookieJSON(PREFERRED_LOCATION_KEY, location);
+  writeCookieJSON(PREFERRED_LOCATION_KEY, withNormalizedCountryCode(location));
 }
 
 export function formatSavedLocation(location: Location | string | null): string {
@@ -109,11 +114,19 @@ export function formatSavedLocation(location: Location | string | null): string 
 
 export function getWatchlist(): Location[] {
   const parsed = readStorageJSON<Location[]>(WATCHLIST_KEY);
-  return Array.isArray(parsed) ? parsed : [];
+  if (!Array.isArray(parsed)) return [];
+  let healedAny = false;
+  const items = parsed.map((location) => {
+    const healed = withNormalizedCountryCode(location);
+    if (healed !== location) healedAny = true;
+    return healed;
+  });
+  if (healedAny) writeStorageJSON(WATCHLIST_KEY, items);
+  return items;
 }
 
 export function saveWatchlist(items: Location[]): void {
-  const next = items.slice(0, 8);
+  const next = items.slice(0, 8).map(withNormalizedCountryCode);
   writeStorageJSON(WATCHLIST_KEY, next);
 }
 

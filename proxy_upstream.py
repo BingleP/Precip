@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -702,10 +703,34 @@ def _fetch_zone_geometry(zone_url):
     return None
 
 
+def _empty_feature_collection():
+    return json.dumps(
+        {"type": "FeatureCollection", "features": []}, separators=(",", ":")
+    ).encode("utf-8")
+
+
 def build_us_alerts_payload(latitude, longitude):
-    """Fetch NWS alerts and enrich geometry-less alerts with zone polygons."""
-    url = f"https://api.weather.gov/alerts/active?point={latitude},{longitude}"
-    data = fetch_json(url)
+    """Fetch NWS alerts and enrich geometry-less alerts with zone polygons.
+
+    Points outside NWS coverage (e.g. a misrouted Canadian point) make the
+    upstream return 400/404. Return an empty FeatureCollection instead of
+    propagating the error so the client treats it as "no alerts".
+    """
+    try:
+        lat = float(latitude)
+        lon = float(longitude)
+    except (TypeError, ValueError):
+        raise ValueError("latitude and longitude must be numbers")
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        raise ValueError("latitude or longitude out of range")
+
+    url = f"https://api.weather.gov/alerts/active?point={lat},{lon}"
+    try:
+        data = fetch_json(url)
+    except urllib.error.HTTPError as error:
+        if error.code in (400, 404):
+            return _empty_feature_collection()
+        raise
     features = data.get("features") or []
 
     # Collect alerts without geometry that have affectedZones

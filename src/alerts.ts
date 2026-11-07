@@ -421,7 +421,7 @@ export function renderSpcOutlook(center: { latitude: number; longitude: number }
         color: "#888",
       };
       items.push(
-        `<article class="toolkit-card"><span>Day 1 Risk</span><strong style="color:${cat.color}">${cat.name}</strong><small>SPC categorical convective outlook</small></article>`,
+        `<article class="toolkit-card"><span>Day 1 Risk</span><strong class="spc-risk spc-risk-${match.properties.dn}">${cat.name}</strong><small>SPC categorical convective outlook</small></article>`,
       );
     }
   }
@@ -431,7 +431,7 @@ export function renderSpcOutlook(center: { latitude: number; longitude: number }
     if (match) {
       const prob = SPC_TORNADO_PROB[match.properties.dn] || { pct: match.properties.label, color: "#888" };
       items.push(
-        `<article class="toolkit-card"><span>Tornado Prob</span><strong style="color:${prob.color}">${prob.pct}</strong><small>Day 1 tornado probability</small></article>`,
+        `<article class="toolkit-card"><span>Tornado Prob</span><strong class="spc-torn spc-torn-${match.properties.dn}">${prob.pct}</strong><small>Day 1 tornado probability</small></article>`,
       );
     }
   }
@@ -443,7 +443,7 @@ export function renderSpcOutlook(center: { latitude: number; longitude: number }
         (a, b) => (NWS_SEVERITY_ORDER[b.properties.severity] || 0) - (NWS_SEVERITY_ORDER[a.properties.severity] || 0),
       )[0].properties;
       items.push(
-        `<article class="toolkit-card"><span>Active Alert</span><strong style="color:#c96a6e">${worst.event}</strong><small>${(worst.headline || worst.description || "").slice(0, 120)}</small></article>`,
+        `<article class="toolkit-card"><span>Active Alert</span><strong class="spc-alert-active">${worst.event}</strong><small>${(worst.headline || worst.description || "").slice(0, 120)}</small></article>`,
       );
     }
   }

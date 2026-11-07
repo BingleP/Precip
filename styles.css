@@ -751,6 +751,10 @@ a {
   gap: 4px;
 }
 
+.map-tools-row-spaced {
+  margin-top: 4px;
+}
+
 .map-tools-row .map-button {
   min-width: 36px;
   padding: 5px 8px;
@@ -1793,6 +1797,26 @@ a {
 .toolkit-card small {
   display: none;
 }
+
+/* SPC risk / tornado-probability colours (class-based to satisfy CSP) */
+.spc-risk-2 { color: #55BB55; }
+.spc-risk-3 { color: #66A366; }
+.spc-risk-4 { color: #DDAA00; }
+.spc-risk-5 { color: #FF9933; }
+.spc-risk-6 { color: #FF3333; }
+.spc-risk-7 { color: #FF0099; }
+.spc-risk { color: #888; }
+
+.spc-torn-2 { color: #79BA7A; }
+.spc-torn-4 { color: #55BB55; }
+.spc-torn-6 { color: #DDAA00; }
+.spc-torn-8 { color: #FF9933; }
+.spc-torn-10 { color: #FF3333; }
+.spc-torn-12 { color: #FF0099; }
+.spc-torn-14 { color: #CC0066; }
+.spc-torn { color: #888; }
+
+.spc-alert-active { color: #c96a6e; }
 
 
 .risk-meter {
@@ -2949,6 +2973,14 @@ a {
   background: var(--surface);
   margin-bottom: 8px;
 }
+
+/* Storm category accent borders (class-based to satisfy CSP) */
+.storm-border-0 { border-left: 4px solid #00ff00; }
+.storm-border-1 { border-left: 4px solid #ffa500; }
+.storm-border-2 { border-left: 4px solid #ff8c00; }
+.storm-border-3 { border-left: 4px solid #ff4500; }
+.storm-border-4 { border-left: 4px solid #ff0000; }
+.storm-border-5 { border-left: 4px solid #8b0000; }
 
 .storm-header {
   display: flex;

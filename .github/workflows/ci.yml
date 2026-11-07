@@ -35,3 +35,4 @@ jobs:
         with:
           python-version: "3.11"
       - run: python3 -m py_compile proxy_cache.py proxy_estimators.py proxy_upstream.py proxy_server.py
+      - run: python3 scripts/check-no-inline-styles.py
