@@ -1,6 +1,6 @@
 # Map Layers Overhaul Plan
 
-Status: Phase 0 implemented; plan approved and sequenced as below.
+Status: Phase 0 complete and live in production (2026-11-06). Phases 1–6 remain, sequenced as below.
 Scope: fix two known defects, then replace the single fog-like heatmap with a
 stack of real weather layers (radar, satellite cloud, forecast cloud/precip,
 scalar fields) that are legible over the dark basemap.
@@ -348,22 +348,26 @@ Implementation notes:
 
 ## 8. Implementation phases
 
-### Phase 0 – Baseline fixes (small) ✅ implemented 2026-11-06
+### Phase 0 – Baseline fixes (small) ✅ complete & live 2026-11-06
 
 - CSP inline-style cleanup (alerts, tropical, index.html). Done: class-based
   colours (`.spc-risk-*`, `.spc-torn-*`, `.spc-alert-active`,
   `.storm-border-0…5`, `.map-tools-row-spaced`); guardrail
   `scripts/check-no-inline-styles.py` wired into `bun run check-inline-styles`
-  and CI.
+  and CI. Also fixed a bonus one found by live browser audit: the `data:` SVG
+  select arrow → `public/select-arrow.svg` (`img-src 'self'`).
 - Alerts country detection (`src/location.ts` + name fallback, cookie healing)
   + proxy 400 hardening (empty FeatureCollection on upstream 400/404, input
-  range validation). Verified locally: Toronto/Buffalo/Mexico City/Sydney
-  return 200; malformed input returns 400.
-- Correct the deployment documentation to match the actual Docker setup
-  (`~/docker/precip` + `precip-site:latest`), or add a working
-  `deploy/deploy.sh` equivalent.
-- Acceptance: production console has zero CSP violations; no `/api/alerts` 400
-  for CA/US/other test points.
+  range validation). Verified locally and in production: Toronto/Buffalo/
+  Mexico City/Sydney return 200; malformed input returns 400. Live browser
+  audit confirmed Toronto routes to `/api/ca-alerts`.
+- Deployment docs corrected to the real Docker flow
+  (`~/docker/precip` + `precip-site:latest`); `deploy/deploy.sh` rewritten;
+  README deployment section updated.
+- Production: zero app CSP violations on first load and across
+  Now/Storm/Tropical/Alerts tabs. (Cloudflare's own injected beacon +
+  challenge scripts are blocked by `script-src 'self'` — expected, not a bug.)
+- Commits: `782c074`, `7e3eb53`, `1e36ea2`. Container rebuilt and recreated.
 
 ### Phase 1 – Layer foundation
 
