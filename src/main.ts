@@ -34,7 +34,8 @@ import {
   saveCurrentAsPreferredLocation, clearPreferredLocationSetting,
   scheduleHeatmapRefresh,
   renderHeatmap,
-  setActiveHeatmapLayer, setActiveMapHourOffset, toggleMapAnimation,
+  setActiveHeatmapLayer, setActiveMapHourOffset, setActiveMapOverlayLayer, setActiveMapLayerOpacity,
+  toggleMapAnimation,
 } from "./panels/data";
 import {
   loadWeather, selectMapLocation,
@@ -419,6 +420,21 @@ heatmapButtons.forEach((button) => {
   });
 });
 
+elements.layersMoreToggle?.addEventListener("click", () => {
+  const row = document.querySelector("#layers-more-row") as HTMLElement | null;
+  const expanded = elements.layersMoreToggle?.getAttribute("aria-expanded") === "true";
+  elements.layersMoreToggle?.setAttribute("aria-expanded", String(!expanded));
+  if (row) row.hidden = expanded;
+});
+
+elements.mapOpacitySlider?.addEventListener("input", () => {
+  setActiveMapLayerOpacity(Number(elements.mapOpacitySlider?.value) / 100, { persist: true });
+});
+
+elements.mapOverlaySelect?.addEventListener("change", () => {
+  setActiveMapOverlayLayer(elements.mapOverlaySelect?.value || null, { persist: true });
+});
+
 elements.setDefaultLocationButton?.addEventListener("click", saveCurrentAsPreferredLocation);
 elements.resetDefaultLocationButton?.addEventListener("click", clearPreferredLocationSetting);
 
@@ -751,7 +767,7 @@ elements.importSettingsButton?.addEventListener("click", () => {
 
 elements.importSettingsFile?.addEventListener("change", (event) => {
   const [file] = (event.target as HTMLInputElement).files || [];
-  importSettingsPreset(file, elements.eventLog, getPreferredLocation, saveAppSettings, savePreferredLocation, removeCookieValue, saveForecastHistory, saveWatchlist, setActiveHeatmapLayer, setActiveMapHourOffset, updateSettingsUI, elements as unknown as Record<string, HTMLElement | null>);
+  importSettingsPreset(file, elements.eventLog, getPreferredLocation, saveAppSettings, savePreferredLocation, removeCookieValue, saveForecastHistory, saveWatchlist, setActiveHeatmapLayer, setActiveMapHourOffset, updateSettingsUI, elements as unknown as Record<string, HTMLElement | null>, setActiveMapOverlayLayer, setActiveMapLayerOpacity);
 });
 
 elements.mapPlayButton?.addEventListener("click", toggleMapAnimation);
@@ -870,6 +886,8 @@ if (window.matchMedia("(max-width: 768px)").matches) {
 
 const initialSettings = getAppSettings();
 setActiveHeatmapLayer(initialSettings.mapLayer);
+setActiveMapOverlayLayer(initialSettings.mapOverlayLayer);
+setActiveMapLayerOpacity(initialSettings.mapLayerOpacity);
 setActiveMapHourOffset(initialSettings.mapHourOffset);
 setShowAlerts(initialSettings.showAlerts);
 setShowWildfires(initialSettings.showWildfires);

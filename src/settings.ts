@@ -64,6 +64,8 @@ export async function importSettingsPreset(
   setActiveMapHourOffset?: (offset: number, options?: { persist?: boolean }) => void,
   updateSettingsUI?: () => void,
   elements?: Record<string, HTMLElement | null>,
+  setActiveMapOverlayLayer?: (layer: string | null, options?: { persist?: boolean }) => void,
+  setActiveMapLayerOpacity?: (opacity: number, options?: { persist?: boolean }) => void,
 ): Promise<void> {
   if (!file) return;
   try {
@@ -74,6 +76,8 @@ export async function importSettingsPreset(
     const settingsPayload = payload.settings && typeof payload.settings === "object" ? payload.settings : {};
     const nextSettings = saveAppSettings?.({
       mapLayer: settingsPayload.mapLayer,
+      mapOverlayLayer: settingsPayload.mapOverlayLayer ?? null,
+      mapLayerOpacity: settingsPayload.mapLayerOpacity,
       mapHourOffset: settingsPayload.mapHourOffset,
     });
 
@@ -93,6 +97,8 @@ export async function importSettingsPreset(
 
     if (nextSettings) {
       setActiveHeatmapLayer?.(nextSettings.mapLayer);
+      setActiveMapOverlayLayer?.(nextSettings.mapOverlayLayer);
+      setActiveMapLayerOpacity?.(nextSettings.mapLayerOpacity);
       setActiveMapHourOffset?.(nextSettings.mapHourOffset);
     }
 

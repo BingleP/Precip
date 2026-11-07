@@ -265,6 +265,8 @@ export interface ChartState {
 
 export interface AppSettings {
   mapLayer: string;
+  mapOverlayLayer: string | null;
+  mapLayerOpacity: number;
   mapHourOffset: number;
   useImperial: boolean;
   showAlerts: boolean;

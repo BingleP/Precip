@@ -847,11 +847,118 @@ a {
   white-space: nowrap;
 }
 
+.map-tools-layers-more {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 2px;
+}
+
 .heatmap-gradient {
   width: 100%;
   height: 6px;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 44%, var(--accent-3) 72%, var(--danger) 100%);
+}
+
+.map-tools-layers-more[hidden] {
+  display: none;
+}
+
+.map-tools-layers-more .heatmap-button {
+  min-height: 36px;
+  min-width: 0;
+  padding: 5px 2px;
+  font-size: 9px;
+}
+
+.layers-more-toggle {
+  grid-column: 1 / -1;
+}
+
+.layers-more-toggle[aria-expanded="true"] {
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+.map-tools-opacity {
+  align-items: center;
+}
+
+.map-tools-range {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.map-tools-opacity-value {
+  min-width: 32px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  text-align: right;
+}
+
+.map-tools-row .map-tools-select {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  min-height: 24px;
+}
+
+.heatmap-legend small {
+  font-size: 9px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.heatmap-legend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.heatmap-legend-head strong {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.heatmap-legend-range {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.legend-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.legend-badge-observed {
+  background: rgba(34, 158, 92, 0.18);
+  color: #4ade80;
+}
+
+.legend-badge-forecast {
+  background: rgba(14, 165, 233, 0.16);
+  color: var(--accent);
+}
+
+.legend-attribution {
+  text-decoration: underline;
 }
 
 .timeline-control {

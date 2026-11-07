@@ -6,9 +6,9 @@
     <title>Precip Weather Operations</title>
     <link rel="icon" href="/assets/tab-DiPa0YlR.png?v=2" type="image/png" />
     <link rel="preconnect" href="https://tile.openstreetmap.org" />
-    <script type="module" crossorigin src="/assets/main-DtqPijdG.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/ui-BhzaWkil.js">
-    <link rel="stylesheet" crossorigin href="/assets/ui-B0AbwBzJ.css">
+    <script type="module" crossorigin src="/assets/main-DDW1Cd3F.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/ui-BZcg1M8L.js">
+    <link rel="stylesheet" crossorigin href="/assets/ui-CwoWUKPd.css">
   </head>
   <body>
     <div class="app-shell">
@@ -94,16 +94,32 @@
                 <div class="map-tools-layers">
                   <button class="heatmap-button active" type="button" data-layer="temperature">Temp</button>
                   <button class="heatmap-button" type="button" data-layer="feels">Feels</button>
-                  <button class="heatmap-button" type="button" data-layer="dewpoint">Dew</button>
-                  <button class="heatmap-button" type="button" data-layer="humidity">Humidity</button>
                   <button class="heatmap-button" type="button" data-layer="precipitation">Rain</button>
-                  <button class="heatmap-button" type="button" data-layer="precipProbability">Chance</button>
                   <button class="heatmap-button" type="button" data-layer="wind">Wind</button>
-                  <button class="heatmap-button" type="button" data-layer="gusts">Gusts</button>
-                  <button class="heatmap-button" type="button" data-layer="pressure">Pressure</button>
                   <button class="heatmap-button" type="button" data-layer="cloud">Cloud</button>
-                  <button class="heatmap-button" type="button" data-layer="visibility">Visibility</button>
-                  <button class="heatmap-button" type="button" data-layer="cape">CAPE</button>
+                  <button class="heatmap-button" type="button" data-layer="pressure">Pressure</button>
+                  <button class="heatmap-button layers-more-toggle" type="button" id="layers-more-toggle" aria-expanded="false" aria-controls="layers-more-row">More ▾</button>
+                  <div class="map-tools-layers-more" id="layers-more-row" hidden>
+                    <button class="heatmap-button" type="button" data-layer="dewpoint">Dew</button>
+                    <button class="heatmap-button" type="button" data-layer="humidity">Humidity</button>
+                    <button class="heatmap-button" type="button" data-layer="precipProbability">Chance</button>
+                    <button class="heatmap-button" type="button" data-layer="gusts">Gusts</button>
+                    <button class="heatmap-button" type="button" data-layer="visibility">Visibility</button>
+                    <button class="heatmap-button" type="button" data-layer="cape">CAPE</button>
+                  </div>
+                </div>
+              </div>
+              <div class="map-tools-section">
+                <span class="map-tools-section-label">Weather overlay</span>
+                <div class="map-tools-row">
+                  <select id="map-overlay-select" class="map-tools-select" disabled>
+                    <option value="">None yet — radar + satellite cloud arrive in Phase 2</option>
+                  </select>
+                </div>
+                <div class="map-tools-row map-tools-row-spaced map-tools-opacity">
+                  <label class="map-tools-label" for="map-opacity-slider">Layer opacity</label>
+                  <input id="map-opacity-slider" class="map-tools-range" type="range" min="10" max="100" step="1" value="52" />
+                  <span id="map-opacity-label" class="map-tools-opacity-value">52%</span>
                 </div>
               </div>
             </div>

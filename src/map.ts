@@ -5,6 +5,7 @@ import { normalizeValue, formatHeatmapValue, getHeatmapTitle } from "./weather";
 import { isInsideAlertPolygonSpatial, getWildfireAtPoint, getEarthquakes, showEarthquakes } from "./alerts";
 import { getEarthquakeAtPoint } from "./earthquakes";
 import { escapeHTML } from "./ui";
+import { getLayer, type MapLayer } from "./map-layers";
 
 const TILE_CACHE_MAX = 500;
 
@@ -244,7 +245,9 @@ export function drawHeatmapOverlay(
   mapState: MapState,
   center: { latitude: number; longitude: number },
   zoom: number,
+  alpha = 0.52,
 ): void {
+  const alphaByte = Math.round(Math.max(0.1, Math.min(1, alpha)) * 255);
   const centerKey = `${center.latitude.toFixed(2)},${center.longitude.toFixed(2)}`;
   const samplesKey = `${centerKey}:${zoom}:${width}:${height}:${layer}:${min.toFixed(1)}:${max.toFixed(1)}`;
   let samples: (HeatmapSample & { value: number; normalized: number; x: number; y: number })[];
@@ -331,7 +334,7 @@ export function drawHeatmapOverlay(
         data[offset] = color[0];
         data[offset + 1] = color[1];
         data[offset + 2] = color[2];
-        data[offset + 3] = 132;
+        data[offset + 3] = alphaByte;
       }
     }
   } else {
@@ -360,7 +363,7 @@ export function drawHeatmapOverlay(
         data[offset] = color[0];
         data[offset + 1] = color[1];
         data[offset + 2] = color[2];
-        data[offset + 3] = 132;
+        data[offset + 3] = alphaByte;
       }
     }
   }
@@ -610,6 +613,62 @@ export function renderMapReadout(
     <span>${escapeHTML(getHeatmapTitle(layer))}</span>
     <strong>${formatHeatmapValue(min, layer)} - ${formatHeatmapValue(max, layer)}</strong>
     <small>${coverage}</small>
+  `;
+}
+
+/**
+ * Draw a raster weather layer (radar, satellite cloud, forecast cloud/precip)
+ * between the basemap tiles and the scalar field.
+ *
+ * Phase 1 ships the seam only: no raster entries exist yet, so this is a
+ * no-op. Phases 2–4 implement tile (radar/satellite) and WMS (forecast)
+ * fetching here without touching the scalar or vector paths.
+ */
+export function drawRasterWeatherLayer(
+  _ctx: CanvasRenderingContext2D,
+  _layer: MapLayer,
+  _width: number,
+  _height: number,
+  _mapState: MapState,
+  _zoom: number,
+  _opacity: number,
+): void {
+  // Intentionally empty until the first raster layer (Phase 2: radar).
+}
+
+/**
+ * Render the weather-layer legend card: layer name, Observed/Forecast badge,
+ * gradient with min/max + unit, source, and attribution when a layer defines it.
+ */
+export function renderLayerLegend(
+  layerId: string,
+  min: number | null,
+  max: number | null,
+  el: HTMLElement | null,
+  options?: { validTimeLabel?: string; hasData?: boolean },
+): void {
+  if (!el) return;
+  const layer = getLayer(layerId);
+  if (!layer) {
+    renderHeatmapLegend(layerId, min ?? 0, max ?? 0, el);
+    return;
+  }
+
+  const badge = layer.timeMode === "observed" ? "Observed" : "Forecast";
+  const range = min != null && max != null && Number.isFinite(min) && Number.isFinite(max)
+    ? `<span>${formatHeatmapValue(min, layer.id)}</span><span>${formatHeatmapValue(max, layer.id)}</span>`
+    : `<span>--</span><span>--</span>`;
+  const timeLabel = options?.validTimeLabel ? `<small>${escapeHTML(options.validTimeLabel)}</small>` : "";
+  const source = `<small>${escapeHTML(layer.source)} · ${escapeHTML(layer.unit)}</small>`;
+  const attribution = layer.attribution ? `<small class="legend-attribution">${escapeHTML(layer.attribution)}</small>` : "";
+
+  el.innerHTML = `
+    <div class="heatmap-legend-head"><strong>${escapeHTML(layer.label)}</strong><span class="legend-badge legend-badge-${layer.timeMode}">${badge}</span></div>
+    <div class="heatmap-gradient ${layer.id}"></div>
+    <div class="heatmap-legend-range">${range}</div>
+    ${source}
+    ${timeLabel}
+    ${attribution}
   `;
 }
 

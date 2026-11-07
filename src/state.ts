@@ -8,6 +8,8 @@ export let latestHeatmap: HeatmapSample[] | null = null;
 export let latestHeatmapMeta: HeatmapResult["meta"] | null = null;
 export let latestAirQuality: AirQuality | null = null;
 export let activeHeatmapLayer = "temperature";
+export let activeMapOverlayLayer: string | null = null;
+export let activeMapLayerOpacity = 0.52;
 export let activeMapHourOffset = 0;
 
 export function setActiveLocation(v: Location | null): void { activeLocation = v; }
@@ -16,6 +18,8 @@ export function setLatestHeatmap(v: HeatmapSample[] | null): void { latestHeatma
 export function setLatestHeatmapMeta(v: HeatmapResult["meta"] | null): void { latestHeatmapMeta = v; }
 export function setLatestAirQuality(v: AirQuality | null): void { latestAirQuality = v; }
 export function setActiveHeatmapLayerState(v: string): void { activeHeatmapLayer = v; }
+export function setActiveMapOverlayLayerState(v: string | null): void { activeMapOverlayLayer = v; }
+export function setActiveMapLayerOpacityState(v: number): void { activeMapLayerOpacity = v; }
 export function setActiveMapHourOffsetState(v: number): void { activeMapHourOffset = v; }
 
 export const mapState: MapState = getMapState();
@@ -136,6 +140,11 @@ export interface Elements {
   alertsToggle: HTMLElement | null;
   wildfiresToggle: HTMLElement | null;
   earthquakeAgeSelect: HTMLSelectElement | null;
+  mapOverlaySelect: HTMLSelectElement | null;
+  mapOpacitySlider: HTMLInputElement | null;
+  mapOpacityLabel: HTMLElement | null;
+  layersMoreToggle: HTMLButtonElement | null;
+  layersMoreRow: HTMLElement | null;
 }
 
 export const elements: Elements = {
@@ -227,6 +236,11 @@ eventLog: document.querySelector("#event-log") as HTMLElement | null,
   alertsToggle: document.querySelector("#alerts-toggle") as HTMLElement | null,
   wildfiresToggle: document.querySelector("#wildfires-toggle") as HTMLElement | null,
   earthquakeAgeSelect: document.querySelector("#earthquake-age-select") as HTMLSelectElement | null,
+  mapOverlaySelect: document.querySelector("#map-overlay-select") as HTMLSelectElement | null,
+  mapOpacitySlider: document.querySelector("#map-opacity-slider") as HTMLInputElement | null,
+  mapOpacityLabel: document.querySelector("#map-opacity-label") as HTMLElement | null,
+  layersMoreToggle: document.querySelector("#layers-more-toggle") as HTMLButtonElement | null,
+  layersMoreRow: document.querySelector("#layers-more-row") as HTMLElement | null,
 };
 
 export const chartCanvas = document.querySelector("#weather-chart") as HTMLCanvasElement;

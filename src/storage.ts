@@ -1,6 +1,7 @@
 import type { Location, AppSettings, ForecastSnapshot } from "./types";
 import { SETTINGS_KEY, PREFERRED_LOCATION_KEY, WATCHLIST_KEY, HISTORY_KEY, MAX_HISTORY_ITEMS, DEFAULT_APP_SETTINGS } from "./config";
 import { withNormalizedCountryCode } from "./location";
+import { isLayerId, getLayer, DEFAULT_LAYER_ID } from "./map-layers";
 
 export function getCookieValue(name: string): string | null {
   const row = document.cookie
@@ -55,12 +56,17 @@ export function writeStorageJSON<T>(name: string, value: T): boolean {
 }
 
 export function normalizeMapLayer(value: string | undefined): string {
-  const validLayers = [
-    "temperature", "feels", "dewpoint", "humidity",
-    "precipitation", "precipProbability", "wind", "gusts",
-    "pressure", "cloud", "visibility", "cape",
-  ];
-  return value && validLayers.includes(value) ? value : DEFAULT_APP_SETTINGS.mapLayer;
+  return isLayerId(value) ? (value as string) : DEFAULT_LAYER_ID;
+}
+
+export function normalizeMapOverlayLayer(value: string | null | undefined): string | null {
+  const layer = getLayer(value);
+  return layer && layer.kind === "raster" ? layer.id : null;
+}
+
+export function normalizeMapLayerOpacity(value: number | undefined): number {
+  if (!Number.isFinite(value)) return DEFAULT_APP_SETTINGS.mapLayerOpacity;
+  return Math.max(0.1, Math.min(1, Math.round((value as number) * 100) / 100));
 }
 
 export function normalizeMapHourOffset(value: number): number {
@@ -72,6 +78,8 @@ export function getAppSettings(): AppSettings {
   const parsed = readCookieJSON<Partial<AppSettings>>(SETTINGS_KEY);
   return {
     mapLayer: normalizeMapLayer(parsed?.mapLayer),
+    mapOverlayLayer: normalizeMapOverlayLayer(parsed?.mapOverlayLayer),
+    mapLayerOpacity: normalizeMapLayerOpacity(parsed?.mapLayerOpacity),
     mapHourOffset: normalizeMapHourOffset(parsed?.mapHourOffset ?? DEFAULT_APP_SETTINGS.mapHourOffset),
     useImperial: parsed?.useImperial === true,
     showAlerts: parsed?.showAlerts !== false,
@@ -87,6 +95,8 @@ export function saveAppSettings(partial: Partial<AppSettings>): AppSettings {
     ...partial,
   };
   next.mapLayer = normalizeMapLayer(next.mapLayer) as AppSettings["mapLayer"];
+  next.mapOverlayLayer = normalizeMapOverlayLayer(next.mapOverlayLayer);
+  next.mapLayerOpacity = normalizeMapLayerOpacity(next.mapLayerOpacity);
   next.mapHourOffset = normalizeMapHourOffset(next.mapHourOffset);
   next.earthquakeMaxAgeHours = typeof next.earthquakeMaxAgeHours === "number" && next.earthquakeMaxAgeHours > 0
     ? next.earthquakeMaxAgeHours : null;

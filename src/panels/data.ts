@@ -1,9 +1,9 @@
 import type { Location, Forecast, WatchlistItem, AppSettings, HeatmapSample, WildfireFeature } from "../types";
-import { elements, activeLocation, latestForecast, mapState, heatmapCanvas, heatmapButtons, showAlerts, showWildfires } from "../state";
+import { elements, activeLocation, latestForecast, mapState, heatmapCanvas, heatmapButtons, showAlerts, showWildfires, activeMapOverlayLayer, activeMapLayerOpacity } from "../state";
 import {
   getWatchlist, saveWatchlist,
   getPreferredLocation, getAppSettings, savePreferredLocation, saveAppSettings,
-  removeCookieValue, formatSavedLocation,
+  removeCookieValue, formatSavedLocation, normalizeMapLayerOpacity, normalizeMapOverlayLayer,
 } from "../storage";
 import { fetchHeatmap } from "../heatmap";
 import {
@@ -12,11 +12,12 @@ import {
 } from "../weather";
 import { addLog, spinner, escapeHTML, showToast, prepareCanvas } from "../ui";
 import {
-  drawMapTiles, drawMapOverlayText, drawHeatmapOverlay,
+  drawMapTiles, drawMapOverlayText, drawHeatmapOverlay, drawRasterWeatherLayer,
   drawMapPlaces, queueMapRender,
-  renderMapReadout, renderHeatmapLegend, updateMapHourLabel,
+  renderMapReadout, renderLayerLegend, updateMapHourLabel,
   hideMapTooltip,
 } from "../map";
+import { getLayer } from "../map-layers";
 import { projectToMapScreenFast, latLonToWorld } from "../geo";
 import { drawStormTracks } from "../storm-tracks";
 import { drawEarthquakes } from "../earthquakes";
@@ -25,6 +26,7 @@ import {
   latestHeatmap, latestHeatmapMeta, activeHeatmapLayer, activeMapHourOffset,
   setLatestHeatmap, setLatestHeatmapMeta,
   setActiveHeatmapLayerState, setActiveMapHourOffsetState,
+  setActiveMapOverlayLayerState, setActiveMapLayerOpacityState,
   heatmapRefreshTimer, heatmapRefreshToken, heatmapRetryDelay,
   setHeatmapRefreshTimer, setHeatmapRefreshToken, setHeatmapRetryDelay,
   mapAnimationTimer, mapAnimationPlaying,
@@ -37,6 +39,10 @@ export function updateSettingsUI(): void {
   const settings = getAppSettings();
   if (elements.defaultLocationLabel) elements.defaultLocationLabel.textContent = formatSavedLocation(savedLocation);
   if (elements.settingsMapLayer) elements.settingsMapLayer.value = settings.mapLayer;
+  if (elements.mapOverlaySelect) elements.mapOverlaySelect.value = settings.mapOverlayLayer ?? "";
+  if (elements.mapOpacitySlider) elements.mapOpacitySlider.value = String(Math.round(settings.mapLayerOpacity * 100));
+  if (elements.mapOpacityLabel) elements.mapOpacityLabel.textContent = `${Math.round(settings.mapLayerOpacity * 100)}%`;
+  syncLayersMoreUI(settings.mapLayer);
   if (elements.settingsStartHour) elements.settingsStartHour.value = `${settings.mapHourOffset}`;
   const metricRadio = document.querySelector("#units-metric") as HTMLInputElement | null;
   const imperialRadio = document.querySelector("#units-imperial") as HTMLInputElement | null;
@@ -196,6 +202,16 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
     queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
   });
 
+  // Raster weather layers (radar, satellite cloud, forecast cloud/precip)
+  // sit between the basemap and the scalar field. No raster entries exist
+  // yet (Phase 1), so this is a no-op until Phase 2.
+  if (activeMapOverlayLayer) {
+    const overlay = getLayer(activeMapOverlayLayer);
+    if (overlay && overlay.kind === "raster") {
+      drawRasterWeatherLayer(ctx, overlay, width, height, mapState, zoomRound, activeMapLayerOpacity);
+    }
+  }
+
   if (!points?.length) {
     drawMapOverlayText(ctx, width, "Regional weather layer unavailable");
   } else {
@@ -207,9 +223,18 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
       const min = Math.min(...finiteValues);
       const max = Math.max(...finiteValues);
       if (!mapState.drag) {
-        drawHeatmapOverlay(ctx, points, values, layer || activeHeatmapLayer, min, max, width, height, mapState, mapState.center, zoomRound);
+        drawHeatmapOverlay(ctx, points, values, layer || activeHeatmapLayer, min, max, width, height, mapState, mapState.center, zoomRound, activeMapLayerOpacity);
         renderMapReadout(layer || activeHeatmapLayer, min, max, latestHeatmapMeta, elements.mapReadout);
-        renderHeatmapLegend(layer || activeHeatmapLayer, min, max, elements.heatmapLegend);
+        // The legend follows the active weather layer: an overlay raster when
+        // one is set (Phases 2–4), otherwise the primary scalar field.
+        const overlayLayer = activeMapOverlayLayer ? getLayer(activeMapOverlayLayer) : null;
+        if (overlayLayer && overlayLayer.kind === "raster") {
+          renderLayerLegend(overlayLayer.id, null, null, elements.heatmapLegend);
+        } else {
+          renderLayerLegend(layer || activeHeatmapLayer, min, max, elements.heatmapLegend, {
+            validTimeLabel: activeMapHourOffset ? `Forecast +${activeMapHourOffset}h` : "Current conditions",
+          });
+        }
         updateMapHourLabel(activeMapHourOffset, latestHeatmap, elements.mapHourLabel);
       }
     }
@@ -417,9 +442,34 @@ export function setActiveHeatmapLayer(layer: string, options: { persist?: boolea
   heatmapButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.layer === layer);
   });
+  syncLayersMoreUI(layer);
   if (elements.settingsMapLayer) elements.settingsMapLayer.value = layer;
   if (options.persist) saveAppSettings({ mapLayer: layer as AppSettings["mapLayer"] });
   if (latestHeatmap) renderHeatmap(latestHeatmap, activeHeatmapLayer);
+}
+
+export function setActiveMapOverlayLayer(layer: string | null, options: { persist?: boolean } = {}): void {
+  const normalized = normalizeMapOverlayLayer(layer);
+  setActiveMapOverlayLayerState(normalized);
+  if (elements.mapOverlaySelect) elements.mapOverlaySelect.value = normalized ?? "";
+  if (options.persist) saveAppSettings({ mapOverlayLayer: normalized });
+  if (latestHeatmap) renderHeatmap(latestHeatmap, activeHeatmapLayer);
+}
+
+export function setActiveMapLayerOpacity(opacity: number, options: { persist?: boolean } = {}): void {
+  const normalized = normalizeMapLayerOpacity(opacity);
+  setActiveMapLayerOpacityState(normalized);
+  if (elements.mapOpacitySlider) elements.mapOpacitySlider.value = String(Math.round(normalized * 100));
+  if (elements.mapOpacityLabel) elements.mapOpacityLabel.textContent = `${Math.round(normalized * 100)}%`;
+  if (options.persist) saveAppSettings({ mapLayerOpacity: normalized });
+  if (latestHeatmap) renderHeatmap(latestHeatmap, activeHeatmapLayer);
+}
+
+function syncLayersMoreUI(layer: string): void {
+  const active = getLayer(layer);
+  const needsMoreOpen = !!active && !active.primary;
+  if (elements.layersMoreRow) elements.layersMoreRow.hidden = !needsMoreOpen;
+  if (elements.layersMoreToggle) elements.layersMoreToggle.setAttribute("aria-expanded", String(needsMoreOpen));
 }
 
 export function setActiveMapHourOffset(offset: number, options: { persist?: boolean } = {}): void {

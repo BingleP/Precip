@@ -369,13 +369,22 @@ Implementation notes:
   challenge scripts are blocked by `script-src 'self'` — expected, not a bug.)
 - Commits: `782c074`, `7e3eb53`, `1e36ea2`. Container rebuilt and recreated.
 
-### Phase 1 – Layer foundation
+### Phase 1 – Layer foundation ✅ implemented 2026-11-06 (locally verified)
 
-- Add `MapLayer` registry, layer grouping, settings persistence.
-- Refactor `renderHeatmap` into a `MapRenderer` that draws ordered layers.
-- Add raster cache, cross-fade, DPR-aware offscreen compositing.
-- New UI shell (grouped picker, opacity, legend card) with existing scalar
-  layers still rendered by the old code path.
+- `src/map-layers.ts`: typed registry (`LayerKind`, `LayerGroup`,
+  `LayerTimeMode`, `LayerRenderer`, `MapLayer`) with the 12 scalar layers,
+  primary/more split, and helpers. Raster entries arrive in Phases 2–4.
+- Settings: `mapLayer`, `mapOverlayLayer`, `mapLayerOpacity` persisted and
+  normalized (registry-based); export/import presets updated.
+- Renderer: `drawHeatmapOverlay` takes an alpha; raster drawing seam added
+  (`drawRasterWeatherLayer`, no-op until Phase 2) between tiles and the scalar
+  field; legend card rebuilt (`renderLayerLegend`) with title, Observed/
+  Forecast badge, gradient range, unit, source, valid time, attribution slot.
+- UI shell in the map-tools popover: 6 primary chips + collapsible "More"
+  (auto-expands when a non-primary layer is active), weather-overlay select
+  (disabled placeholder until Phase 2), opacity slider with % readout.
+- Verified in the dev browser: layer switch + "More" expansion + opacity
+  slider all work and persist; legend card renders; basemap unchanged.
 - Acceptance: no visual regression; layer switch and persistence work.
 
 ### Phase 2 – Radar (headline feature)
