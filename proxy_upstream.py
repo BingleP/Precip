@@ -43,6 +43,9 @@ ALLOWED_ENDPOINTS = {
     "/api/nhc-cone",
     "/api/earthquakes-us",
     "/api/earthquakes-ca",
+    "/api/radar-index",
+    "/api/radar-tile",
+    "/api/radar-wms",
     "/health",
 }
 
@@ -73,7 +76,86 @@ def fetch_json(url):
         return json.load(response)
 
 
+def _require_int(query, name, minimum, maximum):
+    value = require(query, name).strip()
+    try:
+        number = int(value)
+    except ValueError:
+        raise ValueError(f"{name} must be an integer")
+    if not minimum <= number <= maximum:
+        raise ValueError(f"{name} out of range")
+    return number
+
+
+def _valid_radar_path(path):
+    """RainViewer radar paths look like /v2/radar/<hex>. Reject anything else."""
+    if not path.startswith("/v2/radar/"):
+        return False
+    suffix = path[len("/v2/radar/"):]
+    return bool(suffix) and all(c in "0123456789abcdefABCDEF" for c in suffix)
+
+
 def build_upstream(path, query):
+    if path == "/api/radar-index":
+        return "https://api.rainviewer.com/public/weather-maps.json", "application/json"
+
+    if path == "/api/radar-tile":
+        source = require(query, "source").strip().lower()
+        zoom = _require_int(query, "z", 0, 12)
+        tile_count = 2 ** zoom
+        x = _require_int(query, "x", 0, tile_count - 1)
+        y = _require_int(query, "y", 0, tile_count - 1)
+        if source == "rainviewer":
+            radar_path = require(query, "path").strip()
+            if not _valid_radar_path(radar_path):
+                raise ValueError("invalid rainviewer path")
+            size = _require_int(query, "size", 256, 512)
+            if size not in (256, 512):
+                raise ValueError("size must be 256 or 512")
+            return (
+                f"https://tilecache.rainviewer.com{radar_path}/{size}/{zoom}/{x}/{y}/1/1_1.png",
+                "image/png",
+            )
+        if source == "iem":
+            return (
+                f"https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{zoom}/{x}/{y}.png",
+                "image/png",
+            )
+        raise ValueError("unknown radar tile source")
+
+    if path == "/api/radar-wms":
+        bbox_raw = require(query, "bbox").strip()
+        parts = bbox_raw.split(",")
+        if len(parts) != 4:
+            raise ValueError("bbox must have four numbers")
+        try:
+            bbox = [float(p) for p in parts]
+        except ValueError:
+            raise ValueError("bbox must have four numbers")
+        limit = 20037508.36  # EPSG:3857 world half-extent in metres
+        west, south, east, north = (
+            max(-limit, min(limit, v)) for v in bbox
+        )
+        if not (west < east and south < north):
+            raise ValueError("bbox is empty")
+        width = _require_int(query, "width", 64, 2048)
+        height = _require_int(query, "height", 64, 2048)
+        params = {
+            "service": "WMS",
+            "version": "1.3.0",
+            "request": "GetMap",
+            "layers": "RADAR_1KM_RRAI",
+            "styles": "",
+            "crs": "EPSG:3857",
+            "bbox": f"{west},{south},{east},{north}",
+            "width": str(width),
+            "height": str(height),
+            "format": "image/png",
+            "transparent": "true",
+        }
+        url = "https://geo.weather.gc.ca/geomet?" + urllib.parse.urlencode(params)
+        return url, "image/png"
+
     if path == "/api/forecast":
         scope = query.get("scope", ["forecast"])[0]
         digits = 2

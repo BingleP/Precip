@@ -961,6 +961,10 @@ a {
   text-decoration: underline;
 }
 
+.radar-gradient {
+  background: linear-gradient(90deg, rgba(85, 170, 255, 0.85) 0%, #2fbf71 30%, #f7e353 55%, #ff9a3d 75%, #ff3d3d 88%, #d6336c 100%);
+}
+
 .timeline-control {
   position: absolute;
   right: 14px;

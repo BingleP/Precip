@@ -6,6 +6,7 @@ import { isInsideAlertPolygonSpatial, getWildfireAtPoint, getEarthquakes, showEa
 import { getEarthquakeAtPoint } from "./earthquakes";
 import { escapeHTML } from "./ui";
 import { getLayer, type MapLayer } from "./map-layers";
+import { drawRadarLayer, formatRadarRelativeTime, type RadarStatus } from "./radar";
 
 const TILE_CACHE_MAX = 500;
 
@@ -165,6 +166,7 @@ export function getMapTile(
 
   const image = new Image();
   image.decoding = "async";
+  image.crossOrigin = "anonymous";
   image.src = `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`;
   image.addEventListener(
     "load",
@@ -619,21 +621,54 @@ export function renderMapReadout(
 /**
  * Draw a raster weather layer (radar, satellite cloud, forecast cloud/precip)
  * between the basemap tiles and the scalar field.
- *
- * Phase 1 ships the seam only: no raster entries exist yet, so this is a
- * no-op. Phases 2–4 implement tile (radar/satellite) and WMS (forecast)
- * fetching here without touching the scalar or vector paths.
  */
 export function drawRasterWeatherLayer(
-  _ctx: CanvasRenderingContext2D,
+  ctx: CanvasRenderingContext2D,
   _layer: MapLayer,
-  _width: number,
-  _height: number,
-  _mapState: MapState,
-  _zoom: number,
-  _opacity: number,
+  width: number,
+  height: number,
+  mapState: MapState,
+  zoom: number,
+  opacity: number,
 ): void {
-  // Intentionally empty until the first raster layer (Phase 2: radar).
+  drawRadarLayer(ctx, width, height, mapState, zoom, opacity);
+}
+
+/** dBZ legend for the radar layer (RainViewer "continental" colour ramp). */
+export function renderRadarLegend(
+  status: Pick<RadarStatus, "providerLabel" | "attribution" | "attributionUrl" | "frameTime" | "frames"> | null,
+  el: HTMLElement | null,
+): void {
+  if (!el) return;
+  if (!status) {
+    el.innerHTML = `<div class="heatmap-legend-head"><strong>Weather radar</strong><span class="legend-badge legend-badge-observed">Observed</span></div><small>Loading radar…</small>`;
+    return;
+  }
+  const ago = formatRadarRelativeTime(status.frameTime);
+  el.innerHTML = `
+    <div class="heatmap-legend-head"><strong>Weather radar</strong><span class="legend-badge legend-badge-observed">Observed</span></div>
+    <div class="heatmap-gradient radar-gradient"></div>
+    <div class="heatmap-legend-range"><span>Light</span><span>Heavy</span><span>Intense</span></div>
+    <small>${escapeHTML(status.providerLabel)} · dBZ</small>
+    <small>${ago} · past 2 h</small>
+    <small><a class="legend-attribution" href="${escapeHTML(status.attributionUrl)}" target="_blank" rel="noreferrer">${escapeHTML(status.attribution)}</a></small>
+  `;
+}
+
+export function renderRadarReadout(
+  status: Pick<RadarStatus, "providerLabel" | "frameTime" | "frames"> | null,
+  el: HTMLElement | null,
+): void {
+  if (!el) return;
+  if (!status) {
+    el.innerHTML = `<span>Weather radar</span><strong>Loading…</strong><small>Fetching latest frames</small>`;
+    return;
+  }
+  el.innerHTML = `
+    <span>Weather radar</span>
+    <strong>Observed · ${escapeHTML(status.providerLabel)}</strong>
+    <small>${formatRadarRelativeTime(status.frameTime)} · ${status.frames.length} frames</small>
+  `;
 }
 
 /**

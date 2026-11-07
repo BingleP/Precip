@@ -35,7 +35,7 @@ import {
   scheduleHeatmapRefresh,
   renderHeatmap,
   setActiveHeatmapLayer, setActiveMapHourOffset, setActiveMapOverlayLayer, setActiveMapLayerOpacity,
-  toggleMapAnimation,
+  setTimelineValue, toggleMapAnimation,
 } from "./panels/data";
 import {
   loadWeather, selectMapLocation,
@@ -270,7 +270,7 @@ elements.refreshButton?.addEventListener("click", () => {
 elements.pinLocationButton?.addEventListener("click", pinCurrentLocation);
 
 elements.mapHourSlider?.addEventListener("input", () => {
-  setActiveMapHourOffset(Number(elements.mapHourSlider?.value), { persist: true });
+  setTimelineValue(Number(elements.mapHourSlider?.value));
 });
 
 window.addEventListener("resize", () => {

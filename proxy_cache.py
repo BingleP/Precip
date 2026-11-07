@@ -22,6 +22,9 @@ CACHE_TTLS = {
     "/api/nhc-cone": 900,
     "/api/earthquakes-us": 300,
     "/api/earthquakes-ca": 300,
+    "/api/radar-index": 300,
+    "/api/radar-tile": 120,
+    "/api/radar-wms": 120,
 }
 
 MAX_CACHE_ENTRIES = 500

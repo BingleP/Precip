@@ -7,10 +7,6 @@ import { getAlertRegion } from "./location";
 const API_BASE_URL = getApiBaseUrl();
 
 export function getApiBaseUrl(): string {
-  const host = window.location.hostname;
-  if (host === "127.0.0.1" || host === "localhost") {
-    return "http://127.0.0.1:7428";
-  }
   return window.location.origin;
 }
 

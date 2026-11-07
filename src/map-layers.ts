@@ -63,6 +63,21 @@ function scalar(
 }
 
 export const MAP_LAYERS: MapLayer[] = [
+  {
+    id: "radar",
+    kind: "raster",
+    group: "observations",
+    label: "Weather radar",
+    shortLabel: "Radar",
+    title: "Weather radar",
+    unit: "dBZ",
+    source: "RainViewer",
+    timeMode: "observed",
+    renderer: "tiles",
+    defaultOpacity: 0.85,
+    primary: true,
+    attribution: "Weather data by RainViewer",
+  },
   scalar("temperature", "Temperature", "Temp", "Current temperature", "°C", true),
   scalar("feels", "Feels like", "Feels", "Apparent temperature", "°C", true),
   scalar("precipitation", "Rain intensity", "Rain", "Current rain intensity", "mm/h", true),

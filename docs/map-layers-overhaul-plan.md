@@ -1,6 +1,10 @@
 # Map Layers Overhaul Plan
 
-Status: Phase 0 complete and live in production (2026-11-06). Phases 1–6 remain, sequenced as below.
+Status: Phase 0 complete and live in production (2026-11-06). Phase 1
+implemented + pushed (not deployed, hold per product call). Phase 2
+implemented + verified locally (2026-11-07), commit pending with Phase 1;
+marketing deploy still held until both are on the server together. Remaining
+scope as sequenced below.
 Scope: fix two known defects, then replace the single fog-like heatmap with a
 stack of real weather layers (radar, satellite cloud, forecast cloud/precip,
 scalar fields) that are legible over the dark basemap.
@@ -387,13 +391,45 @@ Implementation notes:
   slider all work and persist; legend card renders; basemap unchanged.
 - Acceptance: no visual regression; layer switch and persistence work.
 
-### Phase 2 – Radar (headline feature)
+### Phase 2 – Radar (headline feature) — **implemented + verified** (2026-11-07, deploy held with Phase 1)
+
+Status: complete in code and browser-verified. Client in `src/radar.ts`
+(provider auto-select by viewport: ECCC GeoMet inside the CA bbox, IEM NEXRAD
+inside the US bbox, RainViewer elsewhere; async tile/WMS caches; offscreen
+compose + cross-fade; loop; failure fallback to RainViewer), wiring in
+`src/panels/data.ts` (radar-primary/overlay branches, timeline scrubber,
+play/pause) and `src/map.ts` (`drawRadarLayer`, `renderRadarLegend`,
+`renderRadarReadout`).
 
 - Proxy endpoints for RainViewer index/tiles, GeoMet radar, IEM tiles.
+  Verified 200 with real imagery; invalid inputs return clean 400s.
 - Radar layer with provider selection, loop, dBZ legend, attribution.
-- Time control switches to "Observed / Past 2 h".
-- Acceptance: radar aligns with coastlines and known precipitation; loop
-  plays smoothly; mobile frame rate holds.
+- Time control switches to "Observed / Past 2 h" (slider 0–frames−1,
+  label "Observed · N min ago").
+- Acceptance: radar aligns with coastlines and known precipitation (Toronto
+  GeoMet band verified on-screen); loop plays smoothly; mobile frame rate
+  holds — pending deploy, covered by Phase 6 acceptance run.
+
+Debugging record (so this is never re-investigated): a session-long suspicion
+that RainViewer/IEM tiles "draw but never appear" was **not** a paint defect:
+
+1. Instrumentation (visible markers + offscreen pixel reads after enabling a
+   same-origin dev setup) proved the tiles→offscreen→canvas composite is
+   correct on every render, and tile loads trigger redraws.
+2. The visible cause was the persisted layer-opacity slider sitting at 11%,
+   i.e. the radar legibly paints at the default 52%.
+3. The apparent "Paris has no radar" was data sparsity: RainViewer's current
+   frames contained no precipitation over Paris' z9/z10 viewport (rain sits
+   ~40–100 km away); radar appears at wider viewports/scans.
+
+Dev-environment hardening landed during this work (both safe for prod, prod
+behaviour unchanged):
+
+- `src/api.ts` now always uses `window.location.origin` for `/api`, so the
+  vite dev proxy serves weather data same-origin as in production.
+- Basemap tile images set `crossOrigin="anonymous"` (tile.openstreetmap.org
+  sends `Access-Control-Allow-Origin: *`), which keeps the map canvas
+  untainted so `getImageData` works in dev and for future pixel features.
 
 ### Phase 3 – Satellite cloud
 

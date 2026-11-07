@@ -6,9 +6,9 @@
     <title>Precip Weather Operations</title>
     <link rel="icon" href="/assets/tab-DiPa0YlR.png?v=2" type="image/png" />
     <link rel="preconnect" href="https://tile.openstreetmap.org" />
-    <script type="module" crossorigin src="/assets/main-DDW1Cd3F.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/ui-BZcg1M8L.js">
-    <link rel="stylesheet" crossorigin href="/assets/ui-CwoWUKPd.css">
+    <script type="module" crossorigin src="/assets/main-BQMFZ5W0.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/ui--_xPeIfJ.js">
+    <link rel="stylesheet" crossorigin href="/assets/ui-DbDljMcF.css">
   </head>
   <body>
     <div class="app-shell">
@@ -92,6 +92,7 @@
               <div class="map-tools-section">
                 <span class="map-tools-section-label">Layers</span>
                 <div class="map-tools-layers">
+                  <button class="heatmap-button" type="button" data-layer="radar" aria-pressed="false">Radar</button>
                   <button class="heatmap-button active" type="button" data-layer="temperature">Temp</button>
                   <button class="heatmap-button" type="button" data-layer="feels">Feels</button>
                   <button class="heatmap-button" type="button" data-layer="precipitation">Rain</button>
@@ -112,8 +113,9 @@
               <div class="map-tools-section">
                 <span class="map-tools-section-label">Weather overlay</span>
                 <div class="map-tools-row">
-                  <select id="map-overlay-select" class="map-tools-select" disabled>
-                    <option value="">None yet — radar + satellite cloud arrive in Phase 2</option>
+                  <select id="map-overlay-select" class="map-tools-select">
+                    <option value="">None</option>
+                    <option value="radar">Radar</option>
                   </select>
                 </div>
                 <div class="map-tools-row map-tools-row-spaced map-tools-opacity">

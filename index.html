@@ -90,6 +90,7 @@
               <div class="map-tools-section">
                 <span class="map-tools-section-label">Layers</span>
                 <div class="map-tools-layers">
+                  <button class="heatmap-button" type="button" data-layer="radar" aria-pressed="false">Radar</button>
                   <button class="heatmap-button active" type="button" data-layer="temperature">Temp</button>
                   <button class="heatmap-button" type="button" data-layer="feels">Feels</button>
                   <button class="heatmap-button" type="button" data-layer="precipitation">Rain</button>
@@ -110,8 +111,9 @@
               <div class="map-tools-section">
                 <span class="map-tools-section-label">Weather overlay</span>
                 <div class="map-tools-row">
-                  <select id="map-overlay-select" class="map-tools-select" disabled>
-                    <option value="">None yet — radar + satellite cloud arrive in Phase 2</option>
+                  <select id="map-overlay-select" class="map-tools-select">
+                    <option value="">None</option>
+                    <option value="radar">Radar</option>
                   </select>
                 </div>
                 <div class="map-tools-row map-tools-row-spaced map-tools-opacity">

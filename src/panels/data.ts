@@ -14,10 +14,66 @@ import { addLog, spinner, escapeHTML, showToast, prepareCanvas } from "../ui";
 import {
   drawMapTiles, drawMapOverlayText, drawHeatmapOverlay, drawRasterWeatherLayer,
   drawMapPlaces, queueMapRender,
-  renderMapReadout, renderLayerLegend, updateMapHourLabel,
+  renderMapReadout, renderLayerLegend, renderRadarLegend, renderRadarReadout, updateMapHourLabel,
   hideMapTooltip,
 } from "../map";
 import { getLayer } from "../map-layers";
+import {
+  registerRadarRedrawHandler, setRadarFrame, setRadarLoop, isRadarLoopPlaying,
+  getRadarFrames, getRadarFrameIndex, getRadarStatus, formatRadarRelativeTime,
+} from "../radar";
+
+registerRadarRedrawHandler(() => {
+  queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
+});
+
+/** Is any raster (observed) layer currently active? */
+export function isRadarActive(): boolean {
+  const primary = getLayer(activeHeatmapLayer);
+  const overlay = activeMapOverlayLayer ? getLayer(activeMapOverlayLayer) : null;
+  return (primary?.kind === "raster") || (overlay?.kind === "raster");
+}
+
+/**
+ * Adapt the timeline control to the active layer type: radar frames when a
+ * raster layer is active, forecast hours otherwise. Called on every render
+ * and on layer switches.
+ */
+export function syncTimelineUI(): void {
+  if (!elements.mapHourSlider || !elements.mapHourLabel) return;
+  if (isRadarActive()) {
+    const frames = getRadarFrames();
+    elements.mapHourSlider.max = String(Math.max(0, frames.length - 1));
+    elements.mapHourSlider.value = String(getRadarFrameIndex());
+    const status = getRadarStatus(mapState.center);
+    elements.mapHourLabel.textContent = status
+      ? `Observed · ${formatRadarRelativeTime(status.frameTime)}`
+      : "Observed";
+    syncPlayButton();
+    return;
+  }
+  elements.mapHourSlider.max = "23";
+  elements.mapHourSlider.value = String(activeMapHourOffset);
+  updateMapHourLabel(activeMapHourOffset, latestHeatmap, elements.mapHourLabel);
+  syncPlayButton();
+}
+
+function syncPlayButton(): void {
+  if (!elements.mapPlayButton) return;
+  const playing = isRadarActive() ? isRadarLoopPlaying() : mapAnimationPlaying;
+  elements.mapPlayButton.classList.toggle("playing", playing);
+  elements.mapPlayButton.innerHTML = playing ? "&#10074;&#10074;" : "&#9654;";
+}
+
+/** Route timeline slider input to radar frames or forecast hours. */
+export function setTimelineValue(value: number): void {
+  if (isRadarActive()) {
+    setRadarFrame(value);
+    syncTimelineUI();
+    return;
+  }
+  setActiveMapHourOffset(value, { persist: true });
+}
 import { projectToMapScreenFast, latLonToWorld } from "../geo";
 import { drawStormTracks } from "../storm-tracks";
 import { drawEarthquakes } from "../earthquakes";
@@ -202,18 +258,27 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
     queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
   });
 
-  // Raster weather layers (radar, satellite cloud, forecast cloud/precip)
-  // sit between the basemap and the scalar field. No raster entries exist
-  // yet (Phase 1), so this is a no-op until Phase 2.
-  if (activeMapOverlayLayer) {
-    const overlay = getLayer(activeMapOverlayLayer);
-    if (overlay && overlay.kind === "raster") {
-      drawRasterWeatherLayer(ctx, overlay, width, height, mapState, zoomRound, activeMapLayerOpacity);
-    }
+  const primaryLayer = getLayer(layer || activeHeatmapLayer);
+  const overlayLayer = activeMapOverlayLayer ? getLayer(activeMapOverlayLayer) : null;
+  const radarPrimary = !!primaryLayer && primaryLayer.kind === "raster";
+  const radarOverlay = overlayLayer?.kind === "raster";
+
+  // Raster weather layers sit between the basemap and the scalar field.
+  if (radarOverlay && overlayLayer) {
+    drawRasterWeatherLayer(ctx, overlayLayer, width, height, mapState, zoomRound, activeMapLayerOpacity);
   }
 
-  if (!points?.length) {
+  if (radarPrimary && primaryLayer) {
+    drawRasterWeatherLayer(ctx, primaryLayer, width, height, mapState, zoomRound, activeMapLayerOpacity);
+    if (!mapState.drag) {
+      const status = getRadarStatus(mapState.center);
+      renderRadarLegend(status, elements.heatmapLegend);
+      renderRadarReadout(status, elements.mapReadout);
+      syncTimelineUI();
+    }
+  } else if (!points?.length) {
     drawMapOverlayText(ctx, width, "Regional weather layer unavailable");
+    syncTimelineUI();
   } else {
     const values = points.map((point) => getHeatmapValue(point, layer || activeHeatmapLayer, activeMapHourOffset));
     const finiteValues = values.filter((v): v is number => Number.isFinite(v));
@@ -226,16 +291,15 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
         drawHeatmapOverlay(ctx, points, values, layer || activeHeatmapLayer, min, max, width, height, mapState, mapState.center, zoomRound, activeMapLayerOpacity);
         renderMapReadout(layer || activeHeatmapLayer, min, max, latestHeatmapMeta, elements.mapReadout);
         // The legend follows the active weather layer: an overlay raster when
-        // one is set (Phases 2–4), otherwise the primary scalar field.
-        const overlayLayer = activeMapOverlayLayer ? getLayer(activeMapOverlayLayer) : null;
-        if (overlayLayer && overlayLayer.kind === "raster") {
-          renderLayerLegend(overlayLayer.id, null, null, elements.heatmapLegend);
+        // one is set, otherwise the primary scalar field.
+        if (radarOverlay && overlayLayer) {
+          renderRadarLegend(getRadarStatus(mapState.center), elements.heatmapLegend);
         } else {
           renderLayerLegend(layer || activeHeatmapLayer, min, max, elements.heatmapLegend, {
             validTimeLabel: activeMapHourOffset ? `Forecast +${activeMapHourOffset}h` : "Current conditions",
           });
         }
-        updateMapHourLabel(activeMapHourOffset, latestHeatmap, elements.mapHourLabel);
+        syncTimelineUI();
       }
     }
   }
@@ -445,6 +509,8 @@ export function setActiveHeatmapLayer(layer: string, options: { persist?: boolea
   syncLayersMoreUI(layer);
   if (elements.settingsMapLayer) elements.settingsMapLayer.value = layer;
   if (options.persist) saveAppSettings({ mapLayer: layer as AppSettings["mapLayer"] });
+  if (!isRadarActive()) setRadarLoop(false);
+  syncTimelineUI();
   if (latestHeatmap) renderHeatmap(latestHeatmap, activeHeatmapLayer);
 }
 
@@ -453,6 +519,8 @@ export function setActiveMapOverlayLayer(layer: string | null, options: { persis
   setActiveMapOverlayLayerState(normalized);
   if (elements.mapOverlaySelect) elements.mapOverlaySelect.value = normalized ?? "";
   if (options.persist) saveAppSettings({ mapOverlayLayer: normalized });
+  if (!isRadarActive()) setRadarLoop(false);
+  syncTimelineUI();
   if (latestHeatmap) renderHeatmap(latestHeatmap, activeHeatmapLayer);
 }
 
@@ -482,6 +550,12 @@ export function setActiveMapHourOffset(offset: number, options: { persist?: bool
 }
 
 export function toggleMapAnimation(): void {
+  if (isRadarActive()) {
+    setRadarLoop(!isRadarLoopPlaying());
+    syncPlayButton();
+    return;
+  }
+
   if (mapAnimationPlaying) {
     setMapAnimationPlaying(false);
     if (mapAnimationTimer) clearInterval(mapAnimationTimer);
