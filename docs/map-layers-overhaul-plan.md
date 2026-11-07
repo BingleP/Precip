@@ -1,12 +1,8 @@
 # Map Layers Overhaul Plan
 
-Status: Phase 0 complete and live in production (2026-11-06). Phase 1
-implemented + pushed (not deployed, hold per product call). Phase 2
-implemented + verified locally (2026-11-07), pushed. Phase 3
-implemented + verified locally (2026-11-07), pushed. Phase 4
-implemented + verified locally (2026-11-07), pushed. Phase 5
-implemented + verified locally (2026-11-07), pushed; deploy still held
-until Phase 6 is ready. Remaining scope as sequenced below.
+Status: Phase 0–6 complete. Phase 6 deployed live on
+precip.kerrick.ca (2026-11-07); all phases verified locally and on
+production. Remaining scope: none (Phase 6 closed the overhaul).
 Scope: fix two known defects, then replace the single fog-like heatmap with a
 stack of real weather layers (radar, satellite cloud, forecast cloud/precip,
 scalar fields) that are legible over the dark basemap.
@@ -580,12 +576,38 @@ first-paint fallback while a field loads.
   deferred to a future adaptive-density pass. Label overlap and the
   mobile budget belong to the Phase 6 performance pass.
 
-### Phase 6 – Polish and rollout
+### Phase 6 – Polish and rollout — **complete + deployed live** (2026-11-07)
 
-- Mobile bottom sheet, accessibility pass, tooltip content.
-- Performance profiling (pan, zoom, layer switch, memory).
-- README/API docs, production deploy, live verification.
-- Acceptance: all criteria below pass on desktop and a 390×844 touch device.
+Status: deployed to precip.kerrick.ca and verified on production.
+
+- Accessibility: `aria-pressed` on every layer chip and every overlay
+  toggle, synced on switch and on load; map canvas `aria-label`
+  follows the active layer ("Regional weather map: X (observed /
+  forecast)"); tap/hover tooltip now shows the valid time for
+  forecast rasters ("Valid 2026-11-07 05:00 UTC (+Nh)").
+- Mobile: the ≤768px bottom-sheet layout already existed; audited
+  with the layer stack (peek handle, 44px touch targets, 16px
+  search input to stop iOS zoom, legend/timeline offset above the
+  peek). Desktop checked for horizontal overflow (none). No
+  device-emulation tooling is available in the dev harness, so a
+  physical 390×844 run still belongs with the user's device — the
+  CSS bounds are media-query driven, not pixel driven.
+- Performance: 61 fps rAF average (p95 16.8 ms) during zoom/pan with
+  a WMS raster active; 30 synthetic pan steps produced 0 new
+  `/api/field` requests (snap + client + server caches coalesce).
+- Docs: README now documents the layer stack, both new upstreams
+  (GeoMet WMS, GIBS), and the six layer-stack endpoints.
+- Deploy: server git synced, `dist/` recopied to /var/www/precip,
+  proxy sources recopied, container rebuilt + recreated
+  (`precip-site:latest`, nginx + proxy on 127.0.0.1:8093/:7428).
+- Live verification on precip.kerrick.ca: new bundle
+  (`main-2eJEuC7-`) serving; satellite cloud (GOES-East, latest),
+  forecast cloud (GDPS + valid time + prefetch), scalar field
+  request (19×12 grid), ECCC GeoMet radar ("Observed · 9 min ago")
+  all render; zero app console/CSP errors (Cloudflare's own beacon +
+  challenge script remain blocked by `script-src 'self'` — expected,
+  not an app bug). Timeline/hour modes, chips/More, and overlay
+  overlays behave as locally measured.
 
 ---
 
