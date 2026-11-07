@@ -46,6 +46,7 @@ ALLOWED_ENDPOINTS = {
     "/api/radar-index",
     "/api/radar-tile",
     "/api/radar-wms",
+    "/api/forecast-wms",
     "/api/satellite-tile",
     "/health",
 }
@@ -109,6 +110,18 @@ def _valid_gibs_date(text):
             return False
         from datetime import date as _date
         _date(int(year), int(month), int(day))
+    except Exception:
+        return False
+    return True
+
+
+def _valid_gibs_time(text):
+    """GeoMet WMS valid times are YYYY-MM-DDTHH:MM:SSZ (UTC), on the hour."""
+    try:
+        if len(text) != 20 or text[10] != "T" or text[19] != "Z":
+            return False
+        from datetime import datetime as _datetime
+        _datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ")
     except Exception:
         return False
     return True
@@ -201,6 +214,56 @@ def build_upstream(path, query):
             "height": str(height),
             "format": "image/png",
             "transparent": "true",
+        }
+        url = "https://geo.weather.gc.ca/geomet?" + urllib.parse.urlencode(params)
+        return url, "image/png"
+
+    if path == "/api/forecast-wms":
+        # ECCC GeoMet forecast rasters (Phase 4). Product ids are whitelisted
+        # to the GDPS 15km (global) cloud/precip layers. (CAPS 3km was
+        # evaluated and dropped — it returned empty images; see the plan.)
+        _FORECAST_WMS_LAYERS = {
+            "gdps-cloud": ("GDPS_15km_TotalCloudCover", "CLOUD"),
+            "gdps-precip": ("GDPS_15km_PrecipRate", "PRECIPPRTMMH"),
+        }
+        product = require(query, "product").strip().lower()
+        mapping = _FORECAST_WMS_LAYERS.get(product)
+        if mapping is None:
+            raise ValueError("unknown forecast product")
+        layer_name, style_name = mapping
+        bbox_raw = require(query, "bbox").strip()
+        parts = bbox_raw.split(",")
+        if len(parts) != 4:
+            raise ValueError("bbox must have four numbers")
+        try:
+            bbox = [float(p) for p in parts]
+        except ValueError:
+            raise ValueError("bbox must have four numbers")
+        limit = 20037508.36  # EPSG:3857 world half-extent in metres
+        west, south, east, north = (
+            max(-limit, min(limit, v)) for v in bbox
+        )
+        if not (west < east and south < north):
+            raise ValueError("bbox is empty")
+        width = _require_int(query, "width", 64, 2048)
+        height = _require_int(query, "height", 64, 2048)
+        # Valid time (WMS `time` dimension): strict ISO8601 UTC on the hour.
+        time_text = require(query, "time").strip()
+        if not _valid_gibs_time(time_text):
+            raise ValueError("invalid forecast time")
+        params = {
+            "service": "WMS",
+            "version": "1.3.0",
+            "request": "GetMap",
+            "layers": layer_name,
+            "styles": style_name,
+            "crs": "EPSG:3857",
+            "bbox": f"{west},{south},{east},{north}",
+            "width": str(width),
+            "height": str(height),
+            "format": "image/png",
+            "transparent": "true",
+            "time": time_text,
         }
         url = "https://geo.weather.gc.ca/geomet?" + urllib.parse.urlencode(params)
         return url, "image/png"

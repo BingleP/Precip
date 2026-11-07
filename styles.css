@@ -971,6 +971,16 @@ a {
   background: linear-gradient(90deg, rgba(85, 170, 255, 0.85) 0%, #2fbf71 30%, #f7e353 55%, #ff9a3d 75%, #ff3d3d 88%, #d6336c 100%);
 }
 
+/* Forecast cloud: thin grey to opaque white (matches the veil processing). */
+.forecast-cloud-gradient {
+  background: linear-gradient(90deg, rgba(148, 156, 168, 0.25) 0%, rgba(190, 197, 207, 0.6) 45%, rgba(215, 221, 230, 0.9) 75%, #e8edf3 100%);
+}
+
+/* Forecast precip: GeoMet PRECIPPRTMMH bins (0.01 → 50+ mm/h). */
+.forecast-precip-gradient {
+  background: linear-gradient(90deg, #1a1a9e 0%, #0000ff 10%, #0080ff 20%, #00ffff 30%, #80ff80 40%, #ffff00 55%, #ff8000 70%, #ff0000 85%, #800000 100%);
+}
+
 .timeline-control {
   position: absolute;
   right: 14px;

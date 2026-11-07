@@ -8,6 +8,7 @@ import { escapeHTML } from "./ui";
 import { getLayer, type MapLayer } from "./map-layers";
 import { drawRadarLayer, formatRadarRelativeTime, type RadarStatus } from "./radar";
 import { drawCloudLayer, type CloudStatus } from "./cloud";
+import { drawForecastRasterLayer, type ForecastRasterStatus } from "./forecast-raster";
 
 const TILE_CACHE_MAX = 500;
 
@@ -527,7 +528,7 @@ export function updateMapTooltip(
   const rasterPrimaryTooltip = primaryLayerForTooltip?.kind === "raster";
   let tooltipHTML =
     (rasterPrimaryTooltip
-      ? `<strong>${escapeHTML(primaryLayerForTooltip!.label)} · observed</strong>`
+      ? `<strong>${escapeHTML(primaryLayerForTooltip!.label)} · ${primaryLayerForTooltip!.timeMode}</strong>`
       : `<strong>${formatHeatmapValue(layerValue ?? undefined, activeHeatmapLayer)}</strong>`) +
     `<span>${location.latitude.toFixed(3)}, ${location.longitude.toFixed(3)}</span>` +
     `<span>Temp: ${formatHeatmapValue(temperature ?? undefined, "temperature")}</span>` +
@@ -635,9 +636,14 @@ export function drawRasterWeatherLayer(
   mapState: MapState,
   zoom: number,
   opacity: number,
+  hourOffset = 0,
 ): void {
   if (layer.id === "satCloud" && layer.kind === "raster") {
     drawCloudLayer(ctx, width, height, mapState, zoom, opacity);
+    return;
+  }
+  if ((layer.id === "fcastCloud" || layer.id === "fcastPrecip") && layer.kind === "raster") {
+    drawForecastRasterLayer(ctx, layer.id, width, height, mapState, zoom, opacity, hourOffset);
     return;
   }
   drawRadarLayer(ctx, width, height, mapState, zoom, opacity);
@@ -713,6 +719,58 @@ export function renderCloudReadout(
     <span>Satellite cloud</span>
     <strong>Observed · ${escapeHTML(status.providerLabel)}</strong>
     <small>Latest imagery · 10 min cadence</small>
+  `;
+}
+
+/** Format a WMS valid time for display (e.g. "2026-11-07 18:00 UTC"). */
+function formatValidTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toISOString().slice(0, 16).replace("T", " ") + " UTC";
+}
+
+/** Legend for the forecast raster layers (GeoMet cloud / precip rasters). */
+export function renderForecastRasterLegend(
+  layerId: string,
+  status: Pick<ForecastRasterStatus, "providerLabel" | "attribution" | "attributionUrl" | "validTime" | "hourOffset"> | null,
+  el: HTMLElement | null,
+): void {
+  if (!el) return;
+  const isPrecip = layerId === "fcastPrecip";
+  const title = isPrecip ? "Forecast precip rate" : "Forecast cloud cover";
+  const gradientClass = isPrecip ? "forecast-precip-gradient" : "forecast-cloud-gradient";
+  if (!status) {
+    el.innerHTML = `<div class="heatmap-legend-head"><strong>${title}</strong><span class="legend-badge legend-badge-forecast">Forecast</span></div><small>Loading forecast imagery…</small>`;
+    return;
+  }
+  const range = isPrecip
+    ? `<span>0.01</span><span>1.0</span><span>5</span><span>20+</span>`
+    : `<span>10%</span><span>50%</span><span>100%</span>`;
+  el.innerHTML = `
+    <div class="heatmap-legend-head"><strong>${title}</strong><span class="legend-badge legend-badge-forecast">Forecast</span></div>
+    <div class="heatmap-gradient ${gradientClass}"></div>
+    <div class="heatmap-legend-range">${range}</div>
+    <small>${escapeHTML(status.providerLabel)} · ${isPrecip ? "mm/h" : "total cloud cover"}</small>
+    <small>Valid ${formatValidTime(status.validTime)} (${status.hourOffset ? `+${status.hourOffset}h` : "now"})</small>
+    <small><a class="legend-attribution" href="${escapeHTML(status.attributionUrl)}" target="_blank" rel="noreferrer">${escapeHTML(status.attribution)}</a></small>
+  `;
+}
+
+export function renderForecastRasterReadout(
+  layerId: string,
+  status: Pick<ForecastRasterStatus, "providerLabel" | "validTime" | "hourOffset"> | null,
+  el: HTMLElement | null,
+): void {
+  if (!el) return;
+  const title = layerId === "fcastPrecip" ? "Forecast precip rate" : "Forecast cloud cover";
+  if (!status) {
+    el.innerHTML = `<span>${title}</span><strong>Loading…</strong><small>Fetching forecast imagery</small>`;
+    return;
+  }
+  el.innerHTML = `
+    <span>${title}</span>
+    <strong>Forecast · ${escapeHTML(status.providerLabel)}</strong>
+    <small>Valid ${formatValidTime(status.validTime)} (${status.hourOffset ? `+${status.hourOffset}h` : "now"})</small>
   `;
 }
 

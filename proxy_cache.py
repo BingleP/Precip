@@ -25,6 +25,7 @@ CACHE_TTLS = {
     "/api/radar-index": 300,
     "/api/radar-tile": 120,
     "/api/radar-wms": 120,
+    "/api/forecast-wms": 900,
     "/api/satellite-tile": 300,
 }
 

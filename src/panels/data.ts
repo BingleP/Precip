@@ -15,7 +15,9 @@ import {
   drawMapTiles, drawMapOverlayText, drawHeatmapOverlay, drawRasterWeatherLayer,
   drawMapPlaces, queueMapRender,
   renderMapReadout, renderLayerLegend, renderRadarLegend, renderRadarReadout,
-  renderCloudLegend, renderCloudReadout, updateMapHourLabel,
+  renderCloudLegend, renderCloudReadout,
+  renderForecastRasterLegend, renderForecastRasterReadout,
+  updateMapHourLabel,
   hideMapTooltip,
 } from "../map";
 import { getLayer } from "../map-layers";
@@ -24,11 +26,15 @@ import {
   getRadarFrames, getRadarFrameIndex, getRadarStatus, formatRadarRelativeTime,
 } from "../radar";
 import { registerCloudRedrawHandler, startCloudRefresh, getCloudStatus } from "../cloud";
+import { registerForecastRasterRedrawHandler, getForecastRasterStatus, prefetchAdjacentHours } from "../forecast-raster";
 
 registerRadarRedrawHandler(() => {
   queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
 });
 registerCloudRedrawHandler(() => {
+  queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
+});
+registerForecastRasterRedrawHandler(() => {
   queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
 });
 
@@ -288,11 +294,11 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
 
   // Raster weather layers sit between the basemap and the scalar field.
   if (rasterOverlay && overlayLayer) {
-    drawRasterWeatherLayer(ctx, overlayLayer, width, height, mapState, zoomRound, activeMapLayerOpacity);
+    drawRasterWeatherLayer(ctx, overlayLayer, width, height, mapState, zoomRound, activeMapLayerOpacity, activeMapHourOffset);
   }
 
   if (rasterPrimary && primaryLayer) {
-    drawRasterWeatherLayer(ctx, primaryLayer, width, height, mapState, zoomRound, activeMapLayerOpacity);
+    drawRasterWeatherLayer(ctx, primaryLayer, width, height, mapState, zoomRound, activeMapLayerOpacity, activeMapHourOffset);
     if (!mapState.drag) {
       if (primaryLayer.id === "satCloud") {
         // Satellite imagery: start the five-minute refresh on first paint.
@@ -302,6 +308,13 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
         const status = getCloudStatus(mapState.center);
         renderCloudLegend(status, elements.heatmapLegend);
         renderCloudReadout(status, elements.mapReadout);
+      } else if (primaryLayer.id === "fcastCloud" || primaryLayer.id === "fcastPrecip") {
+        // Forecast rasters track the forecast-hour slider; warm the adjacent
+        // valid times so scrubbing is instant.
+        prefetchAdjacentHours(primaryLayer.id, mapState, zoomRound, width, height, activeMapHourOffset);
+        const status = getForecastRasterStatus(primaryLayer.id, mapState.center, activeMapHourOffset);
+        renderForecastRasterLegend(primaryLayer.id, status, elements.heatmapLegend);
+        renderForecastRasterReadout(primaryLayer.id, status, elements.mapReadout);
       } else {
         const status = getRadarStatus(mapState.center);
         renderRadarLegend(status, elements.heatmapLegend);
@@ -331,6 +344,9 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
               queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
             });
             renderCloudLegend(getCloudStatus(mapState.center), elements.heatmapLegend);
+          } else if (overlayLayer.id === "fcastCloud" || overlayLayer.id === "fcastPrecip") {
+            prefetchAdjacentHours(overlayLayer.id, mapState, zoomRound, width, height, activeMapHourOffset);
+            renderForecastRasterLegend(overlayLayer.id, getForecastRasterStatus(overlayLayer.id, mapState.center, activeMapHourOffset), elements.heatmapLegend);
           } else {
             renderRadarLegend(getRadarStatus(mapState.center), elements.heatmapLegend);
           }

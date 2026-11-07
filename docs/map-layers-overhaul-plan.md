@@ -3,6 +3,7 @@
 Status: Phase 0 complete and live in production (2026-11-06). Phase 1
 implemented + pushed (not deployed, hold per product call). Phase 2
 implemented + verified locally (2026-11-07), pushed. Phase 3
+implemented + verified locally (2026-11-07), pushed. Phase 4
 implemented + verified locally (2026-11-07), pushed; deploy still held
 until later phases are ready. Remaining scope as sequenced below.
 Scope: fix two known defects, then replace the single fog-like heatmap with a
@@ -484,14 +485,60 @@ five-minute "latest" refresh while the tab is visible), wiring in
   colour — it needs its own matrix/zoom cap and alpha handling (the PNG
   already carries alpha), so it is a follow-up, not a Phase 3 blocker.
 
-### Phase 4 – Forecast cloud and precipitation
+### Phase 4 – Forecast cloud and precipitation — **implemented + verified** (2026-11-07, deploy held)
 
-- GeoMet proxy for `GDPS_15km_TotalCloudCover`, `GDPS_15km_PrecipRate`,
-  `CAPS_3km_*`; time-offset requests.
-- Cloud opacity curve and precip palette.
-- Integrate with the forecast hour slider; prefetch adjacent hours.
-- Acceptance: +0…+24 h slider changes the raster; legend shows the valid time;
-  forecast layers do not block the basemap.
+Status: complete in code and browser-verified. Client in
+`src/forecast-raster.ts` (WMS GetMap per viewport in EPSG:3857 with a
+5 km snap grid like the radar WMS path; image + processed caches;
+adjacent-hour prefetch), wiring in `src/panels/data.ts`
+(forecast-primary/overlay branches; forecast rasters ride the existing
+forecast-hour slider with valid-time display) and `src/map.ts`
+(`drawRasterWeatherLayer` dispatches on `layer.id`,
+`renderForecastRasterLegend`/`renderForecastRasterReadout`).
+
+- Proxy endpoint `/api/forecast-wms` with a product whitelist
+  (`gdps-cloud`, `gdps-precip`; 900 s TTL). URL shape mirrors the radar
+  WMS plus a strict ISO8601 `time` (`YYYY-MM-DDTHH:MM:SSZ`, real-date
+  validated). Styles: `CLOUD` (greyscale total-cover ramp) for cloud,
+  `PRECIPPRTMMH` (discrete palette 0.01–50+ mm/h) for precip. Verified
+  200 with real imagery; invalid product/time/bbox/missing params
+  return clean 400s.
+- Layer names discovered from GeoMet GetCapabilities (40 MB) and
+  verified: `GDPS_15km_TotalCloudCover`, `GDPS_15km_PrecipRate`
+  (global, hourly `time` dimension, CLOUD + PRECIPPRTMMH styles).
+- CAPS finding (why GDPS-only): `CAPS_3km_TotalCloudCover` and
+  `CAPS_3km_PrecipRate` returned fully transparent (empty) images for
+  every style (CLOUD, CLOUD-50, CloudCover_50-100Pct_Dis), every valid
+  time tested, with and without `reference_time`, over both Toronto
+  and Vancouver. GDPS worked at the same bboxes/times. The CAPS product
+  ids were removed from the whitelist; if CAPS is restored later it
+  should be re-verified with a GetMap-over-Canada probe, not assumed.
+  (Two early offline probes at "Toronto" that suggested CAPS worked
+  turned out — on audit — to have used a botched EPSG:3857 y (R mistaken
+  for the half-circumference), i.e. Arctic bboxes. The browser path
+  always used the correct math.)
+- Cloud opacity curve: the CLOUD ramp gives luminance 0→255 over
+  0→100% cover. The veil maps luminance→alpha (LOW 30, HIGH 230,
+  γ0.8, max 235, neutral white tint), tuned against live tiles —
+  thin model cloud stays near-invisible while overcast regions read
+  clearly. Precip draws the server palette directly (already
+  radar-like).
+- Timeline: forecast rasters use the forecast-hour slider (+0…+24h,
+  `syncTimelineUI` falls into the scalar branch — slider max 23,
+  label "Now"/local time; legend + readout show the exact valid time
+  in UTC, e.g. "Valid 2026-11-07 16:00 UTC (+12h)"). Scrubbing fires
+  the new valid-time request immediately and prefetches ±1h.
+- Overlay mode: "Forecast cloud"/"Forecast rain" join the Weather
+  overlay dropdown, plus "F.Cloud"/"F.Rain" chips in the More row;
+  scalar+overlay keeps the forecast-hours timeline and shows the
+  forecast legend. The tap-to-inspect tooltip now shows the layer's
+  own timeMode ("· forecast" for these, "· observed" for radar/cloud).
+- Acceptance: verified on-screen at Toronto (GDPS veil over scattered
+  model cloud; +12h scrub swaps imagery and valid time), Vancouver
+  (overcast matches 100% GDPS cover), and Seattle (precip palette over
+  Puget Sound marine rain), scalar+overlay mode, no console errors.
+  GDPS 15 km blockiness is visible at high zoom — kept (honest to the
+  source); smoothing softens the edges.
 
 ### Phase 5 – Scalar field upgrade
 
