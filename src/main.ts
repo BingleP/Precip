@@ -600,13 +600,23 @@ elements.satelliteProductSelect?.addEventListener("change", () => {
 
 // Overlay toggle buttons
 function syncOverlayToggles(): void {
-  if (elements.alertsToggle) elements.alertsToggle.classList.toggle("active", showAlerts);
-  if (elements.wildfiresToggle) elements.wildfiresToggle.classList.toggle("active", showWildfires);
+  if (elements.alertsToggle) {
+    elements.alertsToggle.classList.toggle("active", showAlerts);
+    elements.alertsToggle.setAttribute("aria-pressed", String(showAlerts));
+  }
+  if (elements.wildfiresToggle) {
+    elements.wildfiresToggle.classList.toggle("active", showWildfires);
+    elements.wildfiresToggle.setAttribute("aria-pressed", String(showWildfires));
+  }
   if (document.querySelector("#storm-tracks-toggle")) {
-    document.querySelector("#storm-tracks-toggle")!.classList.toggle("active", showStormTracks);
+    const toggle = document.querySelector("#storm-tracks-toggle")!;
+    toggle.classList.toggle("active", showStormTracks);
+    toggle.setAttribute("aria-pressed", String(showStormTracks));
   }
   if (document.querySelector("#earthquakes-toggle")) {
-    document.querySelector("#earthquakes-toggle")!.classList.toggle("active", showEarthquakes);
+    const toggle = document.querySelector("#earthquakes-toggle")!;
+    toggle.classList.toggle("active", showEarthquakes);
+    toggle.setAttribute("aria-pressed", String(showEarthquakes));
   }
 }
 

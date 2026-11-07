@@ -574,9 +574,21 @@ export function renderHeatmapLoading(message = "Loading regional weather layer")
 export function setActiveHeatmapLayer(layer: string, options: { persist?: boolean } = {}): void {
   setActiveHeatmapLayerState(layer);
   heatmapButtons.forEach((button) => {
-    button.classList.toggle("active", button.dataset.layer === layer);
+    const active = button.dataset.layer === layer;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
   });
   syncLayersMoreUI(layer);
+  // Keep the canvas description in sync with the visible layer (Phase 6).
+  if (heatmapCanvas) {
+    const layerDef = getLayer(layer);
+    heatmapCanvas.setAttribute(
+      "aria-label",
+      layerDef
+        ? `Regional weather map: ${layerDef.label} (${layerDef.timeMode === "observed" ? "observed" : "forecast"}).`
+        : "Regional weather map.",
+    );
+  }
   if (elements.settingsMapLayer) elements.settingsMapLayer.value = layer;
   if (options.persist) saveAppSettings({ mapLayer: layer as AppSettings["mapLayer"] });
   if (!isRadarActive()) setRadarLoop(false);

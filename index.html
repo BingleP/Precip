@@ -66,13 +66,13 @@
               <div class="map-tools-section">
                 <span class="map-tools-section-label">Overlay</span>
                 <div class="map-tools-row">
-                  <button class="ghost-button active" type="button" id="alerts-toggle">Alerts</button>
-                  <button class="ghost-button active" type="button" id="wildfires-toggle">Fires</button>
+                  <button class="ghost-button active" type="button" id="alerts-toggle" aria-pressed="true">Alerts</button>
+                  <button class="ghost-button active" type="button" id="wildfires-toggle" aria-pressed="true">Fires</button>
                 </div>
                 <div class="map-tools-row map-tools-row-spaced">
                   <button class="ghost-button active" type="button" id="satellite-toggle">Satellite</button>
-                  <button class="ghost-button active" type="button" id="storm-tracks-toggle">Tracks</button>
-                  <button class="ghost-button active" type="button" id="earthquakes-toggle">Quakes</button>
+                  <button class="ghost-button active" type="button" id="storm-tracks-toggle" aria-pressed="true">Tracks</button>
+                  <button class="ghost-button active" type="button" id="earthquakes-toggle" aria-pressed="true">Quakes</button>
                 </div>
                 <div class="map-tools-row map-tools-row-spaced">
                   <label class="map-tools-label" for="earthquake-age-select">EQ max age:</label>
@@ -91,23 +91,23 @@
                 <span class="map-tools-section-label">Layers</span>
                 <div class="map-tools-layers">
                   <button class="heatmap-button" type="button" data-layer="radar" aria-pressed="false">Radar</button>
-                  <button class="heatmap-button active" type="button" data-layer="temperature">Temp</button>
-                  <button class="heatmap-button" type="button" data-layer="precipitation">Rain</button>
-                  <button class="heatmap-button" type="button" data-layer="wind">Wind</button>
+                  <button class="heatmap-button active" type="button" data-layer="temperature" aria-pressed="true">Temp</button>
+                  <button class="heatmap-button" type="button" data-layer="precipitation" aria-pressed="false">Rain</button>
+                  <button class="heatmap-button" type="button" data-layer="wind" aria-pressed="false">Wind</button>
                   <button class="heatmap-button layers-more-toggle" type="button" id="layers-more-toggle" aria-expanded="false" aria-controls="layers-more-row">More ▾</button>
                   <div class="map-tools-layers-more" id="layers-more-row" hidden>
-                    <button class="heatmap-button" type="button" data-layer="feels">Feels</button>
-                    <button class="heatmap-button" type="button" data-layer="cloud">Cloud</button>
-                    <button class="heatmap-button" type="button" data-layer="pressure">Pressure</button>
-                    <button class="heatmap-button" type="button" data-layer="dewpoint">Dew</button>
-                    <button class="heatmap-button" type="button" data-layer="humidity">Humidity</button>
-                    <button class="heatmap-button" type="button" data-layer="precipProbability">Chance</button>
-                    <button class="heatmap-button" type="button" data-layer="gusts">Gusts</button>
-                    <button class="heatmap-button" type="button" data-layer="visibility">Visibility</button>
-                    <button class="heatmap-button" type="button" data-layer="cape">CAPE</button>
-                    <button class="heatmap-button" type="button" data-layer="satCloud">Clouds</button>
-                    <button class="heatmap-button" type="button" data-layer="fcastCloud">F.Cloud</button>
-                    <button class="heatmap-button" type="button" data-layer="fcastPrecip">F.Rain</button>
+                    <button class="heatmap-button" type="button" data-layer="feels" aria-pressed="false">Feels</button>
+                    <button class="heatmap-button" type="button" data-layer="cloud" aria-pressed="false">Cloud</button>
+                    <button class="heatmap-button" type="button" data-layer="pressure" aria-pressed="false">Pressure</button>
+                    <button class="heatmap-button" type="button" data-layer="dewpoint" aria-pressed="false">Dew</button>
+                    <button class="heatmap-button" type="button" data-layer="humidity" aria-pressed="false">Humidity</button>
+                    <button class="heatmap-button" type="button" data-layer="precipProbability" aria-pressed="false">Chance</button>
+                    <button class="heatmap-button" type="button" data-layer="gusts" aria-pressed="false">Gusts</button>
+                    <button class="heatmap-button" type="button" data-layer="visibility" aria-pressed="false">Visibility</button>
+                    <button class="heatmap-button" type="button" data-layer="cape" aria-pressed="false">CAPE</button>
+                    <button class="heatmap-button" type="button" data-layer="satCloud" aria-pressed="false">Clouds</button>
+                    <button class="heatmap-button" type="button" data-layer="fcastCloud" aria-pressed="false">F.Cloud</button>
+                    <button class="heatmap-button" type="button" data-layer="fcastPrecip" aria-pressed="false">F.Rain</button>
                   </div>
                 </div>
               </div>

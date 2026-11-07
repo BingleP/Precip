@@ -16,6 +16,11 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
   - click-to-load any map point
   - viewport-based heatmap sampling (overlay skipped during drag)
   - cursor hover readout with coordinates and interpolated weather values
+  - **weather layer stack** (same-origin proxied imagery + overlay selector with per-layer opacity):
+    - **Radar** — ECCC GeoMet (Canada) / IEM NEXRAD (US) / RainViewer (global), with a past-2h frame loop on the timeline
+    - **Satellite cloud** — NASA GIBS GOES-East/West + Himawari clean-infrared, luminance-veiled, latest imagery
+    - **Forecast cloud + precipitation rate** — ECCC GeoMet GDPS WMS, keyed to the forecast-hour slider with valid times
+    - **Scalar fields** — dense adaptive grids (`/api/field`) with bilinear + per-layer LUT rendering, isotherms/isobars, wind streamlines
   - NWS/ECCC alert polygon overlays with severity-colored boundaries and hover tooltips
   - **wildfire overlay**: CWFIS hotspots (color-coded by age), CWFIS fire perimeters, and NASA FIRMS hotspots (when configured) with hover tooltips showing source, date, confidence, temperature, and area
   - frustum culling for 600+ alert polygons and wildfire perimeters (off-screen geometry skipped)
@@ -53,7 +58,8 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
    - **Cone of uncertainty** — 2–5 day track cone built from NHC forecast track + hardcoded radii table (per-season)
    - All NHC data is fetched, parsed, and cached by the proxy (storm list: 10 min, forecast + cone: 15 min)
 - **Performance optimizations:**
-  - **Heatmap**: screen coordinate memoization + 4×4 interpolation grid (avoids O(pixels×samples) per frame)
+  - **Scalar fields**: dense adaptive grids (`/api/field`) with bilinear + LUT rendering; contours/streamlines; snapping for server+client cache reuse
+  - **Weather rasters**: WMS/bbox-snap caching and prefetch so pans don't storm the proxy (30 pan steps → 0 new field requests)
   - **Wildfire hotspots**: color-bucket batching (3 draw calls vs N), spatial clustering at zoom < 7, frustum culling
   - **Alert polygons**: full screen-coordinate memoization + grid spatial index for hover hit-testing
   - **Forecast chart**: static layer cached to offscreen canvas; only hover indicator redrawn on mouse move
@@ -99,6 +105,9 @@ The browser talks to same-origin `/api/*` routes. The proxy fetches and caches:
 - `https://earthquake.usgs.gov` (USGS earthquake data)
 - `https://www.earthquakescanada.nrcan.gc.ca` (Natural Resources Canada seismic data)
 - `https://www.nhc.noaa.gov` (NHC active storms, ATCF forecast text, storm data)
+- `https://geo.weather.gc.ca` (ECCC GeoMet WMS: radar, GDPS forecast rasters)
+- `https://tile.rainviewer.com` + `https://mesonet.agron.iastate.edu` (radar tiles, RainViewer / IEM)
+- `https://gibs.earthdata.nasa.gov` (NASA GIBS WMTS: GOES/Himawari satellite cloud)
 
 Map tiles and NOAA GOES animated GIFs load directly in the browser from:
 
@@ -107,7 +116,7 @@ Map tiles and NOAA GOES animated GIFs load directly in the browser from:
 
 SLIDER global satellite imagery is **proxied** through the cache server (`/api/slider-image` for tiles, `/api/slider-latest-times` for timestamps) to bypass CSP restrictions on slider.cira.colostate.edu.
 
-Cache TTLs vary by endpoint (5 min for alerts, 10 min for forecasts/SPC/SLIDER latest-times/NHC active storms, 15 min for heatmap/wildfires/SLIDER images/NHC forecast+cone, 24 h for geocoding and zone geometry).
+Cache TTLs vary by endpoint (5 min for alerts/radar tiles, 10 min for the scalar field, forecasts/SPC/SLIDER latest-times/NHC active storms/radar index, 15 min for heatmap/wildfires/SLIDER images/NHC forecast+cone/forecast rasters, 24 h for geocoding and zone geometry).
 
 User state is stored in browser cookies. No app data is written to the server.
 
@@ -188,6 +197,12 @@ img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov;
 | `/api/nhc-active` | NHC CurrentStorms.json | none |
 | `/api/nhc-forecast` | NHC ATCF text | `stormId` (e.g. `al022026`) |
 | `/api/nhc-cone` | NHC ATCF text (same as forecast) | `stormId` |
+| `/api/radar-index` | RainViewer | none |
+| `/api/radar-tile` | RainViewer / IEM | `source`, `z`, `x`, `y`, `path` (RainViewer) |
+| `/api/radar-wms` | ECCC GeoMet WMS | `bbox`, `width`, `height` |
+| `/api/satellite-tile` | NASA GIBS WMTS | `layer` (goes-east/goes-west/himawari), `z`, `x`, `y`, `date` (optional) |
+| `/api/forecast-wms` | ECCC GeoMet WMS (GDPS) | `product` (gdps-cloud/gdps-precip), `bbox`, `width`, `height`, `time` |
+| `/api/field` | Open-Meteo (grid fan-out) | `layer`, `hour`, `bbox`, `cols`, `rows` |
 
 ## Security Model
 

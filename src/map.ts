@@ -8,7 +8,7 @@ import { escapeHTML } from "./ui";
 import { getLayer, type MapLayer } from "./map-layers";
 import { drawRadarLayer, formatRadarRelativeTime, type RadarStatus } from "./radar";
 import { drawCloudLayer, type CloudStatus } from "./cloud";
-import { drawForecastRasterLayer, type ForecastRasterStatus } from "./forecast-raster";
+import { drawForecastRasterLayer, validTimeForOffset, type ForecastRasterStatus } from "./forecast-raster";
 import type { FieldData } from "./field";
 
 const TILE_CACHE_MAX = 500;
@@ -885,11 +885,16 @@ export function updateMapTooltip(
 
   const primaryLayerForTooltip = getLayer(activeHeatmapLayer);
   const rasterPrimaryTooltip = primaryLayerForTooltip?.kind === "raster";
+  // Forecast rasters show their valid time so a tap answers "when?".
+  const forecastValid = primaryLayerForTooltip?.id === "fcastCloud" || primaryLayerForTooltip?.id === "fcastPrecip"
+    ? `Valid ${validTimeForOffset(activeMapHourOffset).replace("T", " ").replace(":00:00Z", " UTC")}${activeMapHourOffset ? ` (+${activeMapHourOffset}h)` : ""}`
+    : "";
   let tooltipHTML =
     (rasterPrimaryTooltip
       ? `<strong>${escapeHTML(primaryLayerForTooltip!.label)} · ${primaryLayerForTooltip!.timeMode}</strong>`
       : `<strong>${formatHeatmapValue(layerValue ?? undefined, activeHeatmapLayer)}</strong>`) +
     `<span>${location.latitude.toFixed(3)}, ${location.longitude.toFixed(3)}</span>` +
+    (forecastValid ? `<span>${escapeHTML(forecastValid)}</span>` : "") +
     `<span>Temp: ${formatHeatmapValue(temperature ?? undefined, "temperature")}</span>` +
     `<span>Rain: ${formatHeatmapValue(precipitation ?? undefined, "precipitation")}</span>` +
     `<span>Wind: ${formatHeatmapValue(wind ?? undefined, "wind")}</span>`;
