@@ -1,10 +1,13 @@
 import concurrent.futures
 import csv
 import datetime
+import html
 import io
 import json
 import os
+import re
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -31,6 +34,7 @@ ALLOWED_ENDPOINTS = {
     "/api/all-alerts",
     "/api/wildfires",
     "/api/slider-catalog",
+    "/api/slider-products",
     "/api/slider-image",
     "/api/slider-latest-times",
     "/api/nhc-active",
@@ -168,6 +172,94 @@ def fetch_slider_image(satellite, sector, product, timestamp):
         body = response.read()
         content_type = response.headers.get_content_type() or "image/png"
         return body, content_type
+
+
+def _fetch_slider_text(url, timeout=25):
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read().decode("utf-8", "replace")
+
+
+_slider_definitions_cache = {"saved_at": 0.0, "data": None}
+
+
+def _get_slider_definitions():
+    now = time.time()
+    if _slider_definitions_cache["data"] and now - _slider_definitions_cache["saved_at"] < 3600:
+        return _slider_definitions_cache["data"]
+    text = _fetch_slider_text(f"{SLIDER_BASE}/js/define-products.js", timeout=40)
+    start = text.find("{", text.find("var json"))
+    if start == -1:
+        raise ValueError("SLIDER product definitions are malformed")
+    data, _ = json.JSONDecoder().raw_decode(text[start:])
+    _slider_definitions_cache["data"] = data
+    _slider_definitions_cache["saved_at"] = now
+    return data
+
+
+def _slider_product_title(key, meta):
+    title = ""
+    if isinstance(meta, dict):
+        title = str(meta.get("product_title") or "")
+    if not title:
+        title = key.replace("_", " ")
+    title = re.sub(r"<[^>]+>", "", html.unescape(title)).strip()
+    return " ".join(title.split())
+
+
+def build_slider_products_payload(satellite, sector):
+    """Return only the SLIDER products that exist for a sector and are real imagery.
+
+    SLIDER's directory listing also contains map/overlay folders and products
+    that are not published for the selected sector. Its define-products.js
+    carries the authoritative product names and per-sector exclusions, so use
+    that to filter the listing instead of exposing dead options in the UI.
+    """
+    if not re.fullmatch(r"[a-z0-9_-]+", satellite):
+        raise ValueError("invalid satellite")
+    if not re.fullmatch(r"[a-z0-9_-]+", sector):
+        raise ValueError("invalid sector")
+
+    listing = _fetch_slider_text(f"{SLIDER_BASE}/data/json/{satellite}/{sector}/")
+    available = {
+        key for key in re.findall(r'href="([a-z0-9_]+)/"', listing)
+        if key != ".."
+    }
+    if not available:
+        raise ValueError("SLIDER catalog unavailable")
+
+    products = []
+    try:
+        data = _get_slider_definitions()
+        sat = (data.get("satellites") or {}).get(satellite) or {}
+        definitions_map = sat.get("products") or {}
+        sector_def = (sat.get("sectors") or {}).get(sector) or {}
+        missing = set(sector_def.get("missing_products") or [])
+        default_key = str(sector_def.get("default_product") or "")
+        ordered = [
+            key for key in definitions_map
+            if key in available and key not in missing
+        ]
+        if default_key in ordered:
+            ordered.remove(default_key)
+            ordered.insert(0, default_key)
+        for key in ordered:
+            title = _slider_product_title(key, definitions_map.get(key))
+            if not title or title.startswith("---"):
+                continue
+            products.append({"key": key, "title": title})
+    except Exception:
+        products = []
+
+    if not products:
+        # Definitions are optional metadata: fall back to the directory listing,
+        # dropping the map/overlay folders that are not imagery products.
+        for key in sorted(available):
+            if key == "maps" or key.startswith("maps_"):
+                continue
+            products.append({"key": key, "title": _slider_product_title(key, None)})
+
+    return json.dumps({"products": products}).encode("utf-8")
 
 
 def normalize_text(value):

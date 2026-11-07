@@ -172,6 +172,17 @@ export function renderSatelliteImage(
     elements.satelliteLink.href = `https://www.star.nesdis.noaa.gov/goes/sector.php?sat=${sector.sat}&sector=${sector.id}`;
   }
   if (elements.satelliteImage) {
+    elements.satelliteImage.onerror = () => {
+      if (elements.satelliteImage) elements.satelliteImage.hidden = true;
+      if (elements.satelliteStatus) {
+        elements.satelliteStatus.textContent = "NOAA unavailable";
+        elements.satelliteStatus.className = "status-pill standby";
+      }
+      if (elements.satelliteEmpty) {
+        elements.satelliteEmpty.textContent = "NOAA animation unavailable for this product right now.";
+        elements.satelliteEmpty.hidden = false;
+      }
+    };
     elements.satelliteImage.alt = `${product.title} animation for ${sector.name}`;
     elements.satelliteImage.src = product.url;
     elements.satelliteImage.hidden = false;
@@ -313,9 +324,10 @@ export function tryNextSliderTimestamp(currentTs: string, satellite?: string): s
   const d2 = pad(date.getUTCDate());
   const h2 = pad(date.getUTCHours());
   const min2 = pad(date.getUTCMinutes());
-  const ts2 = `${y2}${m2}${d2}${h2}${min2}${config.seconds}`;
-  if (ts2 < `${currentTs.slice(0, 8)}000000`) return null;
-  return ts2;
+  // Keep the real frame seconds (for example GOES frames land on :18), not
+  // the nominal cadence seconds, or every fallback request would miss.
+  const seconds = currentTs.length >= 14 ? currentTs.slice(12, 14) : pad(Number(config.seconds) || 0);
+  return `${y2}${m2}${d2}${h2}${min2}${seconds}`;
 }
 
 export function resolveSliderSatellite(location: Location): SliderSatellite {
@@ -347,6 +359,8 @@ export function resolveSliderSector(satellite: SliderSatellite, location: Locati
   ).sector;
 }
 
+const SLIDER_MAX_FALLBACK_ATTEMPTS = 6;
+
 export function loadSliderImageWithFallback(
   satellite: string,
   sector: string,
@@ -355,9 +369,10 @@ export function loadSliderImageWithFallback(
   onLoad: () => void,
   onError: () => void,
   timestamp?: string,
+  attemptsLeft = SLIDER_MAX_FALLBACK_ATTEMPTS,
 ): void {
   const url = getSliderTileUrl(satellite, sector, productKey, timestamp);
-  const nextTs = timestamp ? tryNextSliderTimestamp(timestamp, satellite) : null;
+  const nextTs = timestamp && attemptsLeft > 0 ? tryNextSliderTimestamp(timestamp, satellite) : null;
 
   imgEl.onload = () => {
     imgEl.hidden = false;
@@ -366,7 +381,7 @@ export function loadSliderImageWithFallback(
 
   imgEl.onerror = () => {
     if (nextTs) {
-      loadSliderImageWithFallback(satellite, sector, productKey, imgEl, onLoad, onError, nextTs);
+      loadSliderImageWithFallback(satellite, sector, productKey, imgEl, onLoad, onError, nextTs, attemptsLeft - 1);
     } else {
       onError();
     }
@@ -405,15 +420,23 @@ export async function loadSliderSector(
 
     renderSatelliteProductOptions(catalog.products, selectedProduct.key, elements.satelliteProductSelect);
 
+    const satelliteName = SLIDER_SATELLITES.find((sat) => sat.id === satellite)?.name || satellite;
+    const sectorName = SLIDER_SATELLITES.find((sat) => sat.id === satellite)
+      ?.sectors.find((item) => item.id === sector)?.name || sector;
     if (elements.satelliteStatus) {
-      elements.satelliteStatus.textContent = `${satellite} ${sector}`;
+      elements.satelliteStatus.textContent = `${satelliteName} · ${sectorName}`;
       elements.satelliteStatus.className = "status-pill";
     }
     if (elements.satelliteCopy) {
-      elements.satelliteCopy.textContent = `${selectedProduct.title} from SLIDER (CIRA/CSU) for ${satellite} ${sector}.`;
+      elements.satelliteCopy.textContent = `${selectedProduct.title} from SLIDER (CIRA/CSU) for ${satelliteName} · ${sectorName}.`;
+    }
+    if (elements.satelliteImage) {
+      elements.satelliteImage.alt = `${selectedProduct.title} from SLIDER for ${satelliteName} ${sectorName}`;
     }
     if (elements.satelliteLink) {
-      elements.satelliteLink.href = `${SLIDER_BASE}/?sat=${satellite}&sector=${sector}&product=${selectedProduct.key}&z=0&im=1`;
+      // SLIDER selects products by numeric index (p), not by name, so open the
+      // matching satellite and sector and let its own product picker take over.
+      elements.satelliteLink.href = `${SLIDER_BASE}/?sat=${satellite}&sec=${sector}&z=0&im=1`;
     }
 
     const timestamps = await fetchLatestSliderTimestamps(satellite, sector, selectedProduct.key);

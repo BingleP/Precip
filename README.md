@@ -173,6 +173,7 @@ img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov;
 | `/api/spc-outlook` | SPC ArcGIS | `layer` |
 | `/api/wildfires` | CWFIS WFS + NASA FIRMS | `bbox` (west,south,east,north) |
 | `/api/slider-catalog` | RAMMB/CIRA SLIDER | `satellite`, `sector` |
+| `/api/slider-products` | RAMMB/CIRA SLIDER (filtered product catalog) | `satellite`, `sector` |
 | `/api/slider-image` | RAMMB/CIRA SLIDER | `satellite`, `sector`, `product`, `timestamp` |
 | `/api/slider-latest-times` | RAMMB/CIRA SLIDER | `satellite`, `sector`, `product` |
 | `/api/earthquakes-us` | USGS FDSNWS | `minMagnitude` |

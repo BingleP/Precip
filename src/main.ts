@@ -6,13 +6,13 @@ if (!document.cookie.split("; ").find((row) => row.startsWith("precip.preferredL
 }
 
 import type { Location, NwsAlert } from "./types";
-import { MAP_DEFAULT_ZOOM, NOAA_SECTORS, SLIDER_SATELLITES, SLIDER_BASE, } from "./config";
+import { MAP_DEFAULT_ZOOM, NOAA_SECTORS, SLIDER_SATELLITES } from "./config";
 import { getAppSettings, saveAppSettings, getPreferredLocation, savePreferredLocation, getWatchlist, getForecastHistory, saveForecastHistory, saveWatchlist, removeCookieValue, } from "./storage";
-import { fetchNoaaSectorCatalog, fetchSliderCatalog, fetchLatestSliderTimestamps, fetchAllAlerts, fetchWildfires, fetchActiveCyclones, fetchStormForecast, fetchStormCone, fetchAllEarthquakes } from "./api";
+import { fetchAllAlerts, fetchWildfires, fetchActiveCyclones, fetchStormForecast, fetchStormCone, fetchAllEarthquakes } from "./api";
 import { resolveLocation, searchLocationSuggestions, searchAlertSuggestions, getAlertCentroid, } from "./search";
 import { zoomMap, startMapDrag, moveMapDrag, endMapDrag, resetMapView, updateMapTooltip, hideMapTooltip, } from "./map";
 import { latLonToWorld, worldToLatLon } from "./geo";
-import { updateSatelliteForLocation, loadSatelliteSector, getNoaaSectorById, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, renderSatelliteProductOptions, renderSatelliteImage, updateSliderForLocation, loadSliderSector, setActiveSource, loadSliderImageWithFallback, resolveSliderSatellite, resolveSliderSector } from "./satellite";
+import { updateSatelliteForLocation, loadSatelliteSector, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, updateSliderForLocation, loadSliderSector, setActiveSource, resolveSliderSatellite, resolveSliderSector } from "./satellite";
 import { setMapCenterAlerts, setMapCenterWildfires, getAllAlerts, showStormTracks, setShowStormTracks, setActiveCyclones, setStormForecast, setStormCone, showEarthquakes, setShowEarthquakes, setEarthquakes, setEarthquakeMaxAge } from "./alerts";
 import { selectTab, togglePanel, formatLocationLabel, normalizeSearchText, showToast } from "./ui";
 import { loadBrowseAlerts } from "./panels/alerts";
@@ -530,119 +530,55 @@ elements.satelliteSourceSelect?.addEventListener("change", () => {
 elements.satelliteSatelliteSelect?.addEventListener("change", () => {
   const satId = elements.satelliteSatelliteSelect?.value || SLIDER_SATELLITES[0].id;
   const sat = SLIDER_SATELLITES.find((s) => s.id === satId) || SLIDER_SATELLITES[0];
+  // Keep the animation the user picked. The load helper falls back when the
+  // new satellite/sector does not carry the same product.
+  const preferredProductKey = elements.satelliteProductSelect?.value || "";
   if (elements.satelliteSectorSelect) {
     elements.satelliteSectorSelect.innerHTML = sat.sectors
       .map((sector) => `<option value="${sector.id}">${sector.name}</option>`)
       .join("");
   }
   if (elements.satelliteProductSelect) {
-    elements.satelliteProductSelect.innerHTML = `<option value="">Select a location first</option>`;
+    elements.satelliteProductSelect.innerHTML = activeLocation
+      ? `<option value="">Loading animations...</option>`
+      : `<option value="">Select a location first</option>`;
   }
   setSatelliteTabLoaded(false);
   if (activeLocation) {
     setSatelliteTabLoaded(true);
     const sector = resolveSliderSector(sat, activeLocation);
-    loadSliderSector(sat.id, sector.id, { autoSelected: false, elements: getSatelliteElements() });
+    loadSliderSector(sat.id, sector.id, { preferredProductKey, elements: getSatelliteElements() });
   }
 });
 
 elements.satelliteSectorSelect?.addEventListener("change", () => {
   const source = elements.satelliteSourceSelect?.value || "noaa";
+  // Switching sectors should not silently reset the animation to GeoColor.
+  const preferredProductKey = elements.satelliteProductSelect?.value || "";
   if (source === "slider") {
     const satId = elements.satelliteSatelliteSelect?.value || SLIDER_SATELLITES[0].id;
     loadSliderSector(satId, elements.satelliteSectorSelect?.value || "", {
-      preferredProductKey: "cira_geocolor",
+      preferredProductKey,
       elements: getSatelliteElements(),
     });
   } else {
     loadSatelliteSector(elements.satelliteSectorSelect?.value || "", {
-      preferredProductKey: "geocolor",
+      preferredProductKey,
       elements: getSatelliteElements(),
     });
   }
 });
 
-let satelliteCatalogRequestToken = 0;
-
-elements.satelliteProductSelect?.addEventListener("change", async () => {
+elements.satelliteProductSelect?.addEventListener("change", () => {
   const source = elements.satelliteSourceSelect?.value || "noaa";
-  const requestToken = ++satelliteCatalogRequestToken;
-
+  const preferredProductKey = elements.satelliteProductSelect?.value || "";
   if (source === "slider") {
     const satId = elements.satelliteSatelliteSelect?.value || SLIDER_SATELLITES[0].id;
     const sectorId = elements.satelliteSectorSelect?.value || SLIDER_SATELLITES[0].sectors[0].id;
-    try {
-      const catalog = await fetchSliderCatalog(satId, sectorId);
-      if (requestToken !== satelliteCatalogRequestToken) return;
-      const selectedProduct =
-        catalog.products.find((product) => product.key === elements.satelliteProductSelect?.value) || catalog.products[0];
-      renderSatelliteProductOptions(catalog.products, selectedProduct.key, elements.satelliteProductSelect);
-      if (elements.satelliteStatus) {
-        elements.satelliteStatus.textContent = `${satId} ${sectorId}`;
-        elements.satelliteStatus.className = "status-pill";
-      }
-      if (elements.satelliteImage) {
-        elements.satelliteImage.hidden = false;
-        const timestamps = await fetchLatestSliderTimestamps(satId, sectorId, selectedProduct.key);
-        const bestTs = timestamps.length > 0 ? String(timestamps[0]) : undefined;
-        loadSliderImageWithFallback(
-          satId, sectorId, selectedProduct.key,
-          elements.satelliteImage,
-          () => { if (elements.satelliteEmpty) elements.satelliteEmpty.hidden = true; },
-          () => {
-            if (elements.satelliteStatus) {
-              elements.satelliteStatus.textContent = "SLIDER unavailable";
-              elements.satelliteStatus.className = "status-pill standby";
-            }
-            if (elements.satelliteEmpty) {
-              elements.satelliteEmpty.textContent = "No SLIDER image available.";
-              elements.satelliteEmpty.hidden = false;
-            }
-            if (elements.satelliteImage) elements.satelliteImage.hidden = true;
-          },
-          bestTs,
-        );
-      }
-      if (elements.satelliteLink) {
-        elements.satelliteLink.href = `${SLIDER_BASE}/?sat=${satId}&sector=${sectorId}&product=${selectedProduct.key}&z=0&im=1`;
-      }
-      if (elements.satelliteEmpty) elements.satelliteEmpty.hidden = true;
-    } catch (error) {
-      if (requestToken !== satelliteCatalogRequestToken) return;
-      if (elements.satelliteEmpty) {
-        elements.satelliteEmpty.textContent = (error as Error).message;
-        elements.satelliteEmpty.hidden = false;
-      }
-      if (elements.satelliteImage) elements.satelliteImage.hidden = true;
-    }
+    loadSliderSector(satId, sectorId, { preferredProductKey, elements: getSatelliteElements() });
   } else {
-    const sectorId = elements.satelliteSectorSelect?.value || "";
-    const sector = getNoaaSectorById(sectorId || getActiveSatelliteSectorId() || NOAA_SECTORS[0].id);
-    try {
-      const catalog = await fetchNoaaSectorCatalog(sector);
-      if (requestToken !== satelliteCatalogRequestToken) return;
-      const selectedProduct =
-        catalog.products.find((product) => product.key === elements.satelliteProductSelect?.value) || catalog.products[0];
-      renderSatelliteProductOptions(
-        catalog.products,
-        selectedProduct.key,
-        elements.satelliteProductSelect,
-      );
-      renderSatelliteImage(sector, selectedProduct, {
-        satelliteStatus: elements.satelliteStatus,
-        satelliteCopy: elements.satelliteCopy,
-        satelliteLink: elements.satelliteLink,
-        satelliteImage: elements.satelliteImage,
-        satelliteEmpty: elements.satelliteEmpty,
-      });
-    } catch (error) {
-      if (requestToken !== satelliteCatalogRequestToken) return;
-      if (elements.satelliteEmpty) {
-        elements.satelliteEmpty.textContent = (error as Error).message;
-        elements.satelliteEmpty.hidden = false;
-      }
-      if (elements.satelliteImage) elements.satelliteImage.hidden = true;
-    }
+    const sectorId = elements.satelliteSectorSelect?.value || getActiveSatelliteSectorId() || NOAA_SECTORS[0].id;
+    loadSatelliteSector(sectorId, { preferredProductKey, elements: getSatelliteElements() });
   }
 });
 

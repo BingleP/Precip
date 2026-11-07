@@ -1,5 +1,5 @@
 import type { Forecast, AirQuality, NwsAlert, SpcCollection, NoaaCatalog, NoaaSector, Location, CacheMeta, NoaaProduct, WildfireFeature, TropicalCyclone, StormTrackPoint, ConePoint, Earthquake } from "./types";
-import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, ALERT_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES, SLIDER_PRODUCT_NAMES } from "./config";
+import { FORECAST_CACHE_TTL_MS, AIR_QUALITY_CACHE_TTL_MS, API_RATE_LIMIT_BACKOFF_MS, SATELLITE_CACHE_TTL_MS, ALERT_CACHE_TTL_MS, HEATMAP_MAX_CACHE_ENTRIES } from "./config";
 import { getCachedApiResponse, setCachedApiResponse } from "./storage";
 import { worldToLatLon } from "./geo";
 
@@ -216,9 +216,13 @@ export async function fetchNoaaSectorCatalog(sector: NoaaSector): Promise<NoaaCa
   fragment.querySelectorAll("h2").forEach((heading) => {
     const title = heading.textContent?.trim() || "";
     const summaryCard = heading.closest(".summaryContainer");
-    const linksPanel = summaryCard?.nextElementSibling;
-    const animatedLink = [...(linksPanel?.querySelectorAll("a") || [])].find(
-      (link) => /animated gif/i.test(link.textContent || ""),
+    // The .Links panel lives inside the same .summaryContainer as the
+    // heading. Looking at the next sibling instead picks up the following
+    // product's animation, shifting every entry by one.
+    const animatedLink = [...(summaryCard?.querySelectorAll("a") || [])].find(
+      // NOAA labels these links "AnimatedGIF" on current pages, with older
+      // pages using "Animated GIF". Match both, plus extra whitespace.
+      (link) => /animated\s*gif/i.test(link.textContent || ""),
     );
     if (!animatedLink) return;
     const url = animatedLink.getAttribute("href");
@@ -315,33 +319,31 @@ export async function fetchWildfires(bbox: { west: number; south: number; east: 
 }
 
 export async function fetchSliderCatalog(satellite: string, sector: string): Promise<NoaaCatalog> {
-  const url = buildApiUrl("/slider-catalog");
+  const cacheKey = `slider:${satellite}:${sector}`;
+  const cached = satelliteCatalogCache.get(cacheKey);
+  if (cached && Date.now() - cached.savedAt < SATELLITE_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  const url = buildApiUrl("/slider-products");
   url.searchParams.set("satellite", satellite);
   url.searchParams.set("sector", sector);
   const response = await fetch(url);
   if (!response.ok) throw new Error(`SLIDER catalog unavailable for ${satellite}/${sector}`);
 
-  const html = await response.text();
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, "text/html");
-  const products: NoaaProduct[] = [];
-  const seen = new Set<string>();
+  const body = await response.json() as { products?: NoaaProduct[] };
+  const products = (body.products || [])
+    .filter((product) => product && typeof product.key === "string" && product.key)
+    .map((product) => ({
+      key: product.key,
+      title: String(product.title || product.key).trim(),
+      url: "",
+    }));
 
-  for (const link of doc.querySelectorAll("a")) {
-    const href = link.getAttribute("href");
-    if (!href) continue;
-    const name = href.replace(/\/$/, "");
-    if (!name || name === ".." || name.startsWith(".")) continue;
-    if (name === "geocolor" && seen.has("cira_geocolor")) continue;
-    if (seen.has(name)) continue;
-    seen.add(name);
-
-    const title = SLIDER_PRODUCT_NAMES[name] || name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-    products.push({ key: name, title, url: "" });
-  }
-
-  if (!products.length) throw new Error("No SLIDER products found");
-  return { products };
+  if (!products.length) throw new Error(`No SLIDER products available for ${satellite}/${sector}`);
+  const data: NoaaCatalog = { products };
+  satelliteCatalogCache.set(cacheKey, { savedAt: Date.now(), data });
+  return data;
 }
 
 export async function fetchLatestSliderTimestamps(

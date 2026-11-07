@@ -6,7 +6,7 @@ import { fetchHeatmap } from "../heatmap";
 import { resolveLocation, reverseGeocodeLocation } from "../search";
 import { updateNwsAlerts, setLatestAlerts, setLatestSpcCat, setLatestSpcTorn, renderSpcOutlook, setMapCenterAlerts } from "../alerts";
 import { renderLocalAlerts } from "../panels/alerts";
-import { updateSatelliteForLocation, setSatelliteTabLoaded } from "../satellite";
+import { updateSatelliteForLocation, updateSliderForLocation, setSatelliteTabLoaded } from "../satellite";
 import { updateCurrentConditions, updateWeatherWarning, setWarningBarStandby, updateWarningBar } from "../panels/now";
 import { renderPatterns, renderStormToolkit, renderConfidence, renderContext } from "../panels/trends";
 import { renderDailyForecast, renderWeeklyForecast, renderHourlyForecast } from "../panels/forecast";
@@ -39,15 +39,23 @@ export async function loadWeather(query: Location | string): Promise<void> {
     const overlayVisible = elements.satelliteOverlay && !elements.satelliteOverlay.hidden;
     if (overlayVisible) {
       setSatelliteTabLoaded(true);
-      updateSatelliteForLocation(resolved, {
+      const satelliteElements = {
         satelliteStatus: elements.satelliteStatus,
         satelliteCopy: elements.satelliteCopy,
         satelliteEmpty: elements.satelliteEmpty,
         satelliteImage: elements.satelliteImage,
         satelliteProductSelect: elements.satelliteProductSelect,
         satelliteSectorSelect: elements.satelliteSectorSelect,
+        satelliteSatelliteSelect: elements.satelliteSatelliteSelect,
         satelliteLink: elements.satelliteLink,
-      });
+      };
+      // Reload the source that is actually selected. Previously a location
+      // change always forced NOAA, even while SLIDER was on screen.
+      if (elements.satelliteSourceSelect?.value === "slider") {
+        updateSliderForLocation(resolved, satelliteElements);
+      } else {
+        updateSatelliteForLocation(resolved, satelliteElements);
+      }
     }
     updateSettingsUI();
     setActiveMapHourOffset(settings.mapHourOffset);

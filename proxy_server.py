@@ -16,7 +16,7 @@ from proxy_upstream import (
     ALLOWED_ENDPOINTS, require, fetch_upstream, fetch_json,
     build_upstream, build_geocode_payload, build_ca_alerts_payload,
     build_us_alerts_payload, build_all_alerts_payload,
-    build_wildfires_payload, fetch_slider_image,
+    build_wildfires_payload, fetch_slider_image, build_slider_products_payload,
     build_earthquakes_ca_payload,
     build_nhc_active_payload,
     build_nhc_forecast_payload,
@@ -266,6 +266,18 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/wildfires":
                 bbox = require(query, "bbox").strip()
                 body = build_wildfires_payload(bbox)
+                cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
+                self.send_response(200)
+                self.send_common_headers("application/json; charset=utf-8", len(body))
+                self.send_header("X-Precip-Cache", "MISS")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/slider-products":
+                satellite = require(query, "satellite").strip()
+                sector = require(query, "sector").strip()
+                body = build_slider_products_payload(satellite, sector)
                 cache_set(cache_key, body, CACHE_TTLS[parsed.path], "application/json; charset=utf-8")
                 self.send_response(200)
                 self.send_common_headers("application/json; charset=utf-8", len(body))

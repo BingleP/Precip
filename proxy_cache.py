@@ -13,6 +13,7 @@ CACHE_TTLS = {
     "/api/ca-alerts": 300,
     "/api/all-alerts": 300,
     "/api/slider-catalog": 600,
+    "/api/slider-products": 600,
     "/api/slider-image": 300,
     "/api/slider-latest-times": 600,
     "/api/wildfires": 900,
