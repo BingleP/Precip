@@ -218,7 +218,27 @@ function startFieldFetch(request: FieldRequest): void {
   url.searchParams.set("rows", String(request.rows));
   fetch(url, { cache: "no-store" })
     .then((response) => {
-      if (!response.ok) throw new Error(`field request failed: ${response.status}`);
+      if (!response.ok) {
+        if (response.status === 429) {
+          // The proxy forwards Open-Meteo's retry_after; honour it so an
+          // exhausted quota does not turn every pan into another 429.
+          return response.json().then(
+            (body: { retry_after?: unknown }) => {
+              const seconds = Number(body?.retry_after);
+              const waitMs = Number.isFinite(seconds) && seconds > 0
+                ? Math.min(10 * 60_000, Math.max(15_000, seconds * 1000))
+                : 60_000;
+              fieldRetryAfter = Date.now() + waitMs;
+              throw new Error("field rate limited");
+            },
+            () => {
+              fieldRetryAfter = Date.now() + 60_000;
+              throw new Error("field request failed: 429");
+            },
+          );
+        }
+        throw new Error(`field request failed: ${response.status}`);
+      }
       return response.json();
     })
     .then((data: Record<string, unknown>) => {
@@ -255,7 +275,7 @@ function startFieldFetch(request: FieldRequest): void {
     .catch(() => {
       // Upstream failure / rate limit: keep any covering grid on screen and
       // pause retries so a stuck viewport cannot hammer Open-Meteo.
-      fieldRetryAfter = Date.now() + 15_000;
+      fieldRetryAfter = Math.max(fieldRetryAfter, Date.now() + 15_000);
     })
     .finally(() => {
       activeFieldKey = null;
