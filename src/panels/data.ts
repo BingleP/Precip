@@ -298,13 +298,16 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
   const rasterOverlay = overlayLayer?.kind === "raster";
 
   // Raster weather layers sit between the basemap and the scalar field.
-  if (rasterOverlay && overlayLayer) {
+  // During a pan we skip them: every drag frame changes the bbox, which would
+  // otherwise fire a fresh WMS/tile request per frame. They are restored on
+  // pointerup. Tiles + the location marker keep moving with the map.
+  if (rasterOverlay && overlayLayer && !mapState.drag) {
     drawRasterWeatherLayer(ctx, overlayLayer, width, height, mapState, zoomRound, activeMapLayerOpacity, activeMapHourOffset);
   }
 
   if (rasterPrimary && primaryLayer) {
-    drawRasterWeatherLayer(ctx, primaryLayer, width, height, mapState, zoomRound, activeMapLayerOpacity, activeMapHourOffset);
     if (!mapState.drag) {
+      drawRasterWeatherLayer(ctx, primaryLayer, width, height, mapState, zoomRound, activeMapLayerOpacity, activeMapHourOffset);
       if (primaryLayer.id === "satCloud") {
         // Satellite imagery: start the five-minute refresh on first paint.
         startCloudRefresh(() => {

@@ -593,7 +593,13 @@ export function drawFieldOverlay(
     fieldCanvas = document.createElement("canvas");
     fieldCtx = fieldCanvas.getContext("2d")!;
   }
-  const scaleFactor = 0.75;
+  // Cap the offscreen buffer so a 4K viewport does not spend ~8M per-pixel
+  // bilinear samples on every redraw; the smoothed upscale hides the loss.
+  const FIELD_RENDER_MAX_PIXELS = 1_500_000;
+  const scaleFactor = Math.max(
+    0.25,
+    Math.min(0.75, Math.sqrt(FIELD_RENDER_MAX_PIXELS / Math.max(1, width * height))),
+  );
   const renderW = Math.max(64, Math.round(width * scaleFactor));
   const renderH = Math.max(64, Math.round(height * scaleFactor));
   if (fieldCanvas.width !== renderW || fieldCanvas.height !== renderH) {

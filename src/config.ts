@@ -2,10 +2,10 @@ import type { NoaaSector, Location, SliderSatellite } from "./types";
 
 export const HOURS_TO_SHOW = 24;
 export const HEATMAP_MIN_COLUMNS = 5;
-export const HEATMAP_MAX_COLUMNS = 5;
+export const HEATMAP_MAX_COLUMNS = 7;
 export const HEATMAP_MIN_ROWS = 4;
-export const HEATMAP_MAX_ROWS = 4;
-export const HEATMAP_VIEW_PADDING = 120;
+export const HEATMAP_MAX_ROWS = 6;
+export const HEATMAP_VIEW_PADDING = 320;
 export const HEATMAP_CACHE_TTL_MS = 15 * 60 * 1000;
 export const HEATMAP_MAX_CACHE_ENTRIES = 24;
 export const FORECAST_CACHE_TTL_MS = 10 * 60 * 1000;

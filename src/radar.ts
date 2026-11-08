@@ -332,8 +332,14 @@ function drawWmsProvider(
   const east = Math.ceil((west + width * metresPerPixel + WMS_SNAP_M) / WMS_SNAP_M) * WMS_SNAP_M;
   const south = north - Math.ceil((height * metresPerPixel + WMS_SNAP_M) / WMS_SNAP_M) * WMS_SNAP_M;
 
-  const imageWidth = Math.min(1600, Math.max(128, Math.round((east - west) / metresPerPixel)));
-  const imageHeight = Math.min(1600, Math.max(128, Math.round((north - south) / metresPerPixel)));
+  // Request resolution is capped so one image stays cheap, but the image must
+  // always be drawn at the geographic extent of the bbox. Using the requested
+  // pixel size here made the layer shrink into the corner on large (4K) or
+  // high-DPR viewports.
+  const extentWidth = (east - west) / metresPerPixel;
+  const extentHeight = (north - south) / metresPerPixel;
+  const imageWidth = Math.min(2048, Math.max(128, Math.round(extentWidth)));
+  const imageHeight = Math.min(2048, Math.max(128, Math.round(extentHeight)));
   const cacheKey = `geomet:${west},${south},${east},${north},${imageWidth}x${imageHeight}`;
   const url = buildApiUrl("/radar-wms");
   url.searchParams.set("bbox", `${west},${south},${east},${north}`);
@@ -344,7 +350,7 @@ function drawWmsProvider(
   if (image.complete && image.naturalWidth) {
     const drawX = (west + EARTH_HALF_CIRCUMFERENCE_M) / metresPerPixel - topLeftX;
     const drawY = topLeftY - (EARTH_HALF_CIRCUMFERENCE_M - north) / metresPerPixel;
-    ctx.drawImage(image, drawX, drawY, imageWidth, imageHeight);
+    ctx.drawImage(image, drawX, drawY, extentWidth, extentHeight);
     return { requested: 1, failed: 0 };
   }
   if (image.complete && !image.naturalWidth) return { requested: 1, failed: 1 };

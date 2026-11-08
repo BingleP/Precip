@@ -227,10 +227,14 @@ export function drawForecastRasterLayer(
   const image = getWmsImage(product, validTime, geo);
   const drawX = (geo.west + EARTH_HALF_CIRCUMFERENCE_M) / geo.metresPerPixel - geo.topLeftX;
   const drawY = geo.topLeftY - (EARTH_HALF_CIRCUMFERENCE_M - geo.north) / geo.metresPerPixel;
+  // Draw at the bbox's geographic extent, never at the (capped) request pixel
+  // size — otherwise the raster shrinks and misaligns on 4K viewports.
+  const drawWidth = (geo.east - geo.west) / geo.metresPerPixel;
+  const drawHeight = (geo.north - geo.south) / geo.metresPerPixel;
 
   if (image.complete && image.naturalWidth) {
     if (product.endsWith("cloud")) {
-      const cacheKey = `${product}:${validTime}:${geo.west},${geo.south},${geo.east},${geo.north}`;
+      const cacheKey = `${product}:${validTime}:${geo.west},${geo.south},${geo.east},${geo.north},${geo.imageWidth}x${geo.imageHeight}`;
       let processed = processedCache.get(cacheKey);
       if (!processed) {
         processed = processCloudWms(image) ?? undefined;
@@ -243,10 +247,10 @@ export function drawForecastRasterLayer(
         }
       }
       if (processed) {
-        offscreenCtx.drawImage(processed, drawX, drawY, geo.imageWidth, geo.imageHeight);
+        offscreenCtx.drawImage(processed, drawX, drawY, drawWidth, drawHeight);
       }
     } else {
-      offscreenCtx.drawImage(image, drawX, drawY, geo.imageWidth, geo.imageHeight);
+      offscreenCtx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
     }
   }
 

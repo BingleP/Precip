@@ -58,8 +58,9 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
    - **Cone of uncertainty** — 2–5 day track cone built from NHC forecast track + hardcoded radii table (per-season)
    - All NHC data is fetched, parsed, and cached by the proxy (storm list: 10 min, forecast + cone: 15 min)
 - **Performance optimizations:**
-  - **Scalar fields**: dense adaptive grids (`/api/field`) with bilinear + LUT rendering; contours/streamlines; snapping for server+client cache reuse
-  - **Weather rasters**: WMS/bbox-snap caching and prefetch so pans don't storm the proxy (30 pan steps → 0 new field requests)
+  - **Scalar fields**: dense adaptive grids (`/api/field`) with bilinear + LUT rendering; contours/streamlines; 40% viewport overscan + coverage cache so ordinary pans reuse a fetched grid; requests are serialized and fetch a single forecast hour (340–390 points, under Open-Meteo's per-location limit)
+  - **Weather rasters**: WMS/bbox-snap caching and prefetch so pans don't storm the proxy (30 pan steps → 0 new field requests); rasters are drawn at their bbox extent (correct at 4K/high-DPR) and skipped while dragging, then restored on pointerup
+  - **Heatmaps**: padded viewport coverage cache (320 px padding, up to 7×6 samples) so small pans reuse samples
   - **Wildfire hotspots**: color-bucket batching (3 draw calls vs N), spatial clustering at zoom < 7, frustum culling
   - **Alert polygons**: full screen-coordinate memoization + grid spatial index for hover hit-testing
   - **Forecast chart**: static layer cached to offscreen canvas; only hover indicator redrawn on mouse move

@@ -676,3 +676,60 @@ Status: deployed to precip.kerrick.ca and verified on production.
 5. **Satellite relationship**: **keep separate** — the Satellite animation
    panel stays its own feature; the map gets a static/looping cloud raster
    layer.
+
+---
+
+## 11. Phase 7 record — data-loading and 4K raster fixes (2026-11-07)
+
+**Symptoms**
+
+- Panning refetched scalar fields and heatmap samples on almost every move,
+  so the map felt slow and the wind field lagged behind the basemap.
+- GeoMet radar and GDPS forecast rasters shrank into the corner on large
+  (4K) or high-DPR viewports.
+- Wind streamlines took seconds to appear.
+
+**Root causes and fixes**
+
+1. **WMS draw size.** `drawWmsProvider` (radar) and `drawForecastRasterLayer`
+   drew the image at the *requested* pixel size (capped at 1600/2048 px)
+   instead of the bbox's geographic extent. They now always draw at
+   `(east - west) / metresPerPixel` × `(north - south) / metresPerPixel`;
+   the request size is only a resolution cap. Radar's cap is 2048 px,
+   forecast rasters stay at 1600 px (cloud post-processing cost).
+2. **Field viewport coverage.** `/api/field` requests now expand 40% beyond
+   the viewport and snap to whole grid cells, and the client keeps a cache of
+   fetched grids. Any cached grid whose bounds cover the new viewport is
+   reused (stale-while-revalidate after 10 min). Panning inside the margin
+   makes no request.
+3. **Serialized upstream fetches.** Open-Meteo's free tier counts one call
+   per grid location (600/minute, 5,000/hour). Field fetches are serialized
+   client-side (one active, newest queued) with a 15 s cooldown after a
+   failure/429, and the proxy requests exactly one forecast hour
+   (`start_hour`/`end_hour`, `timezone=GMT`) instead of 24.
+4. **Point budget.** `getFieldGridSpec` targets 340–390 points (close to the
+   visible budget) and the proxy rejects `cols * rows > 480`, keeping each
+   request well under the upstream limit while preserving density.
+5. **Heatmap coverage.** Eight padded sample grids are kept in a coverage
+   cache; `HEATMAP_VIEW_PADDING` is 320 px and the grid maxes at 7×6, so
+   ordinary pans reuse samples.
+6. **Drag-time raster skip.** While `mapState.drag` is active, raster weather
+   layers are not composited; they are restored on pointerup. Tiles and the
+   location marker keep moving.
+7. **Field render budget.** The offscreen field buffer is capped at 1.5M
+   pixels, so 4K redraws stay smooth; the smoothed upscale hides the loss.
+
+**Verification (dev, 3216×1939 canvas at DPR 1)**
+
+- 250 px pan: 0 `/api/field`, 0 heatmap, 0 WMS requests.
+- 1400 px drag: 0 WMS requests during the drag; one field fetch afterwards.
+- GeoMet radar and forecast rain cover the full viewport and align with the
+  basemap at 3216×1939.
+- Wind field first paint ~0.2–0.6 s with a warm proxy cache; streamlines
+  render with the field.
+- Note: repeated dev-time grid fetches can exhaust Open-Meteo's hourly quota
+  for the proxy host IP; production runs from a different IP.
+
+**Files**: `src/field.ts`, `src/radar.ts`, `src/forecast-raster.ts`,
+`src/heatmap.ts`, `src/config.ts`, `src/panels/data.ts`, `src/map.ts`,
+`proxy_upstream.py`.

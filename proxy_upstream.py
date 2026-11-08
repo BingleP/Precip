@@ -1501,24 +1501,57 @@ FIELD_LAYER_UNITS = {
 FIELD_CHUNK = 100
 
 
-def _field_fetch_points(lats, lons, fields):
-    """Fetch hourly values for grid points in chunks of FIELD_CHUNK."""
+def _field_target_hour(hour):
+    """ISO start/end hour for the forecast-hour slider offset (UTC)."""
+    now = datetime.datetime.now(datetime.timezone.utc).replace(minute=0, second=0, microsecond=0)
+    target = now + datetime.timedelta(hours=hour)
+    return target.strftime("%Y-%m-%dT%H:00")
+
+
+def _field_fetch_chunk(chunk_lats, chunk_lons, fields, target_hour):
+    # Request exactly one forecast hour: the field only renders one hour at
+    # a time, and Open-Meteo weights usage by locations, so asking for 24
+    # hours of every variable is wasted payload and latency.
+    params = {
+        "latitude": ",".join(f"{v:.4f}" for v in chunk_lats),
+        "longitude": ",".join(f"{v:.4f}" for v in chunk_lons),
+        "hourly": ",".join(fields),
+        "start_hour": target_hour,
+        "end_hour": target_hour,
+        "timezone": "GMT",
+    }
+    url = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(params)
+    data = fetch_json(url)
+    rows = data if isinstance(data, list) else [data]
+    if len(rows) != len(chunk_lats):
+        raise ValueError("upstream grid chunk size mismatch")
+    return rows
+
+
+def _field_fetch_points(lats, lons, fields, hour):
+    """Fetch hourly values for grid points in chunks of FIELD_CHUNK.
+
+    Chunks are fetched concurrently (Open-Meteo accepts one multi-point call
+    per chunk); preserving submission order keeps the row-major grid stable.
+    """
+    starts = list(range(0, len(lats), FIELD_CHUNK))
+    if not starts:
+        return []
+    chunks = [
+        (lats[start:start + FIELD_CHUNK], lons[start:start + FIELD_CHUNK])
+        for start in starts
+    ]
+    target_hour = _field_target_hour(hour)
+    if len(chunks) == 1:
+        return _field_fetch_chunk(chunks[0][0], chunks[0][1], fields, target_hour)
     points = []
-    for start in range(0, len(lats), FIELD_CHUNK):
-        chunk_lats = lats[start:start + FIELD_CHUNK]
-        chunk_lons = lons[start:start + FIELD_CHUNK]
-        params = {
-            "latitude": ",".join(f"{v:.4f}" for v in chunk_lats),
-            "longitude": ",".join(f"{v:.4f}" for v in chunk_lons),
-            "hourly": ",".join(fields),
-            "forecast_hours": "24",
-        }
-        url = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(params)
-        data = fetch_json(url)
-        rows = data if isinstance(data, list) else [data]
-        if len(rows) != len(chunk_lats):
-            raise ValueError("upstream grid chunk size mismatch")
-        points.extend(rows)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(chunks))) as executor:
+        futures = [
+            executor.submit(_field_fetch_chunk, chunk_lats, chunk_lons, fields, target_hour)
+            for chunk_lats, chunk_lons in chunks
+        ]
+        for future in futures:  # futures list preserves request order
+            points.extend(future.result())
     return points
 
 
@@ -1528,8 +1561,12 @@ def build_field_payload(query):
     if fields is None:
         raise ValueError("unknown field layer")
     hour = _require_int(query, "hour", 0, 23)
-    cols = _require_int(query, "cols", 4, 28)
-    rows = _require_int(query, "rows", 4, 22)
+    cols = _require_int(query, "cols", 4, 36)
+    rows = _require_int(query, "rows", 4, 28)
+    # Open-Meteo's free tier allows 600 locations/minute. Refuse oversized
+    # grids instead of letting the upstream request fan out into a 429.
+    if cols * rows > 480:
+        raise ValueError("field grid too large")
 
     bbox_raw = require(query, "bbox").strip()
     parts = bbox_raw.split(",")
@@ -1566,7 +1603,7 @@ def build_field_payload(query):
             lats.append(row_lat[r])
             lons.append(col_lon[c])
 
-    points = _field_fetch_points(lats, lons, fields)
+    points = _field_fetch_points(lats, lons, fields, hour)
     values = []
     uvalues = [] if layer == "wind" else None
     vvalues = [] if layer == "wind" else None
@@ -1575,13 +1612,14 @@ def build_field_payload(query):
     for point in points:
         hourly = (point or {}).get("hourly") or {}
         series = hourly.get(fields[0]) or []
-        value = series[hour] if hour < len(series) else None
+        # Only the target hour is requested, so the series has one entry.
+        value = series[0] if series else None
         values.append(value if isinstance(value, (int, float)) and _math.isfinite(value) else None)
         if layer == "wind":
             speeds = hourly.get("wind_speed_10m") or []
             dirs = hourly.get("wind_direction_10m") or []
-            speed = speeds[hour] if hour < len(speeds) else None
-            direction = dirs[hour] if hour < len(dirs) else None
+            speed = speeds[0] if speeds else None
+            direction = dirs[0] if dirs else None
             if isinstance(speed, (int, float)) and isinstance(direction, (int, float)):
                 rad = _math.radians(direction)
                 uvalues.append(-speed * _math.sin(rad))
@@ -1590,8 +1628,8 @@ def build_field_payload(query):
                 uvalues.append(None)
                 vvalues.append(None)
         times = hourly.get("time") or []
-        if not valid_time and hour < len(times):
-            valid_time = times[hour]
+        if not valid_time and times:
+            valid_time = times[0]
 
     payload = {
         "layer": layer,

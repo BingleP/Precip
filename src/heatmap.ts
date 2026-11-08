@@ -20,7 +20,9 @@ export function getHeatmapViewportDefinition(
 ): HeatmapViewport {
   const { width, height } = getMapViewportSize(canvas);
   const centerWorld = latLonToWorld(center.latitude, center.longitude, zoom);
-  const padding = Math.max(60, Math.min(HEATMAP_VIEW_PADDING, Math.round(Math.min(width, height) * 0.2)));
+  // Overscan the viewport so pans smaller than the padding reuse the same
+  // sample grid instead of firing a fresh upstream request.
+  const padding = Math.max(60, Math.min(HEATMAP_VIEW_PADDING, Math.round(Math.min(width, height) * 0.4)));
   const left = centerWorld.x - width / 2 - padding;
   const right = centerWorld.x + width / 2 + padding;
   const top = centerWorld.y - height / 2 - padding;
@@ -74,15 +76,47 @@ export function buildHeatmapPoints(viewport: HeatmapViewport): HeatmapSample[] {
   return points;
 }
 
+/** In-memory viewport-coverage cache, so small pans reuse a fetched grid. */
+const HEATMAP_COVER_CACHE_MAX = 8;
+const heatmapCoverCache: HeatmapResult[] = [];
+
+function findCoveringHeatmap(viewport: HeatmapViewport): HeatmapResult | null {
+  // Compare the *visible* new viewport against the old (padded) bounds.
+  const visibleLeft = viewport.left + viewport.padding;
+  const visibleRight = viewport.right - viewport.padding;
+  const visibleTop = viewport.top + viewport.padding;
+  const visibleBottom = viewport.bottom - viewport.padding;
+  for (const result of heatmapCoverCache) {
+    const meta = result.meta;
+    if (meta.zoom !== viewport.zoom) continue;
+    if (
+      meta.left <= visibleLeft &&
+      meta.top <= visibleTop &&
+      meta.right >= visibleRight &&
+      meta.bottom >= visibleBottom
+    ) {
+      return result;
+    }
+  }
+  return null;
+}
+
 export async function fetchHeatmap(
   center: { latitude: number; longitude: number },
   zoom: number,
   canvas: HTMLCanvasElement,
 ): Promise<HeatmapResult> {
   const viewport = getHeatmapViewportDefinition(center, zoom, canvas);
+
+  const covering = findCoveringHeatmap(viewport);
+  if (covering) return covering;
+
   const cacheKey = [viewport.zoom, viewport.columns, viewport.rows, center.latitude.toFixed(2), center.longitude.toFixed(2)].join(":");
   const cached = getCachedHeatmap(cacheKey) as HeatmapResult | null;
-  if (cached) return cached;
+  if (cached) {
+    rememberCovering(cached);
+    return cached;
+  }
 
   const points = buildHeatmapPoints(viewport);
   const lats = points.map((p) => p.latitude.toFixed(2)).join(",");
@@ -109,5 +143,13 @@ export async function fetchHeatmap(
   };
 
   setCachedHeatmap(cacheKey, result);
+  rememberCovering(result);
   return result;
+}
+
+function rememberCovering(result: HeatmapResult): void {
+  const existing = heatmapCoverCache.findIndex((entry) => entry.meta.cacheKey === result.meta.cacheKey);
+  if (existing >= 0) heatmapCoverCache.splice(existing, 1);
+  heatmapCoverCache.unshift(result);
+  if (heatmapCoverCache.length > HEATMAP_COVER_CACHE_MAX) heatmapCoverCache.length = HEATMAP_COVER_CACHE_MAX;
 }
