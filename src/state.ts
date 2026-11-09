@@ -89,6 +89,7 @@ export interface Elements {
   mapHourLabel: HTMLElement | null;
   mapPlayButton: HTMLElement | null;
   mapReadout: HTMLElement | null;
+  mapUpdated: HTMLElement | null;
   mapTooltip: HTMLElement | null;
   mapHoverIndicator: HTMLElement | null;
   mapTitle: HTMLElement | null;
@@ -107,6 +108,7 @@ export interface Elements {
   locationInput: HTMLInputElement | null;
   locationSearchNote: HTMLElement | null;
   locationSuggestions: HTMLElement | null;
+  geolocateButton: HTMLButtonElement | null;
   defaultLocationLabel: HTMLElement | null;
   setDefaultLocationButton: HTMLButtonElement | null;
   resetDefaultLocationButton: HTMLButtonElement | null;
@@ -186,6 +188,7 @@ eventLog: document.querySelector("#event-log") as HTMLElement | null,
   mapHourLabel: document.querySelector("#map-hour-label") as HTMLElement | null,
   mapPlayButton: document.querySelector("#map-play-button") as HTMLElement | null,
   mapReadout: document.querySelector("#map-readout") as HTMLElement | null,
+  mapUpdated: document.querySelector("#map-updated") as HTMLElement | null,
   mapTooltip: document.querySelector("#map-tooltip") as HTMLElement | null,
   mapHoverIndicator: document.querySelector("#map-hover-indicator") as HTMLElement | null,
   mapTitle: document.querySelector("#map-title") as HTMLElement | null,
@@ -204,6 +207,7 @@ eventLog: document.querySelector("#event-log") as HTMLElement | null,
   locationInput: document.querySelector("#location-input") as HTMLInputElement | null,
   locationSearchNote: document.querySelector("#location-search-note") as HTMLElement | null,
   locationSuggestions: document.querySelector("#location-suggestions") as HTMLElement | null,
+  geolocateButton: document.querySelector("#geolocate-button") as HTMLButtonElement | null,
   defaultLocationLabel: document.querySelector("#default-location-label") as HTMLElement | null,
   setDefaultLocationButton: document.querySelector("#set-default-location-button") as HTMLButtonElement | null,
   resetDefaultLocationButton: document.querySelector("#reset-default-location-button") as HTMLButtonElement | null,

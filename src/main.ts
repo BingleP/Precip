@@ -9,7 +9,7 @@ import type { Location, NwsAlert } from "./types";
 import { MAP_DEFAULT_ZOOM, NOAA_SECTORS, SLIDER_SATELLITES } from "./config";
 import { getAppSettings, saveAppSettings, getPreferredLocation, savePreferredLocation, getWatchlist, getForecastHistory, saveForecastHistory, saveWatchlist, removeCookieValue, } from "./storage";
 import { fetchAllAlerts, fetchWildfires, fetchActiveCyclones, fetchStormForecast, fetchStormCone, fetchAllEarthquakes } from "./api";
-import { resolveLocation, searchLocationSuggestions, searchAlertSuggestions, getAlertCentroid, } from "./search";
+import { resolveLocation, searchLocationSuggestions, searchAlertSuggestions, getAlertCentroid, reverseGeocodeLocation, } from "./search";
 import { zoomMap, startMapDrag, moveMapDrag, endMapDrag, resetMapView, updateMapTooltip, hideMapTooltip, } from "./map";
 import { latLonToWorld, worldToLatLon } from "./geo";
 import { updateSatelliteForLocation, loadSatelliteSector, isSatelliteTabLoaded, setSatelliteTabLoaded, getActiveSatelliteSectorId, updateSliderForLocation, loadSliderSector, setActiveSource, resolveSliderSatellite, resolveSliderSector } from "./satellite";
@@ -38,8 +38,9 @@ import {
   setTimelineValue, toggleMapAnimation,
 } from "./panels/data";
 import {
-  loadWeather, selectMapLocation,
+  loadWeather, selectMapLocation, getLastWeatherLoadAt,
 } from "./panels/weather-loader";
+import { enableUrlPush, parseUrlState, type UrlState } from "./url-state";
 import { renderTropicalPanel } from "./panels/tropical";
 
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -923,6 +924,164 @@ document.addEventListener("click", (e) => {
   }
 });
 
+// --- Auto-refresh, deep links, geolocation, keyboard, PWA ---
+
+const AUTO_REFRESH_MS = 10 * 60 * 1000;
+
+async function loadLocationFromCoords(
+  latitude: number,
+  longitude: number,
+  options: { silent?: boolean } = {},
+): Promise<void> {
+  try {
+    const location = await reverseGeocodeLocation(latitude, longitude);
+    await loadWeather(location, options);
+  } catch {
+    // Reverse geocoding is a nicety; forecasts only need the coordinates.
+    await loadWeather(
+      { name: `${latitude.toFixed(2)}, ${longitude.toFixed(2)}`, latitude, longitude },
+      options,
+    );
+  }
+}
+
+/** Apply URL-only controls after the location load has settled. */
+function applyUrlOverrides(state: UrlState): void {
+  if (state.layer) setActiveHeatmapLayer(state.layer, { persist: true });
+  if (state.overlay !== undefined) setActiveMapOverlayLayer(state.overlay, { persist: true });
+  if (state.hour !== null) setActiveMapHourOffset(state.hour, { persist: true });
+  if (state.opacity !== null) setActiveMapLayerOpacity(state.opacity, { persist: true });
+}
+
+async function applyUrlState(state: UrlState): Promise<void> {
+  if (state.zoom !== null) mapState.zoom = state.zoom;
+  const locationChanged =
+    state.latitude !== null &&
+    state.longitude !== null &&
+    (!activeLocation ||
+      Math.abs(activeLocation.latitude - state.latitude) > 1e-4 ||
+      Math.abs(activeLocation.longitude - state.longitude) > 1e-4);
+  if (locationChanged && state.latitude !== null && state.longitude !== null) {
+    await loadLocationFromCoords(state.latitude, state.longitude, { silent: true });
+    applyUrlOverrides(state);
+    return;
+  }
+  applyUrlOverrides(state);
+  if (state.zoom !== null) {
+    if (latestHeatmap) renderHeatmap(latestHeatmap, activeHeatmapLayer);
+    scheduleHeatmapRefresh(0);
+  }
+}
+
+function maybeAutoRefresh(force = false): void {
+  if (!activeLocation || document.hidden || !navigator.onLine) return;
+  if (!force && Date.now() - getLastWeatherLoadAt() < AUTO_REFRESH_MS) return;
+  // keepMapView: a background refresh must not yank a user who has panned.
+  void loadWeather(activeLocation, { silent: true, keepMapView: true });
+}
+
+window.setInterval(() => maybeAutoRefresh(), 60_000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) maybeAutoRefresh();
+});
+window.addEventListener("online", () => {
+  showToast("Back online. Refreshing weather.", "success", 2500);
+  maybeAutoRefresh(true);
+});
+window.addEventListener("offline", () => {
+  showToast("You are offline. Showing the last loaded data.", "info", 4000);
+});
+window.addEventListener("popstate", () => {
+  void applyUrlState(parseUrlState(window.location.search));
+});
+
+elements.geolocateButton?.addEventListener("click", () => {
+  const button = elements.geolocateButton;
+  if (!button) return;
+  if (!navigator.geolocation) {
+    showToast("Geolocation is not supported by this browser.", "error", 4000);
+    return;
+  }
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      void loadLocationFromCoords(position.coords.latitude, position.coords.longitude);
+    },
+    (error) => {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      const message = error.code === error.PERMISSION_DENIED
+        ? "Location permission denied. Enable it in your browser settings."
+        : error.code === error.TIMEOUT
+          ? "Location request timed out. Try again."
+          : "Your location is unavailable right now.";
+      showToast(message, "error", 4000);
+    },
+    { enableHighAccuracy: false, maximumAge: 5 * 60 * 1000, timeout: 12000 },
+  );
+});
+
+heatmapCanvas?.addEventListener("keydown", (event) => {
+  if (!heatmapCanvas) return;
+  const panStep = 80;
+  const zoomRound = Math.round(mapState.zoom);
+  const centerWorld = latLonToWorld(mapState.center.latitude, mapState.center.longitude, zoomRound);
+  let dx = 0;
+  let dy = 0;
+  if (event.key === "ArrowLeft") dx = -panStep;
+  else if (event.key === "ArrowRight") dx = panStep;
+  else if (event.key === "ArrowUp") dy = -panStep;
+  else if (event.key === "ArrowDown") dy = panStep;
+
+  if (dx !== 0 || dy !== 0) {
+    event.preventDefault();
+    mapState.center = worldToLatLon(centerWorld.x + dx, centerWorld.y + dy, zoomRound);
+    hideMapTooltip({ mapTooltip: elements.mapTooltip, mapHoverIndicator: elements.mapHoverIndicator });
+    renderHeatmap(latestHeatmap, activeHeatmapLayer);
+    scheduleHeatmapRefresh();
+    scheduleMapCenterAlertFetch();
+    scheduleWildfireFetch();
+    return;
+  }
+
+  const zoomBy = (delta: number) => {
+    zoomMap(delta, mapState, () => {
+      hideMapTooltip({ mapTooltip: elements.mapTooltip, mapHoverIndicator: elements.mapHoverIndicator });
+      renderHeatmap(latestHeatmap, activeHeatmapLayer);
+    }, () => {
+      scheduleHeatmapRefresh();
+      scheduleMapCenterAlertFetch();
+      scheduleWildfireFetch();
+    });
+  };
+
+  if (event.key === "+" || event.key === "=") {
+    event.preventDefault();
+    zoomBy(1);
+  } else if (event.key === "-" || event.key === "_") {
+    event.preventDefault();
+    zoomBy(-1);
+  } else if (event.key === "Home") {
+    event.preventDefault();
+    resetMapView(mapState, MAP_DEFAULT_ZOOM, activeLocation);
+    renderHeatmap(latestHeatmap, activeHeatmapLayer);
+    scheduleHeatmapRefresh(0);
+    scheduleMapCenterAlertFetch();
+    scheduleWildfireFetch();
+  }
+});
+
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js").catch(() => {
+      // The app works without the service worker; registration is optional.
+    });
+  });
+}
+
 // --- Init ---
 selectTab("now");
 const appShell = document.querySelector(".app-shell");
@@ -962,15 +1121,27 @@ if (elements.satelliteSatelliteWrapper) {
 renderWatchlistUI();
 updateSettingsUI();
 
+const urlState = parseUrlState(window.location.search);
+if (urlState.zoom !== null) mapState.zoom = urlState.zoom;
+
 const preferredLocation = getPreferredLocation();
-if (preferredLocation) {
-  if (elements.locationInput) {
-    elements.locationInput.value = typeof preferredLocation === "string"
-      ? preferredLocation
-      : formatLocationLabel(preferredLocation);
+async function initialLoad(): Promise<void> {
+  if (urlState.latitude !== null && urlState.longitude !== null) {
+    await loadLocationFromCoords(urlState.latitude, urlState.longitude, { silent: true });
+  } else if (preferredLocation) {
+    if (elements.locationInput) {
+      elements.locationInput.value = typeof preferredLocation === "string"
+        ? preferredLocation
+        : formatLocationLabel(preferredLocation);
+    }
+    await loadWeather(preferredLocation, { silent: true });
   }
-  loadWeather(preferredLocation);
+  applyUrlOverrides(urlState);
+  // Only record location changes after the boot state is settled, so the
+  // initial deep link does not create a duplicate history entry.
+  enableUrlPush();
 }
+void initialLoad();
 scheduleMapCenterAlertFetch(800);
 
 // Fetch NHC storm track data on startup

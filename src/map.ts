@@ -1,6 +1,6 @@
 import type { HeatmapSample, MapState } from "./types";
-import { MAP_TILE_SIZE, MAP_MIN_ZOOM, MAP_MAX_ZOOM, MAP_DEFAULT_ZOOM, HEATMAP_SCALE, INITIAL_MAP_CENTER } from "./config";
-import { latLonToWorld, worldToLatLon, projectToMapScreen, projectToMapScreenFast, screenToMapLocation, setMapCenterFromWorld, clampMapZoom } from "./geo";
+import { MAP_TILE_SIZE, HEATMAP_SCALE } from "./config";
+import { latLonToWorld, worldToLatLon, projectToMapScreen, projectToMapScreenFast, screenToMapLocation } from "./geo";
 import { normalizeValue, formatHeatmapValue, getHeatmapTitle } from "./weather";
 import { isInsideAlertPolygonSpatial, getWildfireAtPoint, getEarthquakes, showEarthquakes } from "./alerts";
 import { getEarthquakeAtPoint } from "./earthquakes";
@@ -10,22 +10,14 @@ import { drawRadarLayer, formatRadarRelativeTime, type RadarStatus } from "./rad
 import { drawCloudLayer, type CloudStatus } from "./cloud";
 import { drawForecastRasterLayer, validTimeForOffset, type ForecastRasterStatus } from "./forecast-raster";
 import type { FieldData } from "./field";
+import {
+  tileCache, tileCacheSet, filteredTileCacheGet, filteredTileCacheSet,
+  TILE_FILTER, labelPositionCache, clearMapCaches,
+} from "./map-caches";
+import { getMapState, zoomMap, queueMapRender, startMapDrag, moveMapDrag, endMapDrag, resetMapView } from "./map-interaction";
 
-// 256 tiles at 256x256 RGBA is roughly 67 MB of decoded bitmap memory.
-const TILE_CACHE_MAX = 256;
-
-export const tileCache = new Map<string, HTMLImageElement>();
-
-function tileCacheSet(key: string, image: HTMLImageElement): void {
-  if (tileCache.size >= TILE_CACHE_MAX) {
-    const toDelete = Math.round(TILE_CACHE_MAX * 0.25);
-    const keys = [...tileCache.keys()];
-    for (let i = 0; i < toDelete && i < keys.length; i++) {
-      tileCache.delete(keys[i]);
-    }
-  }
-  tileCache.set(key, image);
-}
+export { getMapState, zoomMap, queueMapRender, startMapDrag, moveMapDrag, endMapDrag, resetMapView };
+export { tileCache };
 
 // Heatmap memoization state
 let lastHeatmapSamplesKey = "";
@@ -36,48 +28,6 @@ let cachedGridWidth = 0;
 let cachedGridHeight = 0;
 let lastGridCacheKey = "";
 const INTERPOLATION_GRID_STEP = 4; // Sample every 4th pixel for grid
-
-// Tile filter pre-compositing cache
-const filteredTileCache = new Map<string, HTMLCanvasElement>();
-// Each filtered tile is an offscreen 256x256 canvas (about 262 KB decoded);
-// 128 entries keeps this under ~34 MB.
-const FILTERED_TILE_CACHE_MAX = 128;
-const TILE_FILTER = "brightness(0.48) saturate(0.6) contrast(1.25)";
-
-// Label position memoization cache
-const labelPositionCache = new Map<string, { x: number; y: number }>();
-
-export function getMapState(center = INITIAL_MAP_CENTER): MapState {
-  return {
-    center: { latitude: center.latitude, longitude: center.longitude },
-    zoom: MAP_DEFAULT_ZOOM,
-    drag: null,
-    selected: null,
-    renderQueued: false,
-  };
-}
-
-export function zoomMap(
-  delta: number,
-  mapState: MapState,
-  onRender: () => void,
-  onScheduleRefresh: () => void,
-): void {
-  const nextZoom = clampMapZoom(mapState.zoom + delta, MAP_MIN_ZOOM, MAP_MAX_ZOOM);
-  if (nextZoom === mapState.zoom) return;
-  mapState.zoom = nextZoom;
-  onRender();
-  onScheduleRefresh();
-}
-
-export function queueMapRender(mapState: MapState, renderFn: () => void): void {
-  if (mapState.renderQueued) return;
-  mapState.renderQueued = true;
-  requestAnimationFrame(() => {
-    mapState.renderQueued = false;
-    renderFn();
-  });
-}
 
 export function drawMapTiles(
   ctx: CanvasRenderingContext2D,
@@ -133,7 +83,7 @@ function getFilteredTile(
   y: number
 ): HTMLCanvasElement {
   const key = `${zoom}/${x}/${y}`;
-  let filtered = filteredTileCache.get(key);
+  let filtered = filteredTileCacheGet(key);
   if (!filtered) {
     filtered = document.createElement("canvas");
     filtered.width = MAP_TILE_SIZE;
@@ -141,14 +91,7 @@ function getFilteredTile(
     const fctx = filtered.getContext("2d")!;
     fctx.filter = TILE_FILTER;
     fctx.drawImage(image, 0, 0, MAP_TILE_SIZE, MAP_TILE_SIZE);
-    if (filteredTileCache.size >= FILTERED_TILE_CACHE_MAX) {
-      const removeCount = Math.round(FILTERED_TILE_CACHE_MAX * 0.25);
-      const keys = [...filteredTileCache.keys()];
-      for (let i = 0; i < removeCount && i < keys.length; i++) {
-        filteredTileCache.delete(keys[i]);
-      }
-    }
-    filteredTileCache.set(key, filtered);
+    filteredTileCacheSet(key, filtered);
   }
   return filtered;
 }
@@ -575,6 +518,7 @@ function sampleBilinear(
 
 let fieldCanvas: HTMLCanvasElement | null = null;
 let fieldCtx: CanvasRenderingContext2D | null = null;
+let fieldBufferKey = "";
 
 /**
  * Draw the crisp Phase 5 field: per-pixel bilinear + LUT into an offscreen
@@ -615,50 +559,66 @@ export function drawFieldOverlay(
   const span = Math.max(1e-9, spec.high - spec.low);
   const baseAlpha = Math.max(0.1, Math.min(1, opacity)) * 255;
 
-  const imageData = fieldCtx.createImageData(renderW, renderH);
-  const data = imageData.data;
+  // Reuse the generated bitmap when only unrelated layers changed (alerts,
+  // wildfires, tiles). Pan/zoom/hour/field/opacity changes still regenerate.
+  const bufferKey = [
+    field.layer,
+    field.fetchedAt,
+    field.hour,
+    `${renderW}x${renderH}`,
+    zoom,
+    mapState.center.latitude.toFixed(6),
+    mapState.center.longitude.toFixed(6),
+    opacity.toFixed(3),
+  ].join("|");
 
-  // Grid nodes sit at the bbox edges; pixel x is linear in lon, and row
-  // latitude is evaluated per scanline (Mercator rows are not linear).
   const centerWorld = latLonToWorld(
     mapState.center.latitude, mapState.center.longitude, zoom,
   );
-  const geoToGridX = (lon: number) => ((lon - lons[0]) / (lons[cols - 1] - lons[0])) * (cols - 1);
-  const geoToGridY = (lat: number) => ((lats[0] - lat) / (lats[0] - lats[rows - 1])) * (rows - 1);
   const topLeftX = centerWorld.x - width / 2;
   const topLeftY = centerWorld.y - height / 2;
-  // Screen x is linear in longitude and scanline latitude depends only on
-  // screen y (Web Mercator), so per-pixel work is one multiply + bilinear.
   const worldSize = MAP_TILE_SIZE * 2 ** zoom;
   const lonOfX = (x: number) => ((topLeftX + x / scaleFactor) / worldSize) * 360 - 180;
   const lonStep = (1 / scaleFactor / worldSize) * 360;
-  fieldCtx.canvas.width = renderW; // no-op, sized above
-  for (let y = 0; y < renderH; y += 1) {
-    const worldY = topLeftY + (y + 0.5) / scaleFactor;
-    const lat = worldToLatLon(centerWorld.x, worldY, zoom).latitude;
-    const fy = Math.max(0, Math.min(rows - 1.0001, geoToGridY(lat)));
-    const row0 = Math.floor(fy);
-    const ty = fy - row0;
-    let lon = lonOfX(0);
-    for (let x = 0; x < renderW; x += 1) {
-      const fx = geoToGridX(lon);
-      const value = sampleBilinear(values, cols, rows, fx, row0 + ty);
-      const offset = (y * renderW + x) * 4;
-      if (value == null) {
-        data[offset + 3] = 0;
+
+  if (bufferKey !== fieldBufferKey) {
+    const imageData = fieldCtx.createImageData(renderW, renderH);
+    const data = imageData.data;
+
+    // Grid nodes sit at the bbox edges; pixel x is linear in lon, and row
+    // latitude is evaluated per scanline (Mercator rows are not linear).
+    const geoToGridX = (lon: number) => ((lon - lons[0]) / (lons[cols - 1] - lons[0])) * (cols - 1);
+    const geoToGridY = (lat: number) => ((lats[0] - lat) / (lats[0] - lats[rows - 1])) * (rows - 1);
+    // Screen x is linear in longitude and scanline latitude depends only on
+    // screen y (Web Mercator), so per-pixel work is one multiply + bilinear.
+    for (let y = 0; y < renderH; y += 1) {
+      const worldY = topLeftY + (y + 0.5) / scaleFactor;
+      const lat = worldToLatLon(centerWorld.x, worldY, zoom).latitude;
+      const fy = Math.max(0, Math.min(rows - 1.0001, geoToGridY(lat)));
+      const row0 = Math.floor(fy);
+      const ty = fy - row0;
+      let lon = lonOfX(0);
+      for (let x = 0; x < renderW; x += 1) {
+        const fx = geoToGridX(lon);
+        const value = sampleBilinear(values, cols, rows, fx, row0 + ty);
+        const offset = (y * renderW + x) * 4;
+        if (value == null) {
+          data[offset + 3] = 0;
+          lon += lonStep;
+          continue;
+        }
+        const normalized = Math.max(0, Math.min(1, (value - spec.low) / span));
+        const lutIndex = Math.round(normalized * 255) * 3;
+        data[offset] = lut[lutIndex];
+        data[offset + 1] = lut[lutIndex + 1];
+        data[offset + 2] = lut[lutIndex + 2];
+        data[offset + 3] = Math.round(baseAlpha * (spec.alphaByValue ? Math.sqrt(normalized) : 1));
         lon += lonStep;
-        continue;
       }
-      const normalized = Math.max(0, Math.min(1, (value - spec.low) / span));
-      const lutIndex = Math.round(normalized * 255) * 3;
-      data[offset] = lut[lutIndex];
-      data[offset + 1] = lut[lutIndex + 1];
-      data[offset + 2] = lut[lutIndex + 2];
-      data[offset + 3] = Math.round(baseAlpha * (spec.alphaByValue ? Math.sqrt(normalized) : 1));
-      lon += lonStep;
     }
+    fieldCtx.putImageData(imageData, 0, 0);
+    fieldBufferKey = bufferKey;
   }
-  fieldCtx.putImageData(imageData, 0, 0);
 
   ctx.save();
   ctx.imageSmoothingEnabled = true;
@@ -1213,135 +1173,7 @@ export function updateMapHourLabel(
     : `+${offset}h`;
 }
 
-export function startMapDrag(
-  event: PointerEvent,
-  mapState: MapState,
-  activePointers: Map<number, { x: number; y: number }>,
-  canvas: HTMLCanvasElement,
-  onDragStart: () => void,
-  pinchState?: { startDist: number; startZoom: number },
-): void {
-  if (event.button !== 0) return;
-  activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-
-  if (activePointers.size >= 2) {
-    if (mapState.drag) {
-      canvas.classList.remove("dragging");
-      mapState.drag = null;
-    }
-    if (pinchState) {
-      const pts = [...activePointers.values()];
-      pinchState.startDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      pinchState.startZoom = Math.round(mapState.zoom);
-    }
-    return;
-  }
-
-  const rect = canvas.getBoundingClientRect();
-  const zoom = Math.round(mapState.zoom);
-  mapState.drag = {
-    pointerId: event.pointerId,
-    startX: event.clientX,
-    startY: event.clientY,
-    canvasX: event.clientX - rect.left,
-    canvasY: event.clientY - rect.top,
-    width: rect.width,
-    height: rect.height,
-    centerWorld: latLonToWorld(mapState.center.latitude, mapState.center.longitude, zoom),
-    zoom,
-    moved: false,
-  };
-  canvas.classList.add("dragging");
-  canvas.setPointerCapture(event.pointerId);
-  onDragStart();
-}
-
-export function moveMapDrag(
-  event: PointerEvent,
-  mapState: MapState,
-  activePointers: Map<number, { x: number; y: number }>,
-  pinchState: { startDist: number; startZoom: number },
-  onZoomChange: () => void,
-  onRender: () => void,
-  onScheduleRefresh: () => void,
-  onTooltipUpdate: (event: PointerEvent) => void,
-): void {
-  if (activePointers.has(event.pointerId)) {
-    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-  }
-
-  if (activePointers.size >= 2 && pinchState.startDist > 0) {
-    const pts = [...activePointers.values()];
-    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-    const targetZoom = clampMapZoom(Math.round(pinchState.startZoom + Math.log2(dist / pinchState.startDist)), MAP_MIN_ZOOM, MAP_MAX_ZOOM);
-    if (targetZoom !== mapState.zoom) {
-      mapState.zoom = targetZoom;
-      queueMapRender(mapState, onZoomChange);
-      onScheduleRefresh();
-    }
-    return;
-  }
-
-  if (!mapState.drag || mapState.drag.pointerId !== event.pointerId) {
-    onTooltipUpdate(event);
-    return;
-  }
-
-  const dx = event.clientX - mapState.drag.startX;
-  const dy = event.clientY - mapState.drag.startY;
-  if (Math.hypot(dx, dy) > 5) {
-    mapState.drag.moved = true;
-  }
-
-  mapState.center = setMapCenterFromWorld(
-    { x: mapState.drag.centerWorld.x - dx, y: mapState.drag.centerWorld.y - dy },
-    mapState.drag.zoom,
-  );
-  queueMapRender(mapState, onRender);
-}
-
-export function endMapDrag(
-  event: PointerEvent,
-  mapState: MapState,
-  activePointers: Map<number, { x: number; y: number }>,
-  pinchState: { startDist: number; startZoom: number },
-  onScheduleRefresh: () => void,
-  onMapClick: (latitude: number, longitude: number, event: PointerEvent) => void,
-): void {
-  activePointers.delete(event.pointerId);
-  if (activePointers.size < 2) {
-    pinchState.startDist = 0;
-  }
-
-  if (!mapState.drag || mapState.drag.pointerId !== event.pointerId) return;
-
-  const drag = mapState.drag;
-  mapState.drag = null;
-  const canvas = event.currentTarget as HTMLCanvasElement;
-  canvas.classList.remove("dragging");
-  canvas.releasePointerCapture(event.pointerId);
-
-  if (!drag.moved) {
-    const location = screenToMapLocation(drag.canvasX, drag.canvasY, drag.width, drag.height, mapState.center.latitude, mapState.center.longitude, drag.zoom);
-    onMapClick(location.latitude, location.longitude, event);
-    return;
-  }
-
-  onScheduleRefresh();
-}
-
-export function resetMapView(
-  mapState: MapState,
-  defaultZoom: number,
-  location?: { latitude: number; longitude: number } | null,
-): void {
-  const loc = location || mapState.selected;
-  if (!loc) return;
-  mapState.center = { latitude: loc.latitude, longitude: loc.longitude };
-  mapState.zoom = defaultZoom;
-}
-
 export function cleanupMapModule(): void {
   if (tileLoadTimer) clearTimeout(tileLoadTimer);
-  tileCache.clear();
+  clearMapCaches();
 }

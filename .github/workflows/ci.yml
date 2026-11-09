@@ -27,6 +27,26 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
 
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun test
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bunx biome check src
+
   python:
     runs-on: ubuntu-latest
     steps:
@@ -35,4 +55,5 @@ jobs:
         with:
           python-version: "3.11"
       - run: python3 -m py_compile proxy_cache.py proxy_estimators.py proxy_upstream.py proxy_server.py
+      - run: python3 -m unittest discover -s tests -v
       - run: python3 scripts/check-no-inline-styles.py

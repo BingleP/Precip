@@ -24,9 +24,21 @@ import {
   setActiveLocation, setLatestForecast, setLatestHeatmap, setLatestHeatmapMeta, setLatestAirQuality,
   setWeatherLoadId,
 } from "../state";
+import { scheduleUrlSync } from "../url-state";
 
-export async function loadWeather(query: Location | string): Promise<void> {
+let lastWeatherLoadAt = 0;
+
+/** Timestamp of the most recent load attempt (used by auto-refresh). */
+export function getLastWeatherLoadAt(): number {
+  return lastWeatherLoadAt;
+}
+
+export async function loadWeather(
+  query: Location | string,
+  options: { silent?: boolean; keepMapView?: boolean } = {},
+): Promise<void> {
   try {
+    lastWeatherLoadAt = Date.now();
     const requestId = weatherLoadId + 1;
     setWeatherLoadId(requestId);
     const queryLabel = typeof query === "string" ? query : (query as Location).name;
@@ -70,7 +82,9 @@ export async function loadWeather(query: Location | string): Promise<void> {
     renderStormToolkit(forecast);
     renderConfidence(forecast);
     renderContext(forecast);
-    mapState.center = { latitude: resolved.latitude, longitude: resolved.longitude };
+    mapState.center = options.keepMapView
+      ? mapState.center
+      : { latitude: resolved.latitude, longitude: resolved.longitude };
     mapState.selected = resolved;
     setLatestAirQuality(null);
     setLatestHeatmap(null);
@@ -87,8 +101,11 @@ export async function loadWeather(query: Location | string): Promise<void> {
     drawForecastChart(forecast);
     renderWatchlistUI();
     updateSettingsUI();
-    showToast(`Weather data loaded for ${resolved.name}`, "success", 2500);
+    if (!options.silent) showToast(`Weather data loaded for ${resolved.name}`, "success", 2500);
     addLog(`Live Open-Meteo feed updated for ${resolved.name}.`, elements.eventLog);
+    // A new active location is a shareable state change: push a history entry
+    // so Back returns to the previous place.
+    scheduleUrlSync(true);
     void hydrateSupplementalWeather(resolved, requestId);
   } catch (error) {
     showToast((error as Error).message, "error", 4000);

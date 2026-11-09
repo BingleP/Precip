@@ -24,6 +24,11 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
   - NWS/ECCC alert polygon overlays with severity-colored boundaries and hover tooltips
   - **wildfire overlay**: CWFIS hotspots (color-coded by age), CWFIS fire perimeters, and NASA FIRMS hotspots (when configured) with hover tooltips showing source, date, confidence, temperature, and area
   - frustum culling for 600+ alert polygons and wildfire perimeters (off-screen geometry skipped)
+- Shareable map state: location, zoom, layer, overlay, forecast hour, and opacity live in the URL query string (deep links, browser history, and a shareable address)
+- Geolocate button (search bar) for "use my current location", with permission-aware error messages
+- Keyboard map navigation: arrow keys pan, `+`/`-` zoom, `Home` resets to the active location, `Cmd+K` focuses search, `1-9`/`0` switch panels, `Esc` dismisses dialogs
+- Live freshness: 10-minute visibility-aware auto-refresh (paused in background tabs), online/offline toasts, and an "Updated HH:MM" map stamp
+- Installable PWA (manifest + offline app shell service worker; live API data is never service-worker cached)
 - Real-time weather alerts:
   - NWS alerts for US locations (zone-geometry enriched for alerts without polygon data)
   - ECCC/GeoMet alerts for Canadian locations
@@ -58,7 +63,7 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
    - **Cone of uncertainty** — 2–5 day track cone built from NHC forecast track + hardcoded radii table (per-season)
    - All NHC data is fetched, parsed, and cached by the proxy (storm list: 10 min, forecast + cone: 15 min)
 - **Performance optimizations:**
-  - **Scalar fields**: dense adaptive grids (`/api/field`) with bilinear + LUT rendering; contours/streamlines; 40% viewport overscan + coverage cache so ordinary pans reuse a fetched grid; requests are serialized and fetch a single forecast hour (340–390 points, under Open-Meteo's per-location limit)
+  - **Scalar fields**: dense adaptive grids (`/api/field`) with bilinear + LUT rendering; contours/streamlines; 40% viewport overscan + coverage cache so ordinary pans reuse a fetched grid; requests are serialized and fetch the full 24-hour span in one upstream call (Open-Meteo bills by location, so this is quota-neutral while eliminating per-hour refetches)
   - **Weather rasters**: WMS/bbox-snap caching and prefetch so pans don't storm the proxy (30 pan steps → 0 new field requests); rasters are drawn at their bbox extent (correct at 4K/high-DPR) and skipped while dragging, then restored on pointerup
   - **Heatmaps**: padded viewport coverage cache (320 px padding, up to 7×6 samples) so small pans reuse samples
   - **Wildfire hotspots**: color-bucket batching (3 draw calls vs N), spatial clustering at zoom < 7, frustum culling
@@ -209,7 +214,7 @@ img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov;
 | `/api/radar-wms` | ECCC GeoMet WMS | `bbox`, `width`, `height` |
 | `/api/satellite-tile` | NASA GIBS WMTS | `layer` (goes-east/goes-west/himawari), `z`, `x`, `y`, `date` (optional) |
 | `/api/forecast-wms` | ECCC GeoMet WMS (GDPS) | `product` (gdps-cloud/gdps-precip), `bbox`, `width`, `height`, `time` |
-| `/api/field` | Open-Meteo (grid fan-out) | `layer`, `hour`, `bbox`, `cols`, `rows` |
+| `/api/field` | Open-Meteo (grid fan-out) | `layer`, `hour`, `span` (1–24, default 1), `bbox`, `cols`, `rows` |
 
 ## Security Model
 
@@ -219,3 +224,74 @@ img-src 'self' https://tile.openstreetmap.org https://cdn.star.nesdis.noaa.gov;
 - No destructive server-side actions
 - Preference resets only clear browser cookies for the current visitor
 - API keys (e.g. `FIRMS_MAP_KEY`) are read from `/opt/precip/.env` on the server, which is excluded from version control by `.gitignore`
+
+## Develop & Test
+
+```bash
+bun run typecheck     # tsc --noEmit
+bun test              # unit tests: geo, storage normalization, URL state
+bun run build         # typecheck + vite build into dist/
+bun run lint          # typecheck + biome check src
+python3 -m unittest discover -s tests -v   # proxy cache, wildfire bbox, field validation
+```
+
+CI (`.github/workflows/ci.yml`) runs typecheck, build, `bun test`, Biome,
+`py_compile`, and the Python unit tests on every push/PR to `main`.
+
+Biome lints `src/` (recommended preset, unused imports as errors). The
+formatter is intentionally disabled for now to avoid a mass reformat of the
+existing codebase — enable it incrementally and run `bunx biome check --apply`
+per file when adopting it.
+
+## Architecture & Caching
+
+### Client modules
+
+| File | Role |
+|---|---|
+| `src/map.ts` | Rendering: tiles, scalar fields, legends, tooltips |
+| `src/map-interaction.ts` | State, zoom, render coalescing, drag/pinch |
+| `src/map-caches.ts` | Tile / filtered-tile / label bitmap caches + budgets |
+| `src/url-state.ts` | `?lat=&lon=&z=&layer=&overlay=&hour=&opacity=` parse/build/sync |
+| `src/field.ts` | 24-hour field grid cache; per-hour view materialized on demand |
+| `src/api.ts` | API fetchers with in-flight dedupe + stale fallbacks + rate backoff |
+| `src/panels/weather-loader.ts` | Location load orchestration (silent/keepView for refresh) |
+
+`map.ts` re-exports the interaction helpers so existing imports keep working.
+
+### URL state
+
+The address bar is the canonical description of the map. Continuous changes
+(pan, zoom, slider, opacity) `replaceState` the query (debounced 300 ms);
+a new active location `pushState`s so Back returns to the previous place.
+Parsing clamps out-of-range values and rejects unknown layer ids.
+
+### Proxy cache
+
+- Byte-budget LRU (`64 MB` total, `8 MB` per entry; oversized bodies are
+  still served but never displace the cache) plus entry-count cap.
+- Public edge/browser cache headers for raster/field/geocode endpoints;
+  alerts and errors stay `no-store`.
+- `GET /health` returns `{ ok, build, endpoints, cache }` where `build` is a
+  12-char source fingerprint, so a deploy can prove which code is running.
+- Wildfire responses are server-bounded (max 60° span, 3000 features).
+
+## PWA
+
+`public/manifest.webmanifest` + `public/sw.js` (registered in production only).
+The worker caches the app shell (`/`, `/welcome.html`) and content-hashed
+static assets (stale-while-revalidate) and never touches `/api/*` — weather
+freshness stays owned by the proxy. `/sw.js` is served `Cache-Control: -1`
+(no-store) from nginx so a deploy's new shell is picked up.
+
+## Operations
+
+- Public `/api/` path: nginx → `127.0.0.1:7428` (`precip-proxy.service` from
+  `/opt/precip`), **not** the container on `8093`. `deploy/deploy.sh` syncs
+  both proxy copies, verifies the allowlist via `/health`, and probes
+  `/api/field`, `/api/radar-wms`, and `/api/forecast-wms` (any non-404 passes —
+  upstream 429/5xx at probe time is not a deploy failure).
+- Open-Meteo free tier is ~5,000 locations/hour per egress IP; the 24-hour
+  field span does not increase quota use (billed per location, not per hour).
+- Cloudflare blocks non-browser clients from the public site: verify via
+  `127.0.0.1:7428`/`8093` or a browser user agent.

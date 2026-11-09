@@ -3,8 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="Precip is a live weather operations dashboard: forecasts, radar, alerts, wildfires, air quality, and an interactive map." />
+    <meta name="theme-color" content="#0b1220" />
     <title>Precip Weather Operations</title>
     <link rel="icon" href="tab.png?v=2" type="image/png" />
+    <link rel="apple-touch-icon" href="tab.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="preconnect" href="https://tile.openstreetmap.org" />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -46,10 +50,11 @@
       <!-- Map Area -->
       <div class="map-area">
         <article class="map-view" id="map">
-          <canvas id="heatmap-canvas" width="920" height="460" aria-label="Regional weather heatmap"></canvas>
+          <canvas id="heatmap-canvas" width="920" height="460" tabindex="0" role="application" aria-label="Interactive weather map. Drag to pan, scroll or use plus and minus to zoom, and arrow keys to move."></canvas>
 
           <div class="map-overlays">
             <div class="map-readout" id="map-readout" aria-live="polite"></div>
+            <div class="map-updated" id="map-updated" aria-live="polite"></div>
 
             <button class="map-tools-toggle" id="map-tools-toggle" type="button">
               <span>☰</span>
@@ -166,7 +171,8 @@
           </select>
           <input id="location-input" type="search" value="" placeholder="Search for a city, region, or country" autocomplete="off" />
           <button class="search-submit" type="submit" aria-label="Update location">&#8981;</button>
-          <button class="search-refresh" type="button" aria-label="Refresh telemetry" id="refresh-button">&#8635;</button>
+          <button class="search-refresh" type="button" aria-label="Refresh all telemetry" id="refresh-button">&#8635;</button>
+          <button class="search-locate" type="button" aria-label="Use my current location" id="geolocate-button">&#8982;</button>
           <div class="field-note" id="location-search-note">Search suggestions will appear as you type.</div>
           <div class="suggestion-list" id="location-suggestions" role="listbox" aria-label="Location suggestions"></div>
         </form>

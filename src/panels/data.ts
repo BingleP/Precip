@@ -29,6 +29,7 @@ import {
 import { registerCloudRedrawHandler, startCloudRefresh, getCloudStatus } from "../cloud";
 import { registerForecastRasterRedrawHandler, getForecastRasterStatus, prefetchAdjacentHours } from "../forecast-raster";
 import { registerFieldRedrawHandler, buildFieldRequest, requestField, getCachedField } from "../field";
+import { scheduleUrlSync } from "../url-state";
 
 registerRadarRedrawHandler(() => {
   queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
@@ -309,6 +310,13 @@ export function renderHeatmap(points: HeatmapSample[] | null, layer?: string): v
   const { width, height } = prepareCanvas(heatmapCanvas, ctx);
   const zoomRound = Math.round(mapState.zoom);
   const centerWorld = latLonToWorld(mapState.center.latitude, mapState.center.longitude, zoomRound);
+
+  // Every visible map change funnels through here, so it is the one place
+  // that keeps the address bar in sync (debounced; replaceState by default).
+  scheduleUrlSync();
+  if (elements.mapUpdated) {
+    elements.mapUpdated.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  }
 
   drawMapTiles(ctx, width, height, mapState.center, zoomRound, () => {
     queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));

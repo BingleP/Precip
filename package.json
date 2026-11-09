@@ -9,10 +9,14 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "check-inline-styles": "python3 scripts/check-no-inline-styles.py",
-    "lint": "tsc --noEmit",
+    "test": "bun test",
+    "test:py": "python3 -m unittest discover -s tests -v",
+    "biome": "biome",
+    "lint": "tsc --noEmit && biome check src",
     "check": "tsc --noEmit"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.1.0",
     "typescript": "^5.8.0",
     "vite": "^6.3.0"
   },
