@@ -84,7 +84,7 @@ Precip is a full-screen map-centric weather dashboard for weather enthusiasts an
 - `precip.png` - site mark in the tab bar
 - `tab.png` - browser tab icon
 - `vite.config.ts` - Vite build configuration
-- `deploy/deploy.sh` - production deploy: copy dist/ to the live root, copy the proxy files into `~/docker/precip`, rebuild + recreate the container
+- `deploy/deploy.sh` - production deploy: copy dist/ to the live root, sync the proxy files into `/opt/precip` (public API) and `~/docker/precip`, restart `precip-proxy.service`, rebuild + recreate the container
 - `deploy/precip.kerrick.ca.conf` - nginx config for `precip.kerrick.ca`
 - `deploy/precip-proxy.service` - systemd unit for the cache proxy (reads `FIRMS_MAP_KEY` from `/opt/precip/.env`)
 
@@ -145,20 +145,26 @@ cd /home/bingle/Projects/precip
 That script:
 1. pulls the latest `main`
 2. copies the static site bundle into `/var/www/precip` (bind-mounted into the container)
-3. copies the proxy `.py` files into `~/docker/precip`
-4. rebuilds and recreates the `precip` Docker container (`precip-site:latest`)
-5. verifies the container proxy and the public site respond
+3. copies the proxy `.py` files into `~/docker/precip` **and** `/opt/precip`
+4. restarts `precip-proxy.service` (the proxy the public `/api/` path uses)
+5. rebuilds and recreates the `precip` Docker container (`precip-site:latest`)
+6. verifies the public proxy, the container proxy, and the public site respond
 
 Production layout:
 
 | Path | What |
 |---|---|
 | `~/Projects/precip` | This repo (git checkout used for building) |
-| `/var/www/precip` | Static site root, bind-mounted read-only into the container |
+| `/var/www/precip` | Static site root, served by nginx and bind-mounted read-only into the container |
 | `~/docker/precip` | Dockerfile, compose file, `nginx.conf`, `entrypoint.sh`, proxy `.py` files |
+| `/opt/precip` | Proxy `.py` files used by the **public** API (`precip-proxy.service` on `127.0.0.1:7428`) |
 
-The proxy `.py` files are baked into the image at build time, so they must be
-copied into `~/docker/precip` before rebuilding. `docker compose` is not
+The outer nginx server block for `precip.kerrick.ca` proxies `/api/` to
+`127.0.0.1:7428`, which is the systemd service running from `/opt/precip` —
+**not** the container (the container listens on `127.0.0.1:8093` and is an
+alternate instance). Both proxy copies must be updated on every deploy, or the
+public API will 404 on any endpoint the stale copy does not know. The proxy
+`.py` files are also baked into the image at build time. `docker compose` is not
 available to root without `DOCKER_CONFIG=/home/bingle/.docker` (the script
 handles this).
 
