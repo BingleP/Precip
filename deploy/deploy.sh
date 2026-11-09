@@ -56,6 +56,9 @@ sleep 2
 # The public /api/ path goes to the systemd proxy, so assert its allowlist is
 # current. A 404 here is the signature of a stale copy (the outage this check
 # exists to prevent); upstream 429/5xx responses are not deploy failures.
+# The container nginx on :8093 proxies /api/ to the same systemd backend, so
+# it has no /health of its own (it serves index.html there); for the container
+# we only probe the /api/ endpoints through nginx.
 verify_proxy() {
   base=$1
   label=$2
@@ -83,10 +86,25 @@ verify_proxy() {
   echo "$label OK (build $build)"
 }
 
+verify_container() {
+  base=http://127.0.0.1:8093
+  for probe in \
+    "/api/field?layer=wind&hour=0&span=24&bbox=-79.4,43.6,-79.3,43.8&cols=6&rows=4" \
+    "/api/radar-wms?bbox=-9090000,5260000,-8590000,5565000&width=64&height=64" \
+    "/api/forecast-wms?product=gdps-precip&bbox=-9090000,5260000,-8590000,5565000&width=64&height=64"; do
+    code=$(curl -s -o /dev/null -w "%{http_code}" "$base$probe")
+    [ "$code" != "404" ] || {
+      echo "ERROR: Container nginx returned 404 for $probe" >&2
+      exit 1
+    }
+  done
+  echo "Container OK"
+}
+
 sudo systemctl is-active --quiet precip-proxy.service || {
   echo "ERROR: precip-proxy.service is not active" >&2
   exit 1
 }
 verify_proxy "http://127.0.0.1:7428" "Public proxy"
-verify_proxy "http://127.0.0.1:8093" "Container proxy"
+verify_container
 curl -sf -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126 Safari/537.36" -o /dev/null "https://precip.kerrick.ca/" && echo "Site OK"
