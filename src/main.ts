@@ -72,17 +72,24 @@ async function fetchMapCenterWildfires(): Promise<void> {
   const center = mapState.center;
   if (!center || !center.latitude || !center.longitude) return;
   const zoom = Math.round(mapState.zoom);
-  const w = heatmapCanvas?.width || window.innerWidth;
-  const h = heatmapCanvas?.height || window.innerHeight;
+  // Use CSS pixels, not the canvas backing store: on a 2x display the backing
+  // store is twice the visible size, which quadrupled the requested area.
+  const rect = heatmapCanvas?.getBoundingClientRect();
+  const w = rect?.width || window.innerWidth;
+  const h = rect?.height || window.innerHeight;
   const centerWorld = latLonToWorld(center.latitude, center.longitude, zoom);
-  const padFactor = 1.5;
+  const padFactor = 1.35;
   const nw = worldToLatLon(centerWorld.x - (w / 2) * padFactor, centerWorld.y - (h / 2) * padFactor, zoom);
   const se = worldToLatLon(centerWorld.x + (w / 2) * padFactor, centerWorld.y + (h / 2) * padFactor, zoom);
+  // Snap outward to a 0.1° grid so sub-cell pans reuse the same cached
+  // wildfire response instead of issuing a new request per pixel.
+  const snapDown = (value: number) => Math.floor(value * 10) / 10;
+  const snapUp = (value: number) => Math.ceil(value * 10) / 10;
   const bbox = {
-    west: Math.max(-180, Math.min(180, nw.longitude)),
-    south: Math.max(-85, Math.min(85, se.latitude)),
-    east: Math.max(-180, Math.min(180, se.longitude)),
-    north: Math.max(-85, Math.min(85, nw.latitude)),
+    west: snapDown(Math.max(-180, Math.min(180, nw.longitude))),
+    south: snapDown(Math.max(-85, Math.min(85, se.latitude))),
+    east: snapUp(Math.max(-180, Math.min(180, se.longitude))),
+    north: snapUp(Math.max(-85, Math.min(85, nw.latitude))),
   };
   if (bbox.west >= bbox.east || bbox.south >= bbox.north) return;
   try {
@@ -293,6 +300,9 @@ elements.pinLocationButton?.addEventListener("click", pinCurrentLocation);
 elements.mapHourSlider?.addEventListener("input", () => {
   setTimelineValue(Number(elements.mapHourSlider?.value));
 });
+elements.mapHourSlider?.addEventListener("change", () => {
+  setTimelineValue(Number(elements.mapHourSlider?.value), { persist: true });
+});
 
 window.addEventListener("resize", () => {
   hideChartTooltip();
@@ -449,6 +459,9 @@ elements.layersMoreToggle?.addEventListener("click", () => {
 });
 
 elements.mapOpacitySlider?.addEventListener("input", () => {
+  setActiveMapLayerOpacity(Number(elements.mapOpacitySlider?.value) / 100);
+});
+elements.mapOpacitySlider?.addEventListener("change", () => {
   setActiveMapLayerOpacity(Number(elements.mapOpacitySlider?.value) / 100, { persist: true });
 });
 

@@ -1139,8 +1139,37 @@ def _fetch_firms_hotspots(bbox_str):
     return all_features
 
 
+MAX_WILDFIRE_FEATURES = 3000
+WILDFIRE_MAX_SPAN_DEGREES = 60.0
+
+
+def _clamp_wildfire_bbox(bbox_str):
+    """Bound the requested area so a zoomed-out viewport cannot ask for a
+    continent-sized FIRMS response (several MB and thousands of features)."""
+    try:
+        west, south, east, north = (float(part) for part in str(bbox_str).split(","))
+    except (TypeError, ValueError):
+        return bbox_str
+    west = max(-180.0, west)
+    east = min(180.0, east)
+    south = max(-85.0, south)
+    north = min(85.0, north)
+    if east - west > WILDFIRE_MAX_SPAN_DEGREES:
+        center = (west + east) / 2
+        west = center - WILDFIRE_MAX_SPAN_DEGREES / 2
+        east = center + WILDFIRE_MAX_SPAN_DEGREES / 2
+    if north - south > WILDFIRE_MAX_SPAN_DEGREES:
+        center = (south + north) / 2
+        south = center - WILDFIRE_MAX_SPAN_DEGREES / 2
+        north = center + WILDFIRE_MAX_SPAN_DEGREES / 2
+    if west >= east or south >= north:
+        return bbox_str
+    return f"{west:.4f},{south:.4f},{east:.4f},{north:.4f}"
+
+
 def build_wildfires_payload(bbox_str):
     """Fetch wildfire data from CWFIS and FIRMS, return unified GeoJSON."""
+    bbox_str = _clamp_wildfire_bbox(bbox_str)
     all_features = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
@@ -1155,6 +1184,12 @@ def build_wildfires_payload(bbox_str):
             except Exception as exc:
                 src = futures[future]
                 print(f"Wildfire fetch ({src}) failed: {exc}", file=sys.stderr)
+
+    if len(all_features) > MAX_WILDFIRE_FEATURES:
+        # Deterministic stride keeps a representative spread instead of the
+        # first N fires in source order.
+        step = len(all_features) / MAX_WILDFIRE_FEATURES
+        all_features = [all_features[int(index * step)] for index in range(MAX_WILDFIRE_FEATURES)]
 
     return json.dumps({"type": "FeatureCollection", "features": all_features}).encode("utf-8")
 
@@ -1508,16 +1543,18 @@ def _field_target_hour(hour):
     return target.strftime("%Y-%m-%dT%H:00")
 
 
-def _field_fetch_chunk(chunk_lats, chunk_lons, fields, target_hour):
-    # Request exactly one forecast hour: the field only renders one hour at
-    # a time, and Open-Meteo weights usage by locations, so asking for 24
-    # hours of every variable is wasted payload and latency.
+def _field_fetch_chunk(chunk_lats, chunk_lons, fields, target_hour, span=1):
+    # Open-Meteo weights usage by locations, not hours, so requesting the
+    # whole 24-hour window in one call costs the same as one hour while
+    # eliminating a fetch per timeline step.
+    start = datetime.datetime.strptime(target_hour, "%Y-%m-%dT%H:00")
+    end = start + datetime.timedelta(hours=max(0, span - 1))
     params = {
         "latitude": ",".join(f"{v:.4f}" for v in chunk_lats),
         "longitude": ",".join(f"{v:.4f}" for v in chunk_lons),
         "hourly": ",".join(fields),
-        "start_hour": target_hour,
-        "end_hour": target_hour,
+        "start_hour": start.strftime("%Y-%m-%dT%H:00"),
+        "end_hour": end.strftime("%Y-%m-%dT%H:00"),
         "timezone": "GMT",
     }
     url = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(params)
@@ -1528,7 +1565,7 @@ def _field_fetch_chunk(chunk_lats, chunk_lons, fields, target_hour):
     return rows
 
 
-def _field_fetch_points(lats, lons, fields, hour):
+def _field_fetch_points(lats, lons, fields, hour, span=1):
     """Fetch hourly values for grid points in chunks of FIELD_CHUNK.
 
     Chunks are fetched concurrently (Open-Meteo accepts one multi-point call
@@ -1543,11 +1580,11 @@ def _field_fetch_points(lats, lons, fields, hour):
     ]
     target_hour = _field_target_hour(hour)
     if len(chunks) == 1:
-        return _field_fetch_chunk(chunks[0][0], chunks[0][1], fields, target_hour)
+        return _field_fetch_chunk(chunks[0][0], chunks[0][1], fields, target_hour, span)
     points = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(chunks))) as executor:
         futures = [
-            executor.submit(_field_fetch_chunk, chunk_lats, chunk_lons, fields, target_hour)
+            executor.submit(_field_fetch_chunk, chunk_lats, chunk_lons, fields, target_hour, span)
             for chunk_lats, chunk_lons in chunks
         ]
         for future in futures:  # futures list preserves request order
@@ -1561,6 +1598,13 @@ def build_field_payload(query):
     if fields is None:
         raise ValueError("unknown field layer")
     hour = _require_int(query, "hour", 0, 23)
+    span_raw = (query.get("span") or ["1"])[0]
+    try:
+        span = int(span_raw)
+    except (TypeError, ValueError):
+        raise ValueError("span must be an integer")
+    if not 1 <= span <= 24:
+        raise ValueError("span out of range")
     cols = _require_int(query, "cols", 4, 36)
     rows = _require_int(query, "rows", 4, 28)
     # Open-Meteo's free tier allows 600 locations/minute. Refuse oversized
@@ -1603,49 +1647,67 @@ def build_field_payload(query):
             lats.append(row_lat[r])
             lons.append(col_lon[c])
 
-    points = _field_fetch_points(lats, lons, fields, hour)
-    values = []
-    uvalues = [] if layer == "wind" else None
-    vvalues = [] if layer == "wind" else None
-    valid_time = ""
+    points = _field_fetch_points(lats, lons, fields, hour, span)
     import math as _math
-    for point in points:
-        hourly = (point or {}).get("hourly") or {}
-        series = hourly.get(fields[0]) or []
-        # Only the target hour is requested, so the series has one entry.
-        value = series[0] if series else None
-        values.append(value if isinstance(value, (int, float)) and _math.isfinite(value) else None)
+
+    values_by_hour = []
+    u_by_hour = [] if layer == "wind" else None
+    v_by_hour = [] if layer == "wind" else None
+    for hour_index in range(span):
+        values = []
+        uvalues = [] if layer == "wind" else None
+        vvalues = [] if layer == "wind" else None
+        for point in points:
+            hourly = (point or {}).get("hourly") or {}
+            series = hourly.get(fields[0]) or []
+            value = series[hour_index] if hour_index < len(series) else None
+            values.append(value if isinstance(value, (int, float)) and _math.isfinite(value) else None)
+            if layer == "wind":
+                speeds = hourly.get("wind_speed_10m") or []
+                dirs = hourly.get("wind_direction_10m") or []
+                speed = speeds[hour_index] if hour_index < len(speeds) else None
+                direction = dirs[hour_index] if hour_index < len(dirs) else None
+                if isinstance(speed, (int, float)) and isinstance(direction, (int, float)):
+                    rad = _math.radians(direction)
+                    uvalues.append(-speed * _math.sin(rad))
+                    vvalues.append(-speed * _math.cos(rad))
+                else:
+                    uvalues.append(None)
+                    vvalues.append(None)
+        values_by_hour.append(values)
         if layer == "wind":
-            speeds = hourly.get("wind_speed_10m") or []
-            dirs = hourly.get("wind_direction_10m") or []
-            speed = speeds[0] if speeds else None
-            direction = dirs[0] if dirs else None
-            if isinstance(speed, (int, float)) and isinstance(direction, (int, float)):
-                rad = _math.radians(direction)
-                uvalues.append(-speed * _math.sin(rad))
-                vvalues.append(-speed * _math.cos(rad))
-            else:
-                uvalues.append(None)
-                vvalues.append(None)
-        times = hourly.get("time") or []
-        if not valid_time and times:
-            valid_time = times[0]
+            u_by_hour.append(uvalues)
+            v_by_hour.append(vvalues)
+
+    start = datetime.datetime.strptime(_field_target_hour(hour), "%Y-%m-%dT%H:00")
+    times = [
+        (start + datetime.timedelta(hours=index)).strftime("%Y-%m-%dT%H:00")
+        for index in range(span)
+    ]
 
     payload = {
         "layer": layer,
         "hour": hour,
+        "span": span,
         "cols": cols,
         "rows": rows,
         "lats": row_lat,
         "lons": col_lon,
-        "values": values,
-        "validTime": valid_time,
+        "times": times,
+        "validTime": times[0] if times else "",
         "unit": FIELD_LAYER_UNITS[layer],
         "source": "open-meteo",
     }
-    if uvalues is not None:
-        payload["u"] = uvalues
-        payload["v"] = vvalues
+    if span == 1:
+        payload["values"] = values_by_hour[0]
+        if layer == "wind":
+            payload["u"] = u_by_hour[0]
+            payload["v"] = v_by_hour[0]
+    else:
+        payload["valuesByHour"] = values_by_hour
+        if layer == "wind":
+            payload["uByHour"] = u_by_hour
+            payload["vByHour"] = v_by_hour
     return json.dumps(payload).encode("utf-8")
 
 

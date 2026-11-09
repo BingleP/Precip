@@ -11,7 +11,8 @@ import { drawCloudLayer, type CloudStatus } from "./cloud";
 import { drawForecastRasterLayer, validTimeForOffset, type ForecastRasterStatus } from "./forecast-raster";
 import type { FieldData } from "./field";
 
-const TILE_CACHE_MAX = 500;
+// 256 tiles at 256x256 RGBA is roughly 67 MB of decoded bitmap memory.
+const TILE_CACHE_MAX = 256;
 
 export const tileCache = new Map<string, HTMLImageElement>();
 
@@ -38,7 +39,9 @@ const INTERPOLATION_GRID_STEP = 4; // Sample every 4th pixel for grid
 
 // Tile filter pre-compositing cache
 const filteredTileCache = new Map<string, HTMLCanvasElement>();
-const FILTERED_TILE_CACHE_MAX = 320;
+// Each filtered tile is an offscreen 256x256 canvas (about 262 KB decoded);
+// 128 entries keeps this under ~34 MB.
+const FILTERED_TILE_CACHE_MAX = 128;
 const TILE_FILTER = "brightness(0.48) saturate(0.6) contrast(1.25)";
 
 // Label position memoization cache

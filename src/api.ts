@@ -84,14 +84,12 @@ async function fetchJsonWithCache<T>(
       if (!response.ok) throw new Error(`${namespace} request failed`);
       const data = (await response.json()) as T;
       setCachedApiResponse(namespace, cacheKey, data);
-      requestCache.delete(requestKey);
       return { ...data, __precipCacheMeta: { stale: false, age: 0 } };
     } catch (error) {
       const staleCached = getCachedApiResponse<T>(namespace, cacheKey, ttlMs, { allowStale: true });
       if (staleCached) {
         return { ...staleCached.data, __precipCacheMeta: { stale: true, age: staleCached.age, fallback: true } };
       }
-      requestCache.delete(requestKey);
       if (rateLimitName && !isApiBackedOff(rateLimitName)) {
         for (let attempt = 1; attempt <= 2; attempt++) {
           await new Promise((r) => setTimeout(r, 1000 * attempt));
@@ -111,6 +109,11 @@ async function fetchJsonWithCache<T>(
         }
       }
       throw error;
+    } finally {
+      // Always release the in-flight slot. Leaving rejected/stale promises in
+      // the map made every later call replay the same stale response even
+      // after the backoff window had expired.
+      requestCache.delete(requestKey);
     }
   })();
 
@@ -305,15 +308,35 @@ export function setCachedHeatmap(cacheKey: string, data: unknown): void {
   }
 }
 
-const wildfireCache = new Map<string, { savedAt: number; data: WildfireFeature[] }>();
+type WildfireBbox = { west: number; south: number; east: number; north: number };
+const wildfireCache: Array<{ savedAt: number; bbox: WildfireBbox; data: WildfireFeature[] }> = [];
 const WILDFIRE_CACHE_TTL_MS = 5 * 60 * 1000;
+const WILDFIRE_CACHE_MAX = 6;
 
-export async function fetchWildfires(bbox: { west: number; south: number; east: number; north: number }): Promise<WildfireFeature[]> {
-  const cacheKey = `${bbox.west.toFixed(2)},${bbox.south.toFixed(2)},${bbox.east.toFixed(2)},${bbox.north.toFixed(2)}`;
-  const cached = wildfireCache.get(cacheKey);
-  if (cached && Date.now() - cached.savedAt < WILDFIRE_CACHE_TTL_MS) {
-    return cached.data;
+function wildfireBboxContains(outer: WildfireBbox, inner: WildfireBbox): boolean {
+  const epsilon = 1e-6;
+  return (
+    outer.west <= inner.west + epsilon &&
+    outer.south <= inner.south + epsilon &&
+    outer.east >= inner.east - epsilon &&
+    outer.north >= inner.north - epsilon
+  );
+}
+
+function getCoveringWildfires(bbox: WildfireBbox): WildfireFeature[] | null {
+  const now = Date.now();
+  for (let index = wildfireCache.length - 1; index >= 0; index -= 1) {
+    const entry = wildfireCache[index];
+    if (now - entry.savedAt >= WILDFIRE_CACHE_TTL_MS) continue;
+    if (wildfireBboxContains(entry.bbox, bbox)) return entry.data;
   }
+  return null;
+}
+
+export async function fetchWildfires(bbox: WildfireBbox): Promise<WildfireFeature[]> {
+  const cached = getCoveringWildfires(bbox);
+  if (cached) return cached;
+  const cacheKey = `${bbox.west.toFixed(2)},${bbox.south.toFixed(2)},${bbox.east.toFixed(2)},${bbox.north.toFixed(2)}`;
   try {
     const url = buildApiUrl("/wildfires");
     url.searchParams.set("bbox", cacheKey);
@@ -321,7 +344,8 @@ export async function fetchWildfires(bbox: { west: number; south: number; east: 
     if (!response.ok) return [];
     const body = await response.json();
     const features = body.features || [];
-    wildfireCache.set(cacheKey, { savedAt: Date.now(), data: features });
+    wildfireCache.push({ savedAt: Date.now(), bbox, data: features });
+    while (wildfireCache.length > WILDFIRE_CACHE_MAX) wildfireCache.shift();
     return features;
   } catch {
     return [];

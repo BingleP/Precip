@@ -43,6 +43,28 @@ registerFieldRedrawHandler(() => {
   queueMapRender(mapState, () => renderHeatmap(latestHeatmap, activeHeatmapLayer));
 });
 
+// Rendering the map is the expensive part of a timeline drag or opacity
+// change. Coalesce bursts (slider input, animation ticks) into one paint per
+// animation frame instead of one per event.
+let hourRenderTimer: ReturnType<typeof setTimeout> | null = null;
+let opacityRenderFrame: number | null = null;
+
+function scheduleHourRender(): void {
+  if (hourRenderTimer) clearTimeout(hourRenderTimer);
+  hourRenderTimer = setTimeout(() => {
+    hourRenderTimer = null;
+    if (latestHeatmap) renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  }, 80);
+}
+
+function scheduleOpacityRender(): void {
+  if (opacityRenderFrame !== null) return;
+  opacityRenderFrame = requestAnimationFrame(() => {
+    opacityRenderFrame = null;
+    if (latestHeatmap) renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  });
+}
+
 /** Is any raster (observed) layer currently active? */
 export function isRadarActive(): boolean {
   const primary = getLayer(activeHeatmapLayer);
@@ -95,7 +117,7 @@ function syncPlayButton(): void {
 }
 
 /** Route timeline slider input to radar frames or forecast hours. */
-export function setTimelineValue(value: number): void {
+export function setTimelineValue(value: number, options: { persist?: boolean } = {}): void {
   if (isSatCloudActive()) {
     // Single "latest" frame — nothing to scrub.
     syncTimelineUI();
@@ -106,7 +128,7 @@ export function setTimelineValue(value: number): void {
     syncTimelineUI();
     return;
   }
-  setActiveMapHourOffset(value, { persist: true });
+  setActiveMapHourOffset(value, { persist: options.persist });
 }
 import { projectToMapScreenFast, latLonToWorld } from "../geo";
 import { drawStormTracks } from "../storm-tracks";
@@ -615,7 +637,7 @@ export function setActiveMapLayerOpacity(opacity: number, options: { persist?: b
   if (elements.mapOpacitySlider) elements.mapOpacitySlider.value = String(Math.round(normalized * 100));
   if (elements.mapOpacityLabel) elements.mapOpacityLabel.textContent = `${Math.round(normalized * 100)}%`;
   if (options.persist) saveAppSettings({ mapLayerOpacity: normalized });
-  if (latestHeatmap) renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  scheduleOpacityRender();
 }
 
 function syncLayersMoreUI(layer: string): void {
@@ -629,10 +651,38 @@ export function setActiveMapHourOffset(offset: number, options: { persist?: bool
   setActiveMapHourOffsetState(Math.max(0, Math.min(23, Math.round(offset))));
   if (elements.mapHourSlider) elements.mapHourSlider.value = String(activeMapHourOffset);
   if (elements.settingsStartHour) elements.settingsStartHour.value = String(activeMapHourOffset);
+  // Keep the label live while the render (and its field fetch) is coalesced.
+  if (elements.mapHourLabel) {
+    updateMapHourLabel(activeMapHourOffset, latestHeatmap, elements.mapHourLabel);
+  }
   hideMapTooltip({ mapTooltip: elements.mapTooltip, mapHoverIndicator: elements.mapHoverIndicator });
   if (options.persist) saveAppSettings({ mapHourOffset: activeMapHourOffset });
-  if (latestHeatmap) renderHeatmap(latestHeatmap, activeHeatmapLayer);
+  scheduleHourRender();
 }
+
+function startMapAnimationTimer(): void {
+  if (mapAnimationTimer) clearInterval(mapAnimationTimer);
+  setMapAnimationTimer(setInterval(() => {
+    // Background tabs skip the tick entirely: stepping the hour would fire a
+    // field fetch per frame for imagery nobody is looking at.
+    if (document.hidden) return;
+    const next = parseInt(elements.mapHourSlider?.value || "0", 10) + 1;
+    setActiveMapHourOffset(next > 23 ? 0 : next);
+  }, 1200));
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (mapAnimationTimer) {
+      clearInterval(mapAnimationTimer);
+      setMapAnimationTimer(null);
+    }
+    return;
+  }
+  if (mapAnimationPlaying && !isRadarActive() && !isSatCloudActive() && !mapAnimationTimer) {
+    startMapAnimationTimer();
+  }
+});
 
 export function toggleMapAnimation(): void {
   // Single-frame imagery has no time dimension to animate.
@@ -661,8 +711,5 @@ export function toggleMapAnimation(): void {
     elements.mapPlayButton.classList.add("playing");
     elements.mapPlayButton.innerHTML = "&#10074;&#10074;";
   }
-  setMapAnimationTimer(setInterval(() => {
-    const next = parseInt(elements.mapHourSlider?.value || "0", 10) + 1;
-    setActiveMapHourOffset(next > 23 ? 0 : next);
-  }, 1200));
+  startMapAnimationTimer();
 }

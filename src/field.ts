@@ -35,7 +35,7 @@ export interface FieldData {
 }
 
 export interface FieldRequest {
-  /** Server cache key fragment: "layer:hour:bbox:colsXrows". */
+  /** Server cache key fragment: "layer:bbox:colsXrows". */
   key: string;
   layer: string;
   hour: number;
@@ -51,8 +51,33 @@ export interface FieldRequest {
   visibleRows: number;
 }
 
-const FIELD_CACHE_MAX = 32;
+/**
+ * One upstream fetch now carries the whole 24-hour timeline. Open-Meteo
+ * charges per location, not per hour, so this turns 24 hourly fetches into
+ * one without increasing quota usage.
+ */
+interface FieldGrid {
+  layer: string;
+  cols: number;
+  rows: number;
+  lats: number[];
+  lons: number[];
+  bbox: [number, number, number, number];
+  fetchedAt: number;
+  unit: string;
+  /** ISO UTC hour for each entry in valuesByHour. */
+  times: string[];
+  /** UTC hour number of times[0], used to index the current timeline hour. */
+  baseEpochHour: number;
+  valuesByHour: (number | null)[][];
+  uByHour?: (number | null)[][];
+  vByHour?: (number | null)[][];
+}
+
+const FIELD_CACHE_MAX = 12;
 const FIELD_REFRESH_MS = 10 * 60 * 1000;
+const FIELD_SPAN_HOURS = 24;
+const HOUR_MS = 60 * 60 * 1000;
 /**
  * Request extra area around the viewport (per side) so small pans reuse the
  * existing grid instead of triggering a brand-new upstream fetch every time.
@@ -60,7 +85,7 @@ const FIELD_REFRESH_MS = 10 * 60 * 1000;
 const FIELD_COVER_MARGIN = 0.4;
 const BBOX_EPSILON = 1e-4;
 
-const fieldCache = new Map<string, FieldData>();
+const fieldCache = new Map<string, FieldGrid>();
 // Open-Meteo's 600-locations/minute budget makes concurrent grids unsafe, so
 // only one field fetch runs at a time; newer requests wait for the latest one.
 let activeFieldKey: string | null = null;
@@ -136,7 +161,7 @@ export function buildFieldRequest(
   const reqCols = cols;
   const reqRows = rows;
 
-  const key = `${layer}:${hour}:${bbox.join(",")}:${reqCols}x${reqRows}`;
+  const key = `${layer}:${bbox.join(",")}:${reqCols}x${reqRows}`;
   return {
     key,
     layer,
@@ -177,14 +202,29 @@ function bboxContains(outer: [number, number, number, number], inner: [number, n
   );
 }
 
-/** Newest cached grid (same layer/hour) whose bounds fully cover the viewport. */
-function findCoveringField(request: FieldRequest): FieldData | null {
-  let best: FieldData | null = null;
-  for (const field of fieldCache.values()) {
-    if (field.layer !== request.layer || field.hour !== request.hour) continue;
-    if (field.cols < request.visibleCols - 1 || field.rows < request.visibleRows - 1) continue;
-    if (!bboxContains(field.bbox, request.viewport)) continue;
-    if (!best || field.fetchedAt > best.fetchedAt) best = field;
+/** UTC hour number (ms / 3600000) for indexing forecast hours. */
+function currentUtcHour(): number {
+  return Math.floor(Date.now() / HOUR_MS);
+}
+
+function epochHourFromIso(value: string | undefined): number | null {
+  if (!value) return null;
+  const normalized = /[zZ]|[+-]\d\d:?\d\d$/.test(value) ? value : `${value}Z`;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? Math.floor(parsed / HOUR_MS) : null;
+}
+
+/** Newest cached grid (same layer) whose bounds cover the viewport and hour. */
+function findCoveringGrid(request: FieldRequest): FieldGrid | null {
+  const targetHour = currentUtcHour() + request.hour;
+  let best: FieldGrid | null = null;
+  for (const grid of fieldCache.values()) {
+    if (grid.layer !== request.layer) continue;
+    if (grid.cols < request.visibleCols - 1 || grid.rows < request.visibleRows - 1) continue;
+    if (!bboxContains(grid.bbox, request.viewport)) continue;
+    const index = targetHour - grid.baseEpochHour;
+    if (index < 0 || index >= grid.valuesByHour.length) continue;
+    if (!best || grid.fetchedAt > best.fetchedAt) best = grid;
   }
   return best;
 }
@@ -196,7 +236,8 @@ function findCoveringField(request: FieldRequest): FieldData | null {
  */
 export function requestField(request: FieldRequest): FieldData | null {
   const cached = getCachedField(request);
-  if (cached && Date.now() - cached.fetchedAt < FIELD_REFRESH_MS) return cached;
+  const grid = fieldCache.get(request.key) ?? findCoveringGrid(request);
+  if (grid && Date.now() - grid.fetchedAt < FIELD_REFRESH_MS) return cached;
   if (Date.now() < fieldRetryAfter) return cached;
   if (activeFieldKey === request.key) return cached;
   if (activeFieldKey !== null) {
@@ -212,7 +253,10 @@ function startFieldFetch(request: FieldRequest): void {
   activeFieldKey = request.key;
   const url = buildApiUrl("/field");
   url.searchParams.set("layer", request.layer);
-  url.searchParams.set("hour", String(request.hour));
+  // Always fetch the whole timeline from "now" so the cache covers every
+  // slider position regardless of which hour triggered the fetch.
+  url.searchParams.set("hour", "0");
+  url.searchParams.set("span", String(FIELD_SPAN_HOURS));
   url.searchParams.set("bbox", request.bbox.join(","));
   url.searchParams.set("cols", String(request.cols));
   url.searchParams.set("rows", String(request.rows));
@@ -242,30 +286,52 @@ function startFieldFetch(request: FieldRequest): void {
       return response.json();
     })
     .then((data: Record<string, unknown>) => {
-      const field: FieldData = {
+      const lats = (data.lats as number[]) || [];
+      const lons = (data.lons as number[]) || [];
+      const valuesByHour = Array.isArray(data.valuesByHour)
+        ? (data.valuesByHour as (number | null)[][])
+        : [((data.values as (number | null)[]) || [])];
+      const uByHour = Array.isArray(data.uByHour)
+        ? (data.uByHour as (number | null)[][])
+        : data.u
+          ? [data.u as (number | null)[]]
+          : undefined;
+      const vByHour = Array.isArray(data.vByHour)
+        ? (data.vByHour as (number | null)[][])
+        : data.v
+          ? [data.v as (number | null)[]]
+          : undefined;
+      const times = Array.isArray(data.times) ? (data.times as string[]) : [];
+      const pointCount = request.cols * request.rows;
+      const valuesValid = valuesByHour.length > 0 && valuesByHour.every(
+        (hour) => Array.isArray(hour) && hour.length === pointCount,
+      );
+      const windValid =
+        !uByHour || (uByHour.length === valuesByHour.length && uByHour.every((hour) => Array.isArray(hour) && hour.length === pointCount));
+      const malformed =
+        lats.length !== request.rows ||
+        lons.length !== request.cols ||
+        !valuesValid ||
+        !windValid;
+      if (malformed) return; // malformed payload: ignore
+
+      const grid: FieldGrid = {
         layer: request.layer,
-        hour: request.hour,
         cols: request.cols,
         rows: request.rows,
-        lats: (data.lats as number[]) || [],
-        lons: (data.lons as number[]) || [],
-        values: ((data.values as (number | null)[]) || []) as FieldData["values"],
-        u: (data.u as (number | null)[]) || undefined,
-        v: (data.v as (number | null)[]) || undefined,
-        validTime: typeof data.validTime === "string" ? data.validTime : "",
-        unit: typeof data.unit === "string" ? data.unit : "",
+        lats,
+        lons,
         bbox: request.bbox,
         fetchedAt: Date.now(),
+        unit: typeof data.unit === "string" ? data.unit : "",
+        times,
+        baseEpochHour: epochHourFromIso(times[0]) ?? currentUtcHour(),
+        valuesByHour,
+        uByHour,
+        vByHour,
       };
-      if (
-        field.lats.length !== request.rows ||
-        field.lons.length !== request.cols ||
-        field.values.length !== request.cols * request.rows
-      ) {
-        return; // malformed payload: ignore
-      }
       fieldRetryAfter = 0;
-      fieldCache.set(request.key, field);
+      fieldCache.set(request.key, grid);
       if (fieldCache.size >= FIELD_CACHE_MAX) {
         const first = fieldCache.keys().next();
         if (!first.done) fieldCache.delete(first.value);
@@ -285,9 +351,27 @@ function startFieldFetch(request: FieldRequest): void {
     });
 }
 
-/** Return an exact or covering cached field for this request, if present. */
+/** Materialise the requested hour from an exact or covering cached grid. */
 export function getCachedField(request: FieldRequest): FieldData | null {
-  return fieldCache.get(request.key) ?? findCoveringField(request);
+  const grid = fieldCache.get(request.key) ?? findCoveringGrid(request);
+  if (!grid) return null;
+  const index = currentUtcHour() + request.hour - grid.baseEpochHour;
+  if (index < 0 || index >= grid.valuesByHour.length) return null;
+  return {
+    layer: grid.layer,
+    hour: request.hour,
+    cols: grid.cols,
+    rows: grid.rows,
+    lats: grid.lats,
+    lons: grid.lons,
+    values: grid.valuesByHour[index],
+    u: grid.uByHour?.[index],
+    v: grid.vByHour?.[index],
+    validTime: grid.times[index] || "",
+    unit: grid.unit,
+    bbox: grid.bbox,
+    fetchedAt: grid.fetchedAt,
+  };
 }
 
 /** Drop the client cache (used by the refresh timer, if any). */

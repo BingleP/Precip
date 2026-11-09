@@ -31,9 +31,15 @@ CACHE_TTLS = {
 }
 
 MAX_CACHE_ENTRIES = 500
+# Entries are mostly JSON, but raster endpoints return PNGs and wildfire
+# payloads can reach several MB. A count-only limit lets a handful of large
+# responses pin hundreds of MB, so also enforce a byte budget.
+MAX_CACHE_BYTES = 64 * 1024 * 1024
+MAX_ENTRY_BYTES = 8 * 1024 * 1024
 CACHE_EVICT_BATCH = 50
 
 cache = {}
+cache_bytes = 0
 cache_lock = threading.Lock()
 
 # Zone geometry cache (county boundaries rarely change)
@@ -71,23 +77,43 @@ def cache_get(key, allow_stale=False):
 
 
 def _evict_lru():
-    if len(cache) <= MAX_CACHE_ENTRIES:
-        return
-    sorted_entries = sorted(cache.items(), key=lambda kv: kv[1].get("last_access", 0))
-    for key, _ in sorted_entries[:CACHE_EVICT_BATCH]:
-        del cache[key]
+    global cache_bytes
+    while len(cache) > MAX_CACHE_ENTRIES or cache_bytes > MAX_CACHE_BYTES:
+        sorted_entries = sorted(cache.items(), key=lambda kv: kv[1].get("last_access", 0))
+        if not sorted_entries:
+            return
+        # Evict a batch at a time so a burst of large responses does not
+        # re-sort the whole cache on every insertion.
+        for key, _ in sorted_entries[:CACHE_EVICT_BATCH]:
+            entry = cache.pop(key, None)
+            if entry:
+                cache_bytes -= entry.get("size", 0)
+        if len(sorted_entries) < CACHE_EVICT_BATCH:
+            return
 
 
 def cache_set(key, value, ttl, content_type):
+    global cache_bytes
+    size = len(value)
+    # Oversized bodies still get served; they just do not displace the rest
+    # of the cache.
+    if size > MAX_ENTRY_BYTES:
+        return False
     with cache_lock:
+        previous = cache.pop(key, None)
+        if previous:
+            cache_bytes -= previous.get("size", 0)
         cache[key] = {
             "body": value,
             "content_type": content_type,
             "expires_at": time.time() + ttl,
             "hit_count": 0,
             "last_access": time.time(),
+            "size": size,
         }
+        cache_bytes += size
         _evict_lru()
+        return True
 
 
 def cache_stats():
@@ -103,6 +129,8 @@ def cache_stats():
             "expired_entries": expired,
             "total_hits": total_hits,
             "max_entries": MAX_CACHE_ENTRIES,
+            "bytes": cache_bytes,
+            "max_bytes": MAX_CACHE_BYTES,
         }
 
 

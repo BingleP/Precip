@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import concurrent.futures
 import datetime
+import hashlib
 import json
 import math
 import os
+import pathlib
 import sys
 import traceback
 import urllib.error
@@ -35,6 +37,36 @@ from proxy_estimators import (
 HOST = os.environ.get("PRECIP_PROXY_HOST", "127.0.0.1")
 PORT = int(os.environ.get("PRECIP_PROXY_PORT", "7428"))
 USER_AGENT = "PrecipProxy/1.0 (+https://precip.kerrick.ca)"
+
+
+def _source_fingerprint():
+    """Hash the proxy sources so /health identifies the deployed build."""
+    root = pathlib.Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for name in ("proxy_server.py", "proxy_upstream.py", "proxy_cache.py", "proxy_estimators.py"):
+        try:
+            digest.update((root / name).read_bytes())
+        except OSError:
+            pass
+    return digest.hexdigest()[:12]
+
+
+PROXY_BUILD = os.environ.get("PRECIP_PROXY_BUILD") or _source_fingerprint()
+
+# Raster and geocoding responses are safe to cache at the edge/browser. The
+# values match the proxy's own TTLs, so the edge never outlives the origin
+# copy by more than one refresh window.
+PUBLIC_CACHE_TTLS = {
+    "/api/field": 600,
+    "/api/radar-index": 300,
+    "/api/radar-tile": 120,
+    "/api/radar-wms": 120,
+    "/api/forecast-wms": 900,
+    "/api/satellite-tile": 300,
+    "/api/slider-image": 300,
+    "/api/geocode": 86400,
+    "/api/reverse-geocode": 86400,
+}
 
 
 def build_met_no_forecast(latitude, longitude):
@@ -199,12 +231,19 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/health":
-            body = json.dumps({"ok": True, "cache": cache_stats()}).encode("utf-8")
+            body = json.dumps({
+                "ok": True,
+                "build": PROXY_BUILD,
+                "endpoints": sorted(ALLOWED_ENDPOINTS),
+                "cache": cache_stats(),
+            }).encode("utf-8")
             self.send_response(200)
             self.send_common_headers("application/json; charset=utf-8", len(body))
             self.end_headers()
             self.wfile.write(body)
             return
+
+        self._cache_ttl = PUBLIC_CACHE_TTLS.get(parsed.path, 0)
 
         query = urllib.parse.parse_qs(parsed.query, keep_blank_values=False)
         cache_key = f"{parsed.path}?{urllib.parse.urlencode(sorted((k, v[0]) for k, v in query.items()))}"
@@ -422,6 +461,8 @@ class Handler(BaseHTTPRequestHandler):
         return
 
     def write_error(self, status, message, error_type="internal"):
+        # Errors must never inherit a public cache window from the endpoint.
+        self._cache_ttl = 0
         payload = json.dumps({
             "error": message,
             "code": status,
@@ -435,7 +476,15 @@ class Handler(BaseHTTPRequestHandler):
     def send_common_headers(self, content_type, length):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(length))
-        self.send_header("Cache-Control", "no-store")
+        ttl = getattr(self, "_cache_ttl", 0)
+        if ttl > 0:
+            self.send_header(
+                "Cache-Control",
+                f"public, max-age={ttl}, stale-while-revalidate={ttl * 2}",
+            )
+        else:
+            self.send_header("Cache-Control", "no-store")
+        self.send_header("Vary", "Accept-Encoding")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
